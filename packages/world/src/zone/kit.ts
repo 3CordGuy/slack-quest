@@ -26,7 +26,7 @@ export type Shape = "single" | "adjacent" | "arc" | "cone" | "chain" | "blast" |
 /**
  * Action Points (AP): every unit gets AP_TURN at the start of its turn, on top of what it saved (AP_MAX at most), and spends
  * them on anything in any order. What was once an Action costs ACTION_AP, a Bonus action BONUS_AP; 1 AP buys a unit's
- * stride of movement (half its old speed).
+ * stride of movement (heroMove in rules.ts; enemyMove below, of which an enemy spends ENEMY_MOVE_AP a turn at most).
  */
 export const AP_TURN = 4;
 export const AP_MAX = 6;
@@ -748,8 +748,21 @@ export function enemyStrikes(kind: string, level: number, threat?: number, more 
 /** The quick are hard to hit: 10, one more for every 30 of the old speed, one more for a boss. */
 export const enemyDefence = (kind: string): number => 10 + Math.floor((ENEMIES[kind]?.speed ?? 0) / 30) + (ENEMIES[kind]?.boss ? 1 : 0);
 
-/** Steps 1 AP buys (half its old speed, 1 to 4), and `more` for what the map's modifiers add. A training dummy stays put. */
-export const enemyMove = (kind: string, more = 0): number => (kind === "dummy" ? 0 : Math.max(1, Math.floor(Math.max(3, Math.min(8, 3 + Math.round((ENEMIES[kind]?.speed ?? 0) / 18))) / 2)) + more);
+/**
+ * Steps 1 AP buys an enemy, and `more` for what the map's modifiers add: 2 for most of what goes on foot, as for an
+ * ordinary hero (rules.ts heroMove), and 3 for the quick (a speed of 63 or more: wolves, hounds, spiders, archers,
+ * shades, bats). Never more than 3 before `more`. A training dummy stays put.
+ */
+export const enemyMove = (kind: string, more = 0): number => (kind === "dummy" ? 0 : Math.max(1, Math.floor(Math.max(3, Math.min(7, 3 + Math.round((ENEMIES[kind]?.speed ?? 0) / 25))) / 2)) + more);
+
+/**
+ * The most AP an enemy puts into movement in one turn, whether or not it also strikes: two strides, so 4 hexes of open
+ * ground for a bandit and 6 for a wolf, where an ordinary hero who does nothing but walk covers 8. What it does not
+ * spend it keeps for its next turn, as anyone does. A hero has no such limit. Being shoved or dragged is not its own
+ * movement, and what lengthens a stride (Hasted, a Swift map) still does. Held in each turn's budget (Budget.walk,
+ * set in zone.ts beginTurn), so the walk itself keeps to it and the enemy's planning (ai.ts) reckons with the same number.
+ */
+export const ENEMY_MOVE_AP = 2;
 
 /** What an enemy adds to its roll when it shoves someone: the big shove hard. */
 export const enemyShove = (kind: string): number => 1 + enemySave(kind);

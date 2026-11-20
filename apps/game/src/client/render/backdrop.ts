@@ -9,11 +9,16 @@
 // Each kind also leans on the day's light, after the sky has set it: a
 // chasm is dim and blue whatever the hour, a lava field is lit red from
 // underneath.
+//
+// One kind is not a void at all: `dark`, for a map under a roof or under
+// ground. There is no cloud, no far rock and no sky there, only the dark
+// past the walls, dust turning in the air, and a low cold light on the
+// floor that the fires are seen by. The hour does not reach it.
 
 import * as THREE from "three";
 import { moteField, type Mote, type MoteField } from "./motes";
 
-export type BackdropKind = "sea" | "mist" | "abyss" | "lava" | "frost" | "dusk";
+export type BackdropKind = "sea" | "mist" | "abyss" | "lava" | "frost" | "dusk" | "dark";
 export type VoidKind = Exclude<BackdropKind, "sea">;
 
 interface Look {
@@ -38,18 +43,23 @@ interface Look {
   motes?: { count: number; colors: string[]; rise: number; sway: number; rate: number; size: number; additive: boolean; opacity?: number };
   /** The rock of the far stacks. */
   rock: string;
+  /**
+   * Under a roof: no cloud and no far rock, and the day's light is not leaned on but put out. In its place, the
+   * low light the place is seen by: how much, its colour from above and from below.
+   */
+  roofed?: [number, string, string];
 }
 
 const LOOKS: Record<VoidKind, Look> = {
   mist: {
-    sky: ["#b4c4ba", "#131b1c"], cloud: ["#e6eee6", "#8fa399"], cover: 0.46, veil: [0.5, 0.85], haze: [16, 92],
+    sky: ["#aebfb5", "#131b1c"], cloud: ["#dfe9e0", "#7d948a"], cover: 0.46, veil: [0.5, 0.85], haze: [16, 92],
     sun: [0.8, "#f1f6ee"], fill: [0.95, "#c6d4ca", 0.35], gloom: 0.2,
     motes: { count: 70, colors: ["#f2f8f2", "#d8e6dc"], rise: 0.8, sway: 1.2, rate: 0.045, size: 0.1, additive: false, opacity: 0.5 },
     rock: "#58685f",
   },
   abyss: {
     sky: ["#060a16", "#03050c"], cloud: ["#1a3156", "#050912"], cover: 0.56, veil: [0.35, 0.7], haze: [13, 72],
-    sun: [0.34, "#8fb6e6"], fill: [0.52, "#46689e", 0.6], under: ["#0a1224", 0.8], gloom: 0.8,
+    sun: [0.28, "#8fb6e6"], fill: [0.42, "#46689e", 0.6], under: ["#0a1224", 0.8], gloom: 0.8,
     motes: { count: 240, colors: ["#9fc8ff", "#d0e4ff", "#6f9fe8"], rise: 2.4, sway: 0.6, rate: 0.05, size: 0.1, additive: true },
     rock: "#18233a",
   },
@@ -70,6 +80,13 @@ const LOOKS: Record<VoidKind, Look> = {
     sun: [0.95, "#ffd2a2"], fill: [0.95, "#efc092", 0.45], under: ["#ae6e46", 0.5], gloom: 0.25,
     motes: { count: 110, colors: ["#ffe2b4", "#f6c88c"], rise: 1.2, sway: 1.4, rate: 0.04, size: 0.085, additive: true, opacity: 0.55 },
     rock: "#a6623a",
+  },
+  dark: {
+    sky: ["#050509", "#050509"], cloud: ["#000000", "#000000"], cover: 0, veil: [0, 0], haze: [20, 62],
+    sun: [0, "#000000"], fill: [0, "#000000", 0], gloom: 1,
+    motes: { count: 150, colors: ["#c9b99a", "#a89c8c", "#8f98ad"], rise: 0.5, sway: 0.9, rate: 0.03, size: 0.06, additive: true, opacity: 0.3 },
+    rock: "#000000",
+    roofed: [0.58, "#8b9dc9", "#1b1723"],
   },
 };
 
@@ -119,8 +136,8 @@ void main() {
   float a = 1.0;
   if (uMolten > 0.5) {
     // A crust breaking up: bright seams where two plates meet, pools where it has gone through, all of it breathing.
-    float seam = smoothstep(0.13, 0.0, abs(fbm(p * 1.9 + 3.1) - 0.5));
-    float pool = smoothstep(0.56, 0.74, n);
+    float seam = smoothstep(0.075, 0.0, abs(fbm(p * 1.9 + 3.1) - 0.5));
+    float pool = smoothstep(0.64, 0.8, n);
     float breath = 0.7 + 0.3 * sin(uTime * 0.55 + n * 11.0);
     float heat = clamp(seam + pool, 0.0, 1.0) * breath;
     c = mix(uDark, uLight, fbm(p * 3.1 + 9.0));
@@ -152,8 +169,8 @@ function stacks(land: { x: number; z: number; reach: number }, rock: THREE.Color
   const count = 13;
   for (let i = 0; i < count; i++) {
     const a = (i / count) * Math.PI * 2 + hash(i, 1) * 0.4;
-    const far = land.reach + 20 + hash(i, 2) * 46;
-    const top = -4 + hash(i, 3) * 13;
+    const far = land.reach + 40 + hash(i, 2) * 50;
+    const top = -10 + hash(i, 3) * 11;
     const wide = 2.2 + hash(i, 4) * 3.6;
     const [x, z] = [land.x + Math.cos(a) * far, land.z + Math.sin(a) * far];
     // Three lengths, each a little narrower and out of true with the one under it.
@@ -191,6 +208,8 @@ export class VoidBackdrop {
   readonly group = new THREE.Group();
   /** How dim this place is kept whatever the hour, 0 to 1. */
   readonly gloom: number;
+  /** Under a roof or under ground (the `dark` kind): nothing of the sky reaches the place. */
+  readonly roofed: boolean;
   private look: Look;
   private sheets: THREE.ShaderMaterial[] = [];
   private motes: MoteField | null = null;
@@ -201,13 +220,14 @@ export class VoidBackdrop {
   constructor(readonly kind: VoidKind, land: { x: number; z: number; reach: number }) {
     const look = (this.look = LOOKS[kind]);
     this.gloom = look.gloom;
+    this.roofed = !!look.roofed;
     const plane = new THREE.PlaneGeometry(2600, 2600).rotateX(-Math.PI / 2);
-    DEPTHS.forEach((y, i) => {
+    (this.roofed ? [] : DEPTHS).forEach((y, i) => {
       const solid = i === 0;
       const material = new THREE.ShaderMaterial({
         uniforms: {
           uTime: { value: 0 }, uLight: { value: new THREE.Color() }, uDark: { value: new THREE.Color() }, uHaze: { value: new THREE.Color() },
-          uHot: { value: new THREE.Color(1.9, 0.52, 0.09) },
+          uHot: { value: new THREE.Color(1.75, 0.4, 0.05) },
           uScale: { value: [0.045, 0.07, 0.11][i] }, uCover: { value: look.cover + i * 0.04 }, uOpacity: { value: solid ? 1 : look.veil[2 - i] },
           uSolid: { value: solid ? 1 : 0 }, uMolten: { value: solid && look.molten ? 1 : 0 },
           uDrift: { value: new THREE.Vector2([0.004, 0.011, 0.02][i], [0.002, -0.004, 0.009][i]) }, uFade: { value: new THREE.Vector2(40, 120) },
@@ -225,15 +245,15 @@ export class VoidBackdrop {
       this.sheets.push(material);
       this.group.add(sheet);
     });
-    const far = new THREE.Mesh(stacks(land, new THREE.Color(look.rock)), new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true }));
-    this.group.add(far);
+    if (!this.roofed) this.group.add(new THREE.Mesh(stacks(land, new THREE.Color(look.rock)), new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true })));
     if (look.motes) {
       const d = look.motes;
       const span = 64;
       const list: Mote[] = [];
       for (let i = 0; i < d.count; i++) {
         list.push({
-          x: hash(i, 61) * span, y: -5 + hash(i, 62) * 15 - (d.rise < 0 ? d.rise * 0.2 : 0), z: hash(i, 63) * span,
+          // (Under a roof the dust hangs in the rooms, not under the floor.)
+          x: hash(i, 61) * span, y: (this.roofed ? 0.6 + hash(i, 62) * 3.2 : -5 + hash(i, 62) * 15) - (d.rise < 0 ? d.rise * 0.2 : 0), z: hash(i, 63) * span,
           color: new THREE.Color(d.colors[i % d.colors.length]), rise: d.rise * (0.6 + hash(i, 64) * 0.8), sway: d.sway * (0.5 + hash(i, 65)),
           rate: d.rate * (0.6 + hash(i, 66) * 0.8), phase: hash(i, 67), size: 0.5 + hash(i, 68) * 0.9,
         });
@@ -247,7 +267,7 @@ export class VoidBackdrop {
    * Once a frame, after the sky's own update. `reach` is how far the camera stands from what it looks at;
    * `night` how dark the hour is, 0 to 1. `sky` (the scene's background) and `haze` (its fog, if it has one)
    * are given this void's colours. With `lit`, the sun and the sky's light (found in `scene`) are leaned on too:
-   * not underground, where there is neither.
+   * not underground, where there is neither. (The `dark` kind puts them out and sets its own, lit or not.)
    */
   frame(clock: number, target: THREE.Vector3, reach: number, night: number, sky: THREE.Color, haze: THREE.Fog | null, scene: THREE.Scene, lit: boolean) {
     const look = this.look;
@@ -277,9 +297,19 @@ export class VoidBackdrop {
     }
     for (const child of this.group.children) if ((child as THREE.Mesh).material instanceof THREE.ShaderMaterial) child.position.set(target.x, child.position.y, target.z);
     this.motes?.tick(clock, target);
-    if (!lit) return;
+    if (!lit && !look.roofed) return;
     if (this.sun === undefined) this.sun = (scene.children.find((o) => o instanceof THREE.DirectionalLight) as THREE.DirectionalLight | undefined) ?? null;
     if (this.fill === undefined) this.fill = (scene.children.find((o) => o instanceof THREE.HemisphereLight) as THREE.HemisphereLight | undefined) ?? null;
+    if (look.roofed) {
+      // No sun and no sky: whatever the hour made of them is put out, and the place has its own low light.
+      if (this.sun) this.sun.intensity = 0;
+      if (this.fill) {
+        this.fill.intensity = look.roofed[0];
+        this.fill.color.set(look.roofed[1]);
+        this.fill.groundColor.set(look.roofed[2]);
+      }
+      return;
+    }
     if (this.sun) {
       this.sun.intensity *= look.sun[0];
       this.sun.color.multiply(c.tint.set(look.sun[1]));

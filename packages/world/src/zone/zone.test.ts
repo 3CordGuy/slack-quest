@@ -1,20 +1,22 @@
 import { describe, expect, it } from "vitest";
 import { STARTING_STATS, allHexesInGrid, hexDistance, hexNeighbors, posKey, type HexGrid, type HexPos } from "@gantt-quest/core";
 import { ABILITIES, EFFECT_TICK, ENEMIES, HERO_CLASSES, SUNDERED_DEFENCE, WEAPONS, abilitiesFor } from "../content";
-import type { Biome, Tile } from "../map";
+import { CLIMES, type Biome, type Tile } from "../map";
 import { makeRng } from "../rng";
-import { courseFor, moveLeft, walk } from "./combat";
+import { courseFor, moveLeft, walk, walkAp } from "./combat";
 import { addCondition, attackContext, burnOf, damage, kindle, shieldOf, type Ctx } from "./engine";
 import { shantyOf, shantyRadius, songsOn } from "./song";
 import { chartOf, constellationLinks } from "./stars";
 import { ALERT_RANGE, DEFAULT_ZONE_OPTIONS, JOIN_RANGE, generateZone, zoneOptions } from "./gen";
-import { adjacent, blast, flies, sees, seesFor, solid, stepCost, unitAt, zoneReach } from "./geometry";
-import { ACTION_AP, AP_MAX, AP_TURN, AURAS, CHART, COMMON_ACTIONS, BLOCK, BONUS_AP, BOLSTER, GUARD_UP, STAND_STRONG, STURDY, ENEMY_BURST, ENEMY_HP_SCALE, ENEMY_KIT, EXPLORE_ROUND_MS, FLEE_RANGE, LIGHT_RADIUS, SHIELD_SET_ASIDE, TACTICS, TORCH_GROUND_ROUNDS, TORCH_HELD_ROUNDS, TORCH_ROUND_MS, abilityDice as abilityDiceFor, commonCost, enemyHp, enemyMove, enemyStrikes, tacticOf } from "./kit";
+import { HEX_ROOM, adjacent, blast, blockerAt, flies, isDead, sees, seesFor, solid, stepCost, unitAt, zoneReach } from "./geometry";
+import { propOf } from "./props";
+import { SITE_IDS, backdropOf, siteInside, type SiteId } from "./sites";
+import { ACTION_AP, AP_MAX, AP_TURN, AURAS, CHART, COMMON_ACTIONS, BLOCK, BONUS_AP, BOLSTER, GUARD_UP, STAND_STRONG, STURDY, ENEMY_BURST, ENEMY_HP_SCALE, ENEMY_KIT, ENEMY_MOVE_AP, EXPLORE_ROUND_MS, FLEE_RANGE, LIGHT_RADIUS, SHIELD_SET_ASIDE, TACTICS, TORCH_GROUND_ROUNDS, TORCH_HELD_ROUNDS, TORCH_ROUND_MS, abilityDice as abilityDiceFor, commonCost, enemyHp, enemyMove, enemyStrikes, tacticOf } from "./kit";
 import { MAX_CATCHUP_ROUNDS } from "./clock";
 import { defenceOf } from "./engine";
 import { abilityArea, checkAbility, crateBlow, enemyAct, wayBetween } from "./combat";
 import { d20, diceAverage, diceFor, heroMove, hitChance } from "./rules";
-import { createZone, ensureMouth, standInHero, stepZone, zoneView } from "./zone";
+import { createZone, ensureMouth, spentOut, standInHero, stepZone, zoneView } from "./zone";
 import { DELVE_CRATES, generateDelve } from "./delve";
 import { litHexes } from "./light";
 import { poolFor } from "../classabilities";
@@ -162,35 +164,103 @@ describe("zone generation", () => {
     expect(generateZone("seed-2", DEFAULT_ZONE_OPTIONS)).not.toEqual(a);
   });
 
-  it("keeps the start clear, puts every group out of sight of it, and leaves a way to each", () => {
+  it("keeps the start clear and level, posts every band well away from it, and leaves a way on foot to every post and beside every chest", () => {
+    let laid = 0;
+    let under = 0;
     for (const biome of ["meadow", "woods", "caves", "shore"] as const) {
       for (const size of ["small", "medium", "large"] as const) {
         for (let seed = 0; seed < 6; seed++) {
-          const options = zoneOptions({ size, biome, groups: 3, elevation: 3, obstacles: 3, clear: 4, party: 2 });
+          // Half of them whatever kind of place suits the ground, the rest each kind in turn; and every climate comes round.
+          const site = biome === "caves" || seed < 3 ? undefined : SITE_IDS[laid++ % SITE_IDS.length];
+          const clime = CLIMES[(seed + (size === "small" ? 0 : size === "medium" ? 1 : 2)) % CLIMES.length];
+          const options = zoneOptions({ size, biome, groups: 3, elevation: 3, obstacles: 3, clear: 4, party: 2, site, clime });
+          const where = `${biome} ${size} ${seed} ${site ?? ""} ${clime}`;
           const state = createZone("GEN", `${biome}-${size}-${seed}`, options);
-          const where = `${biome} ${size} ${seed}`;
+          // The same seed and options: the same map, and the same bands at the same posts.
+          expect(createZone("GEN", `${biome}-${size}-${seed}`, options), where).toEqual(state);
+          const tiles = new Map(state.map.tiles.map((t) => [posKey(t), t]));
+          // No hex is laid twice.
+          expect(tiles.size, where).toBe(state.map.tiles.length);
           const foes = state.units.filter((u) => u.side === "enemy");
           expect(foes.length, where).toBeGreaterThan(0);
-          for (const f of foes) expect(hexDistance(f.pos, state.start), where).toBeGreaterThan(options.clear + ALERT_RANGE);
-          // No two on one hex, and nobody in rock or water.
+          // Under a roof or under ground (indoors.ts) the party arrives in a room of its own, and what keeps the bands off is its walls.
+          const indoors = !!state.scene && siteInside(state.scene.site);
+          if (indoors) under++;
+          for (const f of foes) expect(hexDistance(f.pos, state.start), where).toBeGreaterThan(indoors ? 3 : options.clear + ALERT_RANGE);
+          // Each at a post of its own, on ground it can stand on.
           expect(new Set(foes.map((f) => posKey(f.pos))).size, where).toBe(foes.length);
-          // Open, level ground all round the start (the map's own edge aside).
-          for (const t of state.map.tiles) if (hexDistance(t, state.start) <= options.clear && hexNeighbors(t, state.map.grid).length === 6) expect(solid(t) || (t.elev ?? 0) !== 0, where).toBe(false);
-          // A hero standing at the start can walk to a hex beside every enemy.
-          const walker = hero(state, "ann", "qa_paladin", state.start);
-          for (const f of foes) {
-            // The ground itself has to allow it: the enemy's own friends standing in the way do not count.
-            const alone = { ...state, units: [walker, f] };
-            expect([...zoneReach(alone, walker, 400).values()].some((r) => adjacent(r.pos, f.pos)), `${where}: ${f.kind} cut off`).toBe(true);
+          for (const f of foes) expect(solid(tiles.get(posKey(f.pos))), `${where}: ${f.kind} in the ground`).toBe(false);
+          expect(solid(tiles.get(posKey(state.start))), where).toBe(false);
+          if (biome === "caves") {
+            // Open cave floor is made the old way: open, level ground all round the start (the map's own edge aside), and no scene.
+            for (const t of state.map.tiles) if (hexDistance(t, state.start) <= options.clear && hexNeighbors(t, state.map.grid).length === 6) expect(solid(t) || (t.elev ?? 0) !== 0, where).toBe(false);
+            expect(state.scene, where).toBeUndefined();
+          } else {
+            if (!indoors) {
+              // Round the start, what land there is lies level and open: nothing stands on it but the ring the party came through, beside them.
+              const round = state.map.tiles.filter((t) => hexDistance(t, state.start) <= options.clear);
+              for (const t of round) {
+                expect(t.elev ?? 0, where).toBe(0);
+                if (t.prop) expect([t.prop, hexDistance(t, state.start)], where).toEqual(["waygate", 1]);
+                else expect(solid(t), where).toBe(false);
+              }
+              // And there is a fair stretch of it: as much as two hexes all round would be, at the least.
+              expect(round.filter((t) => !solid(t)).length, where).toBeGreaterThanOrEqual(19);
+            } else {
+              // Indoors the room's own walls are near, so it is a smaller stretch. The party stands on floor with floor all
+              // round them: nothing on it but the ring they came through, beside them.
+              const beside = state.map.tiles.filter((t) => hexDistance(t, state.start) <= 1);
+              expect(beside, where).toHaveLength(7);
+              for (const t of beside) {
+                if (t.prop) expect([t.prop, hexDistance(t, state.start)], where).toEqual(["waygate", 1]);
+                else expect(solid(t), where).toBe(false);
+              }
+              expect(beside.filter((t) => t.prop === "waygate"), where).toHaveLength(1);
+              // Two hexes out, what is not floor is the wall of the room (or a doorway in it), or the rock of the chamber:
+              // nothing else stands there to bar the way, and the floor is level.
+              const round = state.map.tiles.filter((t) => hexDistance(t, state.start) <= 2);
+              for (const t of round) {
+                if (t.biome === "rock") continue;
+                expect(t.elev ?? 0, where).toBe(0);
+                if (t.prop && t.prop !== "waygate") expect(["wall", "wall_torch", "arch"], `${where}: ${t.prop}`).toContain(t.prop);
+              }
+              // And most of that is floor to stand on.
+              expect(round.filter((t) => !solid(t)).length, where).toBeGreaterThanOrEqual(13);
+              // Nothing lies beyond the walls, and it is dark.
+              expect(state.scene!.backdrop, where).toBe("dark");
+            }
+            // It says what kind of place it is, and what lies round its land (on a shore, the sea).
+            expect(state.scene, where).toEqual({ site: site ?? state.scene!.site, backdrop: backdropOf(state.scene!.site as SiteId, options.clime, options.biome) });
+            expect(SITE_IDS, where).toContain(state.scene!.site);
           }
+          // A hero alone on the map can walk from the start to every post, by the rules of the walk: no cliff climbed without a ladder.
+          const walker = hero(state, "ann", "qa_paladin", state.start);
+          const reach = zoneReach({ ...state, units: [walker] }, walker, 5000);
+          for (const f of foes) expect(reach.has(posKey(f.pos)), `${where}: ${f.kind} cut off`).toBe(true);
+          // And to a hex beside every chest. Nothing stands where a chest or a post is.
+          const chests = state.map.pois.filter((p) => p.kind === "cache");
+          for (const c of chests) {
+            expect(solid(tiles.get(posKey(c.pos))), `${where}: ${c.id} in the ground`).toBe(false);
+            expect(foes.some((f) => posKey(f.pos) === posKey(c.pos)), `${where}: ${c.id} stood on`).toBe(false);
+            expect(hexNeighbors(c.pos, state.map.grid).some((n) => reach.get(posKey(n))?.stop), `${where}: ${c.id} cut off`).toBe(true);
+          }
+          for (const p of [...foes.map((f) => f.pos), ...chests.map((c) => c.pos)]) expect(propOf(tiles.get(posKey(p)))?.blocks, where).toBeFalsy();
         }
       }
     }
-  });
+    // Every kind of place there is was laid at least once: the four under a roof or under ground among them.
+    expect(laid).toBeGreaterThanOrEqual(SITE_IDS.length);
+    expect(under).toBeGreaterThanOrEqual(SITE_IDS.filter(siteInside).length);
+  }, 60_000);
 
   it("makes options safe", () => {
-    expect(zoneOptions({ size: "huge", groups: 99, kinds: ["wolf", "dragon"], clear: -3 })).toEqual({ ...DEFAULT_ZONE_OPTIONS, groups: 6, kinds: ["wolf"], clear: 2 });
+    expect(zoneOptions({ size: "huge", groups: 99, kinds: ["wolf", "dragon"], clear: -3 })).toEqual({ ...DEFAULT_ZONE_OPTIONS, groups: 8, kinds: ["wolf"], clear: 2 });
     expect(zoneOptions(null)).toEqual(DEFAULT_ZONE_OPTIONS);
+    // The kind of place: one there is, or none. How much the lodestone that opened it carried: 0 to 3.
+    expect(zoneOptions({ site: "keep", stone: 7 })).toEqual({ ...DEFAULT_ZONE_OPTIONS, site: "keep", stone: 3 });
+    expect(zoneOptions({ site: "nowhere", stone: "two" })).toEqual(DEFAULT_ZONE_OPTIONS);
+    expect(zoneOptions({ stone: -2 }).stone).toBe(0);
+    expect(zoneOptions({ stone: 1.6 }).stone).toBe(2);
   });
 });
 
@@ -207,15 +277,23 @@ describe("free walking", () => {
     expect(events.filter((e) => e.t === "moved")).toHaveLength(1);
   });
 
-  it("refuses rock, water, cliffs and somebody else's hero", () => {
-    let state = board((t) => { tileEdit(at(4, 6), { biome: "rock" })(t); tileEdit(at(2, 3), { elev: 2 })(t); });
+  it("refuses rock, water, cliffs, a hex with no room left on it, and somebody else's hero", () => {
+    let state = board((t) => { tileEdit(at(4, 6), { biome: "rock" })(t); tileEdit(at(4, 8), { biome: "water" })(t); tileEdit(at(2, 3), { elev: 2 })(t); });
     hero(state, "ann", "qa_paladin", at(2, 6));
     hero(state, "bo", "qa_paladin", at(2, 7));
+    hero(state, "cy", "qa_paladin", at(2, 7));
+    hero(state, "di", "qa_paladin", at(3, 7));
     expect(fails(state, { type: "move", by: "ann", unit: "ann", to: at(4, 6) })).toMatch(/cannot get there/);
+    expect(fails(state, { type: "move", by: "ann", unit: "ann", to: at(4, 8) })).toMatch(/cannot get there/);
     // A lone hex two levels up is a cliff on every side.
     expect(fails(state, { type: "move", by: "ann", unit: "ann", to: at(2, 3) })).toMatch(/cannot get there/);
+    // Two stand on that hex already: it is full.
     expect(fails(state, { type: "move", by: "ann", unit: "ann", to: at(2, 7) })).toMatch(/standing there/);
-    expect(fails(state, { type: "move", by: "ann", unit: "bo", to: at(3, 7) })).toMatch(/not yours/);
+    expect(fails(state, { type: "move", by: "ann", unit: "bo", to: at(3, 8) })).toMatch(/not yours/);
+    // One hero on a hex leaves room for another beside them on it.
+    state = must(state, { type: "move", by: "ann", unit: "ann", to: at(3, 7) });
+    expect(unit(state, "ann").pos).toEqual(at(3, 7));
+    expect(unit(state, "di").pos).toEqual(at(3, 7));
   });
 });
 
@@ -237,7 +315,13 @@ describe("starting a fight", () => {
     expect(new Set(state.encounter!.order)).toEqual(new Set(["ann", wolf.id, mate.id]));
     expect(state.groups.g1.alerted).toBe(true);
     expect(events.some((e) => e.t === "fight_start")).toBe(true);
-    expect(events.filter((e) => e.t === "roll" && e.roll.kind === "initiative")).toHaveLength(3);
+    // Each of the three rolls initiative once; any roll besides is two of them rolling off a tie.
+    const rolls = events.flatMap((e) => (e.t === "roll" && e.roll.kind === "initiative" ? [e.roll] : []));
+    expect(rolls.filter((r) => r.label === "Initiative").map((r) => r.id).sort()).toEqual(["ann", wolf.id, mate.id].sort());
+    expect(rolls.every((r) => r.label === "Initiative" || r.label === "Tie-break")).toBe(true);
+    // Nobody shares a place in the order.
+    const places = state.encounter!.order.map((id) => `${state.encounter!.init[id]}/${state.encounter!.tie?.[id] ?? 0}`);
+    expect(new Set(places).size).toBe(3);
   });
 
   it("stops a hero who walks past an enemy on the first hex beside it", () => {
@@ -355,6 +439,60 @@ describe("turns", () => {
     expect(ann().move).toBeGreaterThan(0);
     state = nextTurn(state);
     expect(ann()).toMatchObject({ ap: AP_MAX, move: 0 });
+  });
+
+  it("ends a turn on its own once the last AP is spent, after what spent it has played out", () => {
+    let { state, foe } = duel("dummy", "qa_paladin", at(5, 6), at(7, 6));
+    const turn = state.encounter!.turnNo;
+    Object.assign(state.encounter!.budgets.ann, { ap: ACTION_AP + BONUS_AP, move: 0 });
+    expect(spentOut(state.encounter!.budgets.ann)).toBe(false);
+    // AP still left: the turn goes on.
+    state = must(state, { type: "use", by: "ann", unit: "ann", ability: "block" });
+    expect(state.encounter).toMatchObject({ turnNo: turn, acting: ["ann"], done: [] });
+    // The last of them: the blow lands, then the dummy has its turn, and it is hers again with a fresh turn's worth (none were left to keep).
+    const events: ZoneEvent[] = [];
+    state = must(state, { type: "use", by: "ann", unit: "ann", ability: "bash", target: foe }, events);
+    const turnAt = events.findIndex((e) => e.t === "turn");
+    expect(turnAt).toBeGreaterThan(0);
+    const usedAt = events.findIndex((e) => e.t === "used" && e.what === "bash");
+    expect(usedAt).toBeGreaterThanOrEqual(0);
+    expect(usedAt).toBeLessThan(turnAt);
+    expect(state.encounter!.turnNo).toBeGreaterThan(turn);
+    expect(state.encounter!.acting).toEqual(["ann"]);
+    expect(state.encounter!.budgets.ann.ap).toBe(AP_TURN);
+    // Spent out is no AP left and nothing bought with them left to walk, a course charted included.
+    expect(spentOut({ ap: 0, move: 0, stride: 2, disengaged: false })).toBe(true);
+    expect(spentOut({ ap: 0, move: 1, stride: 2, disengaged: false })).toBe(false);
+    expect(spentOut({ ap: 0, move: 0, stride: 2, disengaged: false, course: 1 })).toBe(false);
+    expect(spentOut({ ap: 1, move: 0, stride: 2, disengaged: false })).toBe(false);
+  });
+
+  it("keeps a spent-out turn going while movement bought with the last AP is left to walk", () => {
+    let { state } = duel("dummy", "qa_paladin", at(5, 6), at(8, 6));
+    const turn = state.encounter!.turnNo;
+    Object.assign(state.encounter!.budgets.ann, { ap: 1, move: 0, stride: 3 });
+    state = must(state, { type: "move", by: "ann", unit: "ann", to: at(5, 6) });
+    expect(state.encounter!.budgets.ann).toMatchObject({ ap: 0, move: 2 });
+    expect(state.encounter).toMatchObject({ turnNo: turn, done: [] });
+    state = must(state, { type: "move", by: "ann", unit: "ann", to: at(3, 6) });
+    expect(state.encounter!.turnNo).toBeGreaterThan(turn);
+  });
+
+  it("ends only the spent-out hero's part of a turn two are taking together (the tests' switch for shared turns)", () => {
+    let state = board();
+    state.aiOff = true;
+    hero(state, "ann", "qa_paladin", at(3, 6));
+    hero(state, "bo", "qa_paladin", at(3, 8));
+    enemy(state, "wolf", at(9, 6));
+    state = provoke(state);
+    const fresh = () => ({ ap: AP_TURN, move: 0, stride: 2, disengaged: false });
+    Object.assign(state.encounter!, { acting: ["ann", "bo"], done: [], budgets: { ann: { ...fresh(), ap: BONUS_AP }, bo: fresh() } });
+    const turn = state.encounter!.turnNo;
+    state = must(state, { type: "use", by: "ann", unit: "ann", ability: "block" });
+    expect(state.encounter).toMatchObject({ turnNo: turn, acting: ["ann", "bo"], done: ["ann"] });
+    expect(fails(state, { type: "use", by: "ann", unit: "ann", ability: "block" })).toMatch(/not your turn/);
+    state = must(state, { type: "end_turn", by: "bo", unit: "bo" });
+    expect(state.encounter!.turnNo).toBeGreaterThan(turn);
   });
 
   it("charges 2 for forest and 1 more to climb, buying a stride at a time", () => {
@@ -1045,26 +1183,101 @@ describe("threat", () => {
     expect(enemyHp("wolf", 1, 2)).toBeGreaterThan(enemyHp("wolf", 1, 1) * 1.5);
     expect(enemyHp("wolf", 1, 3)).toBeGreaterThan(enemyHp("wolf", 1, 2));
     expect(enemyStrikes("wolf", 1, 3)[0].bonus).toBe(enemyStrikes("wolf", 1, 1)[0].bonus + 2);
-    const count = (threat: number) => createZone("T", "threat", zoneOptions({ groups: 2, kinds: ["wolf"], party: 2, threat })).units.filter((u) => u.side === "enemy").length;
-    expect(count(1)).toBe(4);
-    expect(count(2)).toBe(6);
-    expect(count(3)).toBe(8);
+    // A band is as many as the party (one more, for a party of three or four), and one more again for each step of
+    // threat past the first: never fewer than two.
+    const bands = (party: number, threat: number) => {
+      const zone = createZone("T", "threat", zoneOptions({ groups: 2, kinds: ["wolf"], party, threat }));
+      return Object.keys(zone.groups).map((g) => zone.units.filter((u) => u.group === g).length);
+    };
+    expect(bands(2, 1)).toEqual([2, 2]);
+    expect(bands(2, 2)).toEqual([3, 3]);
+    expect(bands(2, 3)).toEqual([4, 4]);
+    // A lone hero meets two at any ordinary threat; four heroes, five or six.
+    expect(bands(1, 1)).toEqual([2, 2]);
+    expect(bands(1, 2)).toEqual([2, 2]);
+    expect(bands(1, 3)).toEqual([3, 3]);
+    expect(bands(4, 1)).toEqual([5, 5]);
+    expect(bands(4, 2)).toEqual([6, 6]);
     // A zone made before there was a threat is a fair fight.
     expect(zoneOptions({}).threat).toBe(2);
   });
 });
 
 describe("the enemy's turn", () => {
-  it("runs when nothing is in reach, spending all its AP on the ground", () => {
+  it("goes about as far on an AP as an ordinary hero does, and the quick a step further: never more than 3", () => {
+    // What each of them covers for 1 AP on open ground. An ordinary hero covers 2 (rules.ts heroMove).
+    const strides: Record<string, number> = {
+      dummy: 0,
+      bandit: 2, skeleton: 2, cultist: 2, brute: 2, bear: 2, ogre: 2, troll: 2, slime: 2, snow_bear: 2, wraith: 2, witch: 2,
+      wolf: 3, frost_wolf: 3, ember_hound: 3, spider: 3, archer: 3, shade: 3, bat: 3,
+      alpha: 3, great_bear: 2, guardian: 2, haunt: 2, broodmother: 2, villain: 2,
+    };
+    expect(Object.keys(strides).sort()).toEqual(Object.keys(ENEMIES).sort());
+    for (const kind of Object.keys(ENEMIES)) expect(enemyMove(kind), kind).toBe(strides[kind]);
+    expect(heroMove({ ...STARTING_STATS.qa_paladin, agi: 5 })).toBe(2);
+    expect(Math.max(...Object.keys(ENEMIES).map((kind) => enemyMove(kind)))).toBe(3);
+    // What a map's modifiers add comes on top.
+    expect(enemyMove("bandit", 1)).toBe(3);
+    expect(enemyMove("bat", 1)).toBe(4);
+    expect(ENEMY_MOVE_AP).toBe(2);
+  });
+
+  it("runs when nothing is in reach, but puts no more than two of its AP into the ground in a turn, and keeps the rest", () => {
     let state = board();
-    hero(state, "ann", "qa_paladin", at(1, 6));
+    Object.assign(hero(state, "ann", "qa_paladin", at(1, 6)), { hp: 900, maxHp: 900 });
     const bear = enemy(state, "bear", at(13, 6));
     const events: ZoneEvent[] = [];
     state = provoke(state, "ann", events);
-    for (let i = 0; i < 3 && !events.some((e) => e.t === "moved" && e.id === bear.id); i++) state = must(state, { type: "timeout" }, events);
-    const walked = events.filter((e): e is Extract<ZoneEvent, { t: "moved" }> => e.t === "moved" && e.id === bear.id).flatMap((e) => e.path);
-    // A bear covers 2 for each AP: running, all 4 of them, more than the 2 AP an attack would leave it in one go.
-    expect(walked.length).toBeGreaterThan(enemyMove("bear") * (AP_TURN - ACTION_AP));
+    const stepsOf = (told: ZoneEvent[]) => told.filter((e): e is Extract<ZoneEvent, { t: "moved" }> => e.t === "moved" && e.id === bear.id).flatMap((e) => e.path).length;
+    for (let i = 0; i < 3 && stepsOf(events) === 0; i++) state = must(state, { type: "timeout" }, events);
+    // A bear covers 2 for each AP, and two AP are all it walks with: 4 hexes of open ground, straight at her.
+    expect(enemyMove("bear") * ENEMY_MOVE_AP).toBe(4);
+    expect(stepsOf(events)).toBe(4);
+    expect(hexDistance(unit(state, bear.id).pos, at(1, 6))).toBe(12 - 4);
+    // The two it did not spend are kept for its next turn.
+    expect(state.encounter!.banked?.[bear.id]).toBe(AP_TURN - ENEMY_MOVE_AP);
+    // It comes on at that pace, with all the AP it has saved, and in the turn it gets to her it strikes as well.
+    const turns: ZoneEvent[][] = [];
+    for (let i = 0; i < 6 && !turns.some((told) => told.some((e) => e.t === "used" && e.id === bear.id)); i++) {
+      const told: ZoneEvent[] = [];
+      state = must(state, { type: "timeout" }, told);
+      turns.push(told);
+    }
+    expect(turns.length).toBe(2);
+    for (const told of turns) expect(stepsOf(told)).toBeLessThanOrEqual(4);
+    const last = turns[turns.length - 1];
+    expect(stepsOf(last)).toBeGreaterThan(0);
+    expect(last.filter((e) => e.t === "used" && e.id === bear.id && e.what === "attack").length).toBeGreaterThanOrEqual(1);
+    expect(adjacent(unit(state, bear.id).pos, unit(state, "ann").pos)).toBe(true);
+  });
+
+  it("is held to two AP of movement, which a hero is not; what lengthens its stride (Hasted) still does", () => {
+    const run = (hasted: boolean) => {
+      let state = board();
+      Object.assign(hero(state, "ann", "qa_paladin", at(1, 6)), { hp: 900, maxHp: 900 });
+      const wolf = enemy(state, "wolf", at(15, 6));
+      if (hasted) wolf.conditions.push({ kind: "hasted", rounds: 9 });
+      const events: ZoneEvent[] = [];
+      state = provoke(state, "ann", events);
+      const steps = () => events.filter((e): e is Extract<ZoneEvent, { t: "moved" }> => e.t === "moved" && e.id === wolf.id).flatMap((e) => e.path).length;
+      for (let i = 0; i < 3 && steps() === 0; i++) state = must(state, { type: "timeout" }, events);
+      return { state, steps: steps() };
+    };
+    // A wolf covers 3 for each AP: 6 hexes in its turn, and twice that Hasted, the same two AP spent.
+    expect(run(false).steps).toBe(ENEMY_MOVE_AP * enemyMove("wolf"));
+    expect(run(true).steps).toBe(ENEMY_MOVE_AP * enemyMove("wolf") * 2);
+    // A hero's budget has no such limit: all four of her AP can go on walking.
+    const { state } = run(false);
+    expect(state.encounter!.acting).toEqual(["ann"]);
+    expect(state.encounter!.budgets.ann.walk).toBeUndefined();
+    expect(moveLeft(state.encounter!.budgets.ann)).toBe(AP_TURN * heroMove(unit(state, "ann").stats!));
+    // An enemy's says how many it may still walk with, and movement is reckoned by it.
+    expect(moveLeft({ ap: 4, move: 0, stride: 3, disengaged: false, walk: ENEMY_MOVE_AP })).toBe(6);
+    expect(moveLeft({ ap: 6, move: 1, stride: 3, disengaged: false, walk: 1 })).toBe(4);
+    expect(moveLeft({ ap: 1, move: 0, stride: 3, disengaged: false, walk: 2 })).toBe(3);
+    expect(walkAp({ ap: 4, move: 0, stride: 3, disengaged: false, walk: 2 }, ACTION_AP)).toBe(2);
+    expect(walkAp({ ap: 3, move: 0, stride: 3, disengaged: false, walk: 2 }, ACTION_AP)).toBe(1);
+    expect(walkAp({ ap: 1, move: 0, stride: 3, disengaged: false }, ACTION_AP)).toBe(0);
   });
 
   it("closes on a hero and attacks", () => {
@@ -1160,8 +1373,9 @@ describe("the end of a fight", () => {
     expect(state.groups.g1.alerted).toBe(false);
   });
 
-  it("pays a won fight's XP and what the fallen left to each player's hero, never a stand-in's, and says when the map is cleared", () => {
+  it("pays a won fight's XP to each player's hero, never a stand-in's, leaves the fallen lying to be searched, and says when the map is cleared", () => {
     let { state, foe } = duel("skeleton");
+    const fell = unit(state, foe).pos;
     const helper = hero(state, "bo", "devops_mage", at(3, 9));
     helper.controller = "ann";
     state.encounter!.order.push("bo");
@@ -1181,13 +1395,12 @@ describe("the end of a fight", () => {
       if (state.encounter) state = must(state, { type: "end_turn", by: "ann", unit: "ann" }, events);
     }
     expect(events.some((e) => e.t === "fight_end" && e.outcome === "victory")).toBe(true);
-    expect(effects).toHaveLength(1);
-    const grant = effects[0];
-    expect(grant).toMatchObject({ type: "grant", heroId: "ann", xp: ENEMIES.skeleton.xp });
-    // A skeleton leaves bone and iron, and only those.
-    expect(Object.keys(grant.resources).every((k) => k === "bone" || k === "iron")).toBe(true);
-    expect(Object.values(grant.resources).reduce((a, b) => a + (b ?? 0), 0)).toBeGreaterThan(0);
-    expect(events).toContainEqual({ t: "spoils", id: "ann", xp: grant.xp, resources: grant.resources });
+    // The XP, and nothing else: nothing is put in anyone's pack for them.
+    expect(effects).toEqual([{ type: "grant", heroId: "ann", xp: ENEMIES.skeleton.xp, resources: {} }]);
+    expect(events).toContainEqual({ t: "spoils", id: "ann", xp: ENEMIES.skeleton.xp, resources: {} });
+    // What the skeleton had is still on it: it lies where it fell, to be walked up to and searched.
+    expect(state.units.some((u) => u.id === foe)).toBe(false);
+    expect(state.loot).toEqual([{ id: foe, kind: "body", name: ENEMIES.skeleton.name, pos: fell, unit: "skeleton", level: 1, loot: {} }]);
     expect(events.some((e) => e.t === "cleared")).toBe(true);
   });
 
@@ -1201,21 +1414,44 @@ describe("the end of a fight", () => {
   });
 
   it("plays whole fights on generated maps without breaking its own rules", () => {
+    let struck = 0;
     for (let seed = 0; seed < 9; seed++) {
       let state = createZone("PLAY", `play-${seed}`, zoneOptions({ size: "small", biome: (["meadow", "woods", "caves", "shore"] as const)[seed % 4], groups: 2, party: 2, clear: 3, obstacles: 2, elevation: 2, threat: (seed % 3) + 1 }));
       state = must(state, { type: "join", hero: standInHero("refactor_rogue", "ann", 3)! });
       state = must(state, { type: "join", hero: standInHero("devops_mage", "bo", 3)! });
+      const kinds = new Map(state.units.map((u) => [u.id, u.kind]));
+      const events: ZoneEvent[] = [];
       const check = () => {
         const where = `seed ${seed}`;
-        const up = state.units.filter((u) => !u.down);
-        expect(new Set(up.map((u) => posKey(u.pos))).size, where).toBe(up.length);
+        // No hex holds more than it has room for (the dead take up none), and none holds fighters of both sides.
+        const crowd = new Map<string, number>();
+        const sides = new Map<string, Set<string>>();
+        for (const u of state.units) {
+          if (isDead(u)) continue;
+          crowd.set(posKey(u.pos), (crowd.get(posKey(u.pos)) ?? 0) + 1);
+          sides.set(posKey(u.pos), (sides.get(posKey(u.pos)) ?? new Set()).add(u.side));
+        }
+        expect(Math.max(...crowd.values()), where).toBeLessThanOrEqual(HEX_ROOM);
+        expect(Math.max(...[...sides.values()].map((s) => s.size)), where).toBe(1);
+        for (const b of Object.values(state.encounter?.budgets ?? {})) expect(b.walk ?? 0, where).toBeGreaterThanOrEqual(0);
         for (const u of state.units) {
           expect(u.hp, where).toBeGreaterThanOrEqual(0);
           expect(u.hp, where).toBeLessThanOrEqual(u.maxHp);
-          // Only what flies may be over water.
+          // Only what flies may be over water, and nobody at all is off the land or on what bars the way.
           if (!flies(u)) expect(solid(state.map.tiles.find((t) => t.q === u.pos.q && t.r === u.pos.r)), where).toBe(false);
+          expect(state.map.tiles.some((t) => t.q === u.pos.q && t.r === u.pos.r), where).toBe(true);
+          expect(blockerAt(state, u.pos), where).toBe(false);
         }
-        if (state.encounter) for (const id of state.encounter.acting) expect(state.encounter.order, where).toContain(id);
+        const enc = state.encounter;
+        if (enc) {
+          for (const id of enc.acting) expect(enc.order, where).toContain(id);
+          // A turn is one fighter's alone, and nobody shares a place in the order.
+          expect(enc.acting.length, where).toBeLessThanOrEqual(1);
+          expect(new Set(enc.order.map((id) => `${enc.init[id]}/${enc.tie?.[id] ?? 0}`)).size, where).toBe(enc.order.length);
+          for (const b of Object.values(enc.budgets)) expect(b.ap, where).toBeGreaterThanOrEqual(0);
+        }
+        // Whoever fell and was cleared away lies there to be searched; nobody lost to a pit does.
+        for (const s of state.loot ?? []) expect(state.units.some((u) => u.id === s.id), where).toBe(false);
       };
       for (let step = 0; step < 150; step++) {
         if (!state.units.some((u) => u.side === "enemy" && !u.down)) break;
@@ -1232,19 +1468,35 @@ describe("the end of a fight", () => {
             // Walk as near as the turn allows.
             const reach = zoneReach(state, me, fighting ? moveLeft(state.encounter!.budgets[id]) : 12);
             const spot = [...reach.values()].filter((r) => r.stop).sort((a, b) => hexDistance(a.pos, target.pos) - hexDistance(b.pos, target.pos) || a.cost - b.cost)[0];
-            if (spot && hexDistance(spot.pos, target.pos) < hexDistance(me.pos, target.pos)) state = must(state, { type: "move", by: id, unit: id, to: spot.pos });
+            if (spot && hexDistance(spot.pos, target.pos) < hexDistance(me.pos, target.pos)) state = must(state, { type: "move", by: id, unit: id, to: spot.pos }, events);
             tried = stepZone(state, { type: "use", by: id, unit: id, ability, target: target.id });
           }
-          if (tried.ok) state = tried.state;
+          if (tried.ok) {
+            state = tried.state;
+            events.push(...tried.events);
+          }
           check();
-          if (state.encounter?.acting.includes(id) && !state.encounter.done.includes(id)) state = must(state, { type: "end_turn", by: id, unit: id });
+          if (state.encounter?.acting.includes(id) && !state.encounter.done.includes(id)) state = must(state, { type: "end_turn", by: id, unit: id }, events);
           check();
         }
-        if (state.encounter && !state.encounter.acting.some((id) => !state.encounter!.done.includes(id))) state = must(state, { type: "timeout" });
+        if (state.encounter && !state.encounter.acting.some((id) => !state.encounter!.done.includes(id))) state = must(state, { type: "timeout" }, events);
       }
       // Either the map is cleared or it ran long; either way the state is whole.
       check();
+      // No enemy walked further in a turn of its own than its two AP of movement would take it (being shoved about is not walking).
+      let turn: string | null = null;
+      let steps = 0;
+      for (const e of events) {
+        if (e.t === "turn") [turn, steps] = [e.ids[0] ?? null, 0];
+        else if (e.t === "moved" && e.id === turn && !["ann", "bo"].includes(e.id)) {
+          steps += e.path.length;
+          expect(steps, `seed ${seed}: ${kinds.get(e.id)} ${e.id}`).toBeLessThanOrEqual(ENEMY_MOVE_AP * enemyMove(kinds.get(e.id)!));
+        }
+        if (e.t === "used" && e.what === "attack" && !["ann", "bo"].includes(e.id)) struck += 1;
+      }
     }
+    // And for all that they do not go far, they still get their blows in.
+    expect(struck).toBeGreaterThan(20);
   }, 60_000);
 });
 
@@ -1302,21 +1554,34 @@ describe("a dead enemy's hex", () => {
     expect(unit(pushed!, foe.id).conditions.some((c) => c.kind === "prone")).toBe(false);
   });
 
-  it("is the only one: an enemy on its feet still bars the way, and a fallen hero is walked past but not stopped on", () => {
+  it("is the only one that takes up no room: an enemy on its feet bars the way, and a fallen hero keeps their place on their hex", () => {
     let state = board();
     state.aiOff = true;
     hero(state, "ann", "qa_paladin", at(4, 6));
-    hero(state, "bo", "qa_paladin", at(4, 7));
+    hero(state, "bo", "qa_paladin", at(4, 8));
+    hero(state, "cy", "qa_paladin", at(4, 8));
+    hero(state, "di", "qa_paladin", at(6, 8));
     const foe = enemy(state, "bandit", at(5, 6));
     state = provoke(state);
     while (!state.encounter!.acting.includes("ann")) state = must(state, { type: "timeout" });
-    Object.assign(unit(state, "bo"), { hp: 0, down: true });
+    for (const id of ["bo", "di"]) Object.assign(unit(state, id), { hp: 0, down: true });
     const reach = zoneReach(state, unit(state, "ann"), 10);
+    // The bandit bars the way: its hex is nowhere she can go, however much movement she has.
     expect(reach.has(posKey(unit(state, foe.id).pos))).toBe(false);
-    expect(fails(state, { type: "move", by: "ann", unit: "ann", to: unit(state, foe.id).pos })).toMatch(/cannot get there/);
-    expect(reach.get(posKey(unit(state, "bo").pos))).toMatchObject({ stop: false });
-    expect(fails(state, { type: "move", by: "ann", unit: "ann", to: unit(state, "bo").pos })).toMatch(/standing there/);
-    expect(fails(state, { type: "common", by: "ann", unit: "ann", what: "jump", at: unit(state, "bo").pos })).toMatch(/nowhere to land/);
+    expect(stepCost(state, unit(state, "ann"), at(4, 6), at(5, 6))).toEqual({ cost: Infinity, stop: false });
+    // Bo is down, but still there: with Cy standing over them the hex is full. It is walked through, and not stopped on or landed on.
+    expect(reach.get(posKey(at(4, 8)))).toMatchObject({ stop: false });
+    expect(reach.get(posKey(at(4, 9)))).toBeDefined();
+    expect(fails(state, { type: "move", by: "ann", unit: "ann", to: at(4, 8) })).toMatch(/standing there/);
+    expect(fails(state, { type: "common", by: "ann", unit: "ann", what: "jump", at: at(4, 8) })).toMatch(/nowhere to land/);
+    // Di lies alone on theirs: one more can stand there, and a friend lying there costs nothing to step over.
+    expect(reach.get(posKey(at(6, 8)))).toMatchObject({ stop: true });
+    expect(stepCost(state, unit(state, "ann"), at(5, 8), at(6, 8))).toEqual({ cost: 1, stop: true });
+    expect(unitAt(state, at(6, 8))?.id).toBe("di");
+    expect(unitAt(state, at(4, 8))?.id).toBe("cy");
+    // To the bandit, Di lying there is as much in the way as Cy on their feet: a hero who is down is not dead.
+    expect(stepCost(state, unit(state, foe.id), at(5, 8), at(6, 8))).toEqual({ cost: Infinity, stop: false });
+    expect(stepCost(state, unit(state, foe.id), at(5, 8), at(4, 8))).toEqual({ cost: Infinity, stop: false });
   });
 
   it("is given back to it if the fight is lost, unless someone not in the fight stands there: then it takes the nearest free hex", () => {
@@ -1632,10 +1897,20 @@ describe("fleeing", () => {
       const dice = makeRng(seed + 1);
       const check = () => {
         const where = `seed ${seed}`;
-        const up = state.units.filter((u) => !u.down);
-        expect(new Set(up.map((u) => posKey(u.pos))).size, where).toBe(up.length);
+        // No hex holds more than it has room for (the dead take up none), and none holds fighters of both sides.
+        const crowd = new Map<string, number>();
+        const sides = new Map<string, Set<string>>();
+        for (const u of state.units) {
+          if (isDead(u)) continue;
+          crowd.set(posKey(u.pos), (crowd.get(posKey(u.pos)) ?? 0) + 1);
+          sides.set(posKey(u.pos), (sides.get(posKey(u.pos)) ?? new Set()).add(u.side));
+        }
+        expect(Math.max(...crowd.values()), where).toBeLessThanOrEqual(HEX_ROOM);
+        expect(Math.max(...[...sides.values()].map((s) => s.size)), where).toBe(1);
         const enc = state.encounter;
         if (!enc) return;
+        // A turn is one fighter's alone.
+        expect(enc.acting.length, where).toBeLessThanOrEqual(1);
         for (const id of enc.acting) expect(enc.order, where).toContain(id);
         for (const id of enc.fled ?? []) expect(enc.order, where).not.toContain(id);
         expect(enc.resume, where).toBeUndefined();
@@ -1958,7 +2233,7 @@ describe("a delve", () => {
     expect(solo.units.filter((u) => u.group === "lair").map((u) => u.kind)).toEqual(["haunt"]);
   });
 
-  it("opens a chest from beside it once its guards are gone, and pays its opener", () => {
+  it("opens a chest from beside it once its guards are gone: its opener is paid its XP, and what is in it is theirs to take", () => {
     let state = createZone("DLVE", "d1", delveOptions());
     const chest = state.map.pois.find((p) => p.kind === "cache" && p.loot === "chest")!;
     expect(chest).toBeDefined();
@@ -1976,16 +2251,28 @@ describe("a delve", () => {
     state = step.state;
     expect(state.map.pois.find((p) => p.id === chest.id)!.cleared).toBe(true);
     expect(step.events).toContainEqual({ t: "opened", id: "ann", poi: chest.id, loot: "chest" });
-    expect(step.effects).toHaveLength(1);
-    expect(step.effects[0]).toMatchObject({ type: "grant", heroId: "ann", xp: CHEST_PAY.chest.xp });
-    const gold = step.effects[0].gold!;
-    expect(gold).toBeGreaterThanOrEqual(CHEST_PAY.chest.gold[0]);
-    expect(gold).toBeLessThanOrEqual(CHEST_PAY.chest.gold[1]);
-    expect(step.events.some((e) => e.t === "spoils" && e.id === "ann" && e.gold === gold)).toBe(true);
-    expect(fails(state, { type: "open", by: "ann", unit: "ann", poi: chest.id })).toMatch(/emptied/);
+    // Opening it pays its XP and nothing more.
+    expect(step.effects).toEqual([{ type: "grant", heroId: "ann", xp: CHEST_PAY.chest.xp, resources: {} }]);
+    expect(step.events).toContainEqual({ t: "spoils", id: "ann", xp: CHEST_PAY.chest.xp, resources: {} });
+    // It stands open, and ann is looking into it: what is in it (for whoever takes it first) has been rolled.
+    expect(step.events).toContainEqual({ t: "looked", id: "ann", spot: chest.id });
+    const spot = state.loot!.find((s) => s.id === chest.id)!;
+    expect(spot).toMatchObject({ kind: "chest", chest: "chest", pos: chest.pos });
+    const mine = spot.shared!;
+    const gold = mine.find((i) => i.t === "gold")!;
+    expect(gold.t === "gold" && gold.n).toBeGreaterThanOrEqual(CHEST_PAY.chest.gold[0]);
+    expect(gold.t === "gold" && gold.n).toBeLessThanOrEqual(CHEST_PAY.chest.gold[1]);
+    expect(fails(state, { type: "open", by: "ann", unit: "ann", poi: chest.id })).toMatch(/stands open already/);
+    // Taken, it is hers: the gold and the rest as a grant, and nothing left in it for anyone.
+    const took = stepZone(state, { type: "take", by: "ann", unit: "ann", spot: chest.id });
+    if (!took.ok) throw new Error(took.error);
+    expect(took.events).toEqual([{ t: "took", id: "ann", spot: chest.id, items: mine }]);
+    expect(took.effects[0]).toMatchObject({ type: "grant", heroId: "ann", xp: 0, gold: gold.t === "gold" ? gold.n : 0 });
+    expect(took.state.loot!.find((s) => s.id === chest.id)!.shared).toEqual([]);
+    expect(fails(took.state, { type: "take", by: "ann", unit: "ann", spot: chest.id })).toMatch(/nothing left in it/);
   });
 
-  it("pays every player's hero on the map from the hoard, but no stand-in, and lets no stand-in open it", () => {
+  it("pays every player's hero on the map the hoard's XP, but no stand-in; what is in it goes to whoever takes it first, and no stand-in opens or searches it", () => {
     const state = createZone("DLVE", "d1", delveOptions());
     const hoard = state.map.pois.find((p) => p.loot === "hoard")!;
     expect(hoard).toBeDefined();
@@ -1999,8 +2286,23 @@ describe("a delve", () => {
     const step = stepZone(state, { type: "open", by: "ann", unit: "ann", poi: hoard.id });
     if (!step.ok) throw new Error(step.error);
     expect(step.effects.map((e) => e.heroId).sort()).toEqual(["ann", "bo"]);
-    for (const e of step.effects) expect(e).toMatchObject({ xp: CHEST_PAY.hoard.xp });
-    expect(step.effects.every((e) => !!e.item)).toBe(true);
+    for (const e of step.effects) expect(e).toEqual({ type: "grant", heroId: e.heroId, xp: CHEST_PAY.hoard.xp, resources: {} });
+    // What is in it is one lot for the party, first come first served, taken from beside it: a piece of gear for
+    // certain, and gold. Bo gets there first and has all of it; there is none left for Ann.
+    let open = step.state;
+    expect(fails(open, { type: "take", by: "ann", unit: "cy", spot: hoard.id })).toMatch(/your own hero/);
+    expect(fails(open, { type: "take", by: "bo", unit: "bo", spot: hoard.id })).toMatch(/Go up to it/);
+    unit(open, "bo").pos = beside[1];
+    const took = stepZone(open, { type: "take", by: "bo", unit: "bo", spot: hoard.id });
+    if (!took.ok) throw new Error(took.error);
+    open = took.state;
+    expect(took.effects.every((e) => e.heroId === "bo")).toBe(true);
+    expect(took.effects.filter((e) => !!e.item)).toHaveLength(1);
+    const gold = took.effects[0].gold!;
+    expect(gold).toBeGreaterThanOrEqual(CHEST_PAY.hoard.gold[0]);
+    expect(gold).toBeLessThanOrEqual(CHEST_PAY.hoard.gold[1]);
+    expect(fails(open, { type: "take", by: "ann", unit: "ann", spot: hoard.id })).toMatch(/nothing left in it/);
+    expect(open.loot!.find((s) => s.id === hoard.id)).toMatchObject({ shared: [], loot: {} });
   });
 
   it("costs an Action to open a chest in a fight", () => {
@@ -2625,10 +2927,10 @@ describe("the Paladin's class abilities", () => {
     let { state } = party();
     const annPos = unit(state, "ann").pos;
     const boPos = unit(state, "bo").pos;
-    // The straight way is barred: the walk goes round.
+    // The straight way is barred (by what is left of a wall: nobody walks through it, anyone sees over it): the walk goes round.
     const between = at(4, 6);
     expect(hexDistance(annPos, between) + hexDistance(between, boPos)).toBe(hexDistance(annPos, boPos));
-    enemy(state, "dummy", between);
+    state.map.tiles.find((t) => sameHexes(t, between))!.prop = "wall_broken";
     const way = wayBetween(state, unit(state, "ann"), boPos);
     expect(way).toHaveLength(4);
     expect(way.some((p) => sameHexes(p, between))).toBe(false);
@@ -2830,10 +3132,10 @@ describe("the Mage's class abilities", () => {
       const events: ZoneEvent[] = [];
       state = must(state, { type: "use", by: "ann", unit: "ann", ability: "tidal_wave", at: at(6, 6) }, events);
       const saved = (id: string) => events.some((e) => e.t === "roll" && e.roll.kind === "save" && e.roll.id === id && e.roll.ok);
-      // The line runs from at(6,6) to at(10,6). The far one goes first, to the end; the near one as far as it can get.
+      // The line runs from at(6,6) to at(10,6). The far one goes first, to the end; the near one after it, past whoever
+      // stood their ground (nobody bars the way), to the end as well: there is room for two on the last hex.
       expect(unit(state, far).pos).toEqual(saved(far) ? at(8, 6) : at(10, 6));
-      if (!saved(near)) expect(unit(state, near).pos).toEqual(saved(far) ? at(7, 6) : at(9, 6));
-      else expect(unit(state, near).pos).toEqual(at(6, 6));
+      expect(unit(state, near).pos).toEqual(saved(near) ? at(6, 6) : at(10, 6));
       swept += [near, far].filter((id) => !saved(id)).length;
       expect(events.some((e) => e.t === "hit" && e.target === "bo")).toBe(false);
       // The line is left under water, and whoever is on it soaked.
@@ -2899,11 +3201,18 @@ describe("the Rogue's class abilities", () => {
     expect(unit(state, "bo").pos).toEqual(at(4, 6));
   });
 
-  it("Smuggler's Route: not further than 3, nor onto rock or someone", () => {
-    const { state } = party(rock(at(7, 6)));
+  it("Smuggler's Route: not further than 3, nor onto rock or a hex with no room left on it", () => {
+    let { state } = party(rock(at(7, 6)));
     expect(fails(state, use("smugglers_route", { at: at(9, 6) }))).toMatch(/Too far/);
     expect(fails(state, use("smugglers_route", { at: at(7, 6) }))).toMatch(/nowhere to stand/);
+    // Two stand on Bo's hex: it is full.
+    unit(state, "cy").pos = at(4, 6);
     expect(fails(state, use("smugglers_route", { at: at(4, 6) }))).toMatch(/nowhere to stand/);
+    // With only Bo on it, there is room beside them.
+    unit(state, "cy").pos = at(2, 8);
+    state = must(state, use("smugglers_route", { at: at(4, 6) }));
+    expect(unit(state, "ann").pos).toEqual(at(4, 6));
+    expect(unit(state, "bo").pos).toEqual(at(4, 6));
   });
 
   it("Smuggler's Route: an ally beside you comes too, to the same side of where you land, or the nearest open hex", () => {
@@ -2911,12 +3220,20 @@ describe("the Rogue's class abilities", () => {
     state = must(state, use("smugglers_route", { target: "bo", at: at(8, 6) }));
     expect(unit(state, "ann").pos).toEqual(at(8, 6));
     expect(unit(state, "bo").pos).toEqual(at(7, 6));
-    // With that side taken, the nearest open hex beside it.
+    // A friend on that side does not take it: there is room for Bo on their hex.
+    let shared = party().state;
+    unit(shared, "cy").pos = at(7, 6);
+    shared = must(shared, use("smugglers_route", { target: "bo", at: at(8, 6) }));
+    expect(unit(shared, "bo").pos).toEqual(at(7, 6));
+    // An enemy there does, one being enough: Bo arrives on the nearest open hex beside where Ann lands.
     let again = party().state;
-    addFoe(again, at(7, 6));
+    const held = addFoe(again, at(7, 6));
     again = must(again, use("smugglers_route", { target: "bo", at: at(8, 6) }));
     expect(hexDistance(unit(again, "bo").pos, at(8, 6))).toBe(1);
     expect(hexDistance(unit(again, "bo").pos, at(7, 6))).toBe(1);
+    expect(unit(again, held).pos).toEqual(at(7, 6));
+    // And Ann herself cannot land on a hex an enemy holds.
+    expect(fails(again, use("smugglers_route", { at: at(7, 6) }))).toMatch(/nowhere to stand/);
   });
 
   it("Smuggler's Route: the ally has to be beside you, and there has to be room for them", () => {
@@ -3918,7 +4235,7 @@ describe("the Warden's wall", () => {
     expect(fails(far, use("overwhelm", { target: foes[0] }))).toMatch(/next to/);
   });
 
-  it("Overwhelm: driven into rock, or a wall, it is Stunned and loses its next turn; into somebody, it just stops", () => {
+  it("Overwhelm: driven into rock, or a wall, it is Stunned and loses its next turn; onto a hex with room it shares it, and at a full one it just stops", () => {
     const flat = overwhelmed(true, [at(6, 6)], { edit: rock(at(7, 6)) });
     expect(unit(flat.state, flat.ids[0]).pos).toEqual(at(6, 6));
     expect(has(flat.state, flat.ids[0], "stunned")).toBe(true);
@@ -3929,8 +4246,12 @@ describe("the Warden's wall", () => {
     const one = overwhelmed(true, [at(6, 6)], { edit: rock(at(8, 6)) });
     expect(unit(one.state, one.ids[0]).pos).toEqual(at(7, 6));
     expect(has(one.state, one.ids[0], "stunned")).toBe(true);
-    // Into another enemy: no further, and no stun.
-    const body = overwhelmed(true, [at(6, 6), at(8, 6)]);
+    // Onto another enemy's hex: there is room for two, so it is driven the whole way.
+    const shared = overwhelmed(true, [at(6, 6), at(8, 6)]);
+    expect(unit(shared.state, shared.ids[0]).pos).toEqual(at(8, 6));
+    expect(has(shared.state, shared.ids[0], "stunned")).toBe(false);
+    // Up against a hex that is full: no further, and no stun.
+    const body = overwhelmed(true, [at(6, 6), at(8, 6), at(8, 6)]);
     expect(unit(body.state, body.ids[0]).pos).toEqual(at(7, 6));
     expect(has(body.state, body.ids[0], "stunned")).toBe(false);
   });

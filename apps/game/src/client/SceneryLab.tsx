@@ -6,7 +6,12 @@
 // courtyard with towers and a gate, a pillared hall on a paved platform with
 // a dais at its head, a palisaded camp, a waygate, a rib cage with its skull,
 // crystals, terraces of high ground with ladders up them. Buttons switch its
-// climate, its backdrop and the hour. Click a hex to walk the hero there, for
+// climate, its backdrop and the hour. Two more maps are places under a roof
+// and under ground, as the `dark` backdrop draws them: a hall (walled rooms
+// with doorways, torches on the walls, a pillared great hall with a throne
+// on its dais, a gallery, a library and a crypt) and a cave (chambers of
+// living rock joined by a tunnel, a pit with a bridge over it, a pool, a
+// ledge, a den full of bones). Click a hex to walk the hero there, for
 // a sense of scale.
 //
 // Nothing here touches the server or a game being played.
@@ -16,11 +21,15 @@ import type { HexPos } from "@gantt-quest/core";
 import { BASE_HEIGHT, CLIMES, HERO_CLASSES, type Biome, type Clime, type Tile, type WorldMap } from "@gantt-quest/world";
 import { devTools } from "./devTools";
 import type { BackdropKind } from "./render/backdrop";
+import { fancy } from "./render/fancy";
 import { WorldRenderer, type RenderState } from "./render/WorldRenderer";
 
 const COLS = 24;
 const ROWS = 18;
-const BACKDROPS: BackdropKind[] = ["sea", "mist", "abyss", "lava", "frost", "dusk"];
+const BACKDROPS: BackdropKind[] = ["sea", "mist", "abyss", "lava", "frost", "dusk", "dark"];
+type Place = "outdoors" | "hall" | "cave";
+const PLACES: Place[] = ["outdoors", "hall", "cave"];
+const KEPT = "gq:lab:scenery";
 const HOURS: [string, number | undefined][] = [["Clock", undefined], ["Noon", 0.5], ["Dusk", 0.74], ["Night", 0.02]];
 
 const hash = (q: number, r: number, salt: number) => {
@@ -186,16 +195,207 @@ function sampleMap(clime: Clime): WorldMap {
   return { grid: { cols: COLS, rows: ROWS }, tiles, pois: [] };
 }
 
-const START: HexPos = { q: 14 - Math.floor(14 / 2), r: 14 };
+type Cell = { biome: Biome; elev: number; prop?: string; ladder?: number; h?: number };
+/** The six neighbours of a cell, in the world's HEX_DIRS order: up-right, right, down-right, down-left, left, up-left. */
+const beside = (c: number, r: number) => (r % 2 ? [[c + 1, r - 1], [c + 1, r], [c + 1, r + 1], [c, r + 1], [c - 1, r], [c, r - 1]] : [[c, r - 1], [c + 1, r], [c, r + 1], [c - 1, r + 1], [c - 1, r], [c - 1, r - 1]]);
+const cellId = (c: number, r: number) => `${c},${r}`;
+
+/** A map from its cells (by column and row): only the cells given are there at all. */
+function mapOf(cells: Map<string, Cell>, clime: Clime): WorldMap {
+  const tiles: Tile[] = [];
+  for (const [at, cell] of cells) {
+    const [c, r] = at.split(",").map(Number);
+    const q = c - Math.floor(r / 2);
+    tiles.push({
+      q, r, biome: cell.biome,
+      h: cell.h ?? (cell.biome === "water" ? BASE_HEIGHT.water : BASE_HEIGHT[cell.biome] + cell.elev * 0.42 + hash(q, r, 11) * 0.03),
+      elev: cell.elev,
+      ...(clime !== "greenwood" ? { clime } : {}),
+      ...(cell.prop ? { prop: cell.prop } : {}),
+      ...(cell.ladder ? { ladder: cell.ladder } : {}),
+    });
+  }
+  return { grid: { cols: COLS, rows: ROWS }, tiles, pois: [] };
+}
+
+/** A ladder on (c, r) up to the neighbour (tc, tr). */
+function ladderUp(cells: Map<string, Cell>, c: number, r: number, tc: number, tr: number) {
+  const side = beside(c, r).findIndex(([nc, nr]) => nc === tc && nr === tr);
+  const cell = cells.get(cellId(c, r));
+  if (cell && side >= 0) cell.ladder = (cell.ladder ?? 0) | (1 << side);
+}
+
+/**
+ * A mock hall, as the rules will lay one: paved floors, walls one hex thick in straight runs along rows and down
+ * (zigzag) columns, shared between the rooms either side, doorways in them, and nothing past the outer walls.
+ */
+function hallMap(clime: Clime): WorldMap {
+  const cells = new Map<string, Cell>();
+  const fill = (c0: number, r0: number, c1: number, r1: number, elev = 0) => {
+    for (let r = r0; r <= r1; r++) for (let c = c0; c <= c1; c++) cells.set(cellId(c, r), { biome: "paved", elev });
+  };
+  const put = (c: number, r: number, prop: string) => {
+    const cell = cells.get(cellId(c, r));
+    if (cell) cell.prop = prop;
+  };
+  fill(2, 1, 21, 15);
+  // The outer walls, the wall between the great hall and the rooms east of it, and the wall between those two.
+  for (let c = 2; c <= 21; c++) for (const r of [1, 15]) put(c, r, c % 4 === 0 ? "wall_torch" : "wall");
+  for (let r = 2; r <= 14; r++) for (const c of [2, 13, 21]) put(c, r, r % 4 === 0 ? "wall_torch" : "wall");
+  for (let c = 14; c <= 20; c++) put(c, 8, c === 15 || c === 19 ? "wall_torch" : "wall");
+  put(13, 5, "arch");
+  put(13, 11, "arch");
+  put(17, 8, "arch");
+  // ---- the great hall: two rows of pillars, a runner up the middle to a dais and its throne ----
+  fill(6, 2, 8, 3, 1);
+  put(7, 2, "throne");
+  put(6, 2, "brazier");
+  put(8, 2, "brazier");
+  for (const r of [5, 7, 9, 11, 13]) {
+    put(5, r, "pillar");
+    put(10, r, r === 11 ? "pillar_broken" : "pillar");
+  }
+  for (let r = 4; r <= 12; r++) put(7, r, "rug");
+  put(8, 13, "waygate");
+  put(11, 3, "weapon_rack");
+  put(12, 7, "statue");
+  put(11, 9, "table");
+  put(9, 14, "barrels");
+  put(11, 13, "banner");
+  put(8, 6, "bones");
+  // A gallery along its west side, two levels up: steps to it, and a ladder at the far end.
+  fill(3, 9, 4, 13, 2);
+  cells.set(cellId(3, 8), { biome: "paved", elev: 1, prop: "stairs" });
+  ladderUp(cells, 5, 12, 4, 12);
+  put(3, 11, "bookshelf");
+  put(3, 13, "weapon_rack");
+  put(3, 3, "barrels");
+  put(4, 5, "statue");
+  // ---- north-east: a library and guardroom ----
+  for (const c of [15, 16, 19]) put(c, 2, "bookshelf");
+  put(17, 4, "table");
+  for (let c = 15; c <= 19; c++) put(c, 6, "rug");
+  put(20, 3, "cage");
+  put(20, 6, "weapon_rack");
+  put(14, 3, "barrels");
+  put(18, 2, "brazier");
+  // ---- south-east: a crypt ----
+  for (const c of [15, 17, 19]) put(c, 11, "sarcophagus");
+  put(17, 13, "altar");
+  put(15, 13, "statue");
+  put(19, 13, "statue");
+  put(16, 10, "bones");
+  put(20, 9, "pillar_broken");
+  put(14, 14, "sarcophagus");
+  put(18, 14, "brazier");
+  return mapOf(cells, clime);
+}
+
+/**
+ * A mock cave, as the rules will lay one: `cave` floor, walls of `rock` two hexes thick and far taller than a
+ * hero round every chamber and tunnel, and nothing past them; a pit with a bridge of `dock` over it, a pool, a ledge.
+ */
+function caveMap(clime: Clime): WorldMap {
+  const cells = new Map<string, Cell>();
+  const flat = (c: number, r: number) => ({ x: c + (r % 2) * 0.5, y: r * 0.866 });
+  const inside = (c: number, r: number) => r >= 0 && r < ROWS && c >= 0 && c < COLS;
+  const blob = (cc: number, cr: number, rad: number, salt: number) => {
+    const m = flat(cc, cr);
+    for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) {
+      const p = flat(c, r);
+      if (Math.hypot(p.x - m.x, p.y - m.y) < rad + (hash(c, r, salt) - 0.5) * 1.1) cells.set(cellId(c, r), { biome: "cave", elev: 0 });
+    }
+  };
+  blob(7, 8, 4.4, 21);
+  blob(17, 6, 3.3, 22);
+  blob(16, 13, 2.5, 23);
+  // Tunnels: one between the two great chambers, one down to the den.
+  for (let c = 10; c <= 14; c++) for (const r of [7, 8]) cells.set(cellId(c, r), { biome: "cave", elev: 0 });
+  for (let r = 9; r <= 11; r++) cells.set(cellId(17, r), { biome: "cave", elev: 0 });
+  const put = (c: number, r: number, prop: string) => {
+    const cell = cells.get(cellId(c, r));
+    if (cell && cell.biome === "cave") cell.prop = prop;
+  };
+  // A ledge across the north of the first chamber, two levels up, with a ladder; a pool in the second.
+  for (const [at, cell] of cells) {
+    const [c, r] = at.split(",").map(Number);
+    if (c <= 11 && r <= 5) cell.elev = 2;
+  }
+  ladderUp(cells, 7, 6, 7, 5);
+  for (const [c, r] of [[17, 5], [18, 5], [18, 6], [17, 4]]) if (cells.has(cellId(c, r))) cells.set(cellId(c, r), { biome: "water", elev: 0 });
+  // A hole in the floor of the first chamber, and a bridge over it.
+  for (const [c, r] of [[4, 9], [5, 9], [6, 9], [7, 9], [4, 10], [5, 10], [6, 10], [7, 10], [5, 11], [6, 11]]) cells.delete(cellId(c, r));
+  for (const [c, r] of [[5, 9], [5, 10], [5, 11]]) cells.set(cellId(c, r), { biome: "dock", elev: 0 });
+  // The rock: everything within two hexes of the floor that is not floor (or the pit).
+  const pit = new Set(["4,9", "6,9", "7,9", "4,10", "6,10", "7,10", "6,11"]);
+  let rim = [...cells.keys()];
+  for (let ring = 0; ring < 2; ring++) {
+    const next: string[] = [];
+    for (const at of rim) {
+      const [c, r] = at.split(",").map(Number);
+      for (const [nc, nr] of beside(c, r)) {
+        const id = cellId(nc, nr);
+        if (cells.has(id) || pit.has(id) || !inside(nc, nr)) continue;
+        cells.set(id, { biome: "rock", elev: 5, h: 2.2 + hash(nc, nr, 31) * 0.7 });
+        next.push(id);
+      }
+    }
+    rim = next;
+  }
+  put(8, 12, "waygate");
+  put(9, 7, "stalagmite");
+  put(4, 7, "stalagmite");
+  put(9, 10, "stalagmite");
+  put(8, 4, "crystal");
+  put(5, 4, "mushrooms");
+  put(3, 8, "boulder");
+  put(8, 7, "campfire");
+  put(10, 9, "bones");
+  put(15, 7, "stalagmite");
+  put(19, 7, "crystal");
+  put(16, 4, "mushrooms");
+  put(19, 5, "bones");
+  // The den: bones thick on the floor, the ribs and skull of what was eaten, a cage, a brazier.
+  put(15, 13, "ribs");
+  put(14, 13, "skull");
+  put(17, 12, "bones");
+  put(16, 14, "bones");
+  put(17, 14, "cage");
+  put(18, 13, "brazier");
+  put(15, 12, "bones");
+  return mapOf(cells, clime);
+}
+
+const hexOf = (c: number, r: number): HexPos => ({ q: c - Math.floor(r / 2), r });
+const STARTS: Record<Place, HexPos> = { outdoors: hexOf(14, 14), hall: hexOf(8, 10), cave: hexOf(8, 10) };
 
 export default function SceneryLab() {
   const mount = useRef<HTMLDivElement>(null);
   const view = useRef<WorldRenderer | null>(null);
-  const [clime, setClime] = useState<Clime>("greenwood");
-  const [backdrop, setBackdrop] = useState<BackdropKind>("mist");
+  // What was being looked at is kept for the tab, so a reload (the dev server's, when a file is saved) comes back to it.
+  const kept = useMemo(() => {
+    try {
+      return JSON.parse(sessionStorage.getItem(KEPT) ?? "{}") as { clime?: Clime; place?: Place; backdrop?: BackdropKind };
+    } catch {
+      return {};
+    }
+  }, []);
+  const [clime, setClime] = useState<Clime>(kept.clime && CLIMES.includes(kept.clime) ? kept.clime : "greenwood");
+  const [place, setPlace] = useState<Place>(kept.place && PLACES.includes(kept.place) ? kept.place : "outdoors");
+  const [backdrop, setBackdrop] = useState<BackdropKind>(kept.backdrop && BACKDROPS.includes(kept.backdrop) ? kept.backdrop : "mist");
   const [hour, setHour] = useState<number | undefined>(0.5);
-  const [at, setAt] = useState<HexPos>(START);
-  const map = useMemo(() => sampleMap(clime), [clime]);
+  const [at, setAt] = useState<HexPos>(STARTS[place]);
+  useEffect(() => sessionStorage.setItem(KEPT, JSON.stringify({ clime, place, backdrop })), [clime, place, backdrop]);
+  // "Fancy graphics" is the player's own setting (the glow, the painted ground): the lab only flips it.
+  const [fine, setFine] = useState(fancy.get);
+  useEffect(() => fancy.subscribe(() => setFine(fancy.get())), []);
+  const map = useMemo(() => (place === "hall" ? hallMap(clime) : place === "cave" ? caveMap(clime) : sampleMap(clime)), [place, clime]);
+  // A hall and a cave are seen as they will be: in the dark.
+  const go = (next: Place) => {
+    setPlace(next);
+    setAt(STARTS[next]);
+    setBackdrop(next === "outdoors" ? "mist" : "dark");
+  };
 
   useEffect(() => {
     const r = new WorldRenderer(mount.current!, { onHexClick: (pos) => setAt(pos), onHover() {} });
@@ -221,7 +421,7 @@ export default function SceneryLab() {
 
   useEffect(() => {
     const scene: RenderState = {
-      code: `lab:scenery:${clime}`,
+      code: `lab:scenery:${place}:${clime}`,
       kind: "voyage",
       you: "lab",
       phase: "overworld",
@@ -235,7 +435,7 @@ export default function SceneryLab() {
       backdrop,
     };
     view.current?.setState(scene);
-  }, [map, clime, backdrop, at]);
+  }, [map, place, clime, backdrop, at]);
 
   const pick = <T,>(label: string, options: readonly T[], value: T, set: (v: T) => void, name: (v: T) => string) => (
     <div style={{ display: "flex", gap: 4, alignItems: "center", flexWrap: "wrap" }}>
@@ -253,9 +453,11 @@ export default function SceneryLab() {
       <div ref={mount} style={{ position: "absolute", inset: 0 }} />
       <div style={{ position: "absolute", left: 10, top: 10, display: "grid", gap: 6, padding: 10, borderRadius: 8, background: "rgba(14,16,26,0.82)", color: "#e6e9f2", font: "12px/1.3 system-ui, sans-serif", zIndex: 5 }}>
         <strong>Scenery lab</strong>
+        {pick("Place", PLACES, place, go, (v) => v)}
         {pick("Climate", CLIMES, clime, setClime, (v) => v)}
         {pick("Backdrop", BACKDROPS, backdrop, setBackdrop, (v) => v)}
         {pick("Hour", HOURS.map(([, v]) => v), hour, setHour, (v) => HOURS.find(([, h]) => h === v)![0])}
+        {pick("Graphics", [false, true], fine, (v) => fancy.set(v), (v) => (v ? "fancy" : "plain"))}
         <span style={{ opacity: 0.6 }}>Click a hex to walk there. Q/E turn, R/F tilt, wheel zooms.</span>
       </div>
     </div>

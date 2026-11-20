@@ -23,6 +23,8 @@ import type { Clime, Tile } from "@gantt-quest/world";
 import { flickerFlame, torchFlame } from "./torchFlame";
 import { HIDES } from "./silhouette";
 import { moteField, type Mote, type MoteField } from "./motes";
+import { makeWaygate, type Waygate } from "./waygate";
+import { CUT_GHOST, CUT_NONE, CUT_SINK, addCutaway, sunkY } from "./cutaway";
 
 const SQRT3 = Math.sqrt(3);
 /** From a hex's middle to the middle of a side. */
@@ -43,6 +45,8 @@ const FLAME_BUDGET = 56;
 const CHUNK = 16;
 /** Where a floating map's slab of rock ends and its roots begin to trail away. */
 const RIM = -0.5;
+/** Under a roof, how far down a pit's sides are drawn before the dark has them. */
+const PIT = 3.6;
 
 const hash = (q: number, r: number, salt: number) => {
   const n = Math.sin(q * 127.1 + r * 311.7 + salt * 74.7) * 43758.5453;
@@ -120,7 +124,7 @@ const PALS: Record<Clime, Pal> = {
     glyph: col("#6fe3ff"), crystal: col("#7fe0ff"), crystalDeep: col("#2f7fe0"), cap: col("#b5482f"), gill: col("#e8dcc0"), gillGlows: false, basalt: col("#3e424b"),
   },
   frost: {
-    stone: col("#8794a8"), stoneDark: col("#5f6b80"), stoneLight: col("#aab6c6"), trim: col("#bfdcee"), trimGlows: false,
+    stone: col("#6f7d96"), stoneDark: col("#4c5870"), stoneLight: col("#909db4"), trim: col("#c4e2f4"), trimGlows: false,
     wood: col("#6a5340"), woodDark: col("#463628"), canvas: col("#a7917a"), canvasDark: col("#7f6b58"), bone: col("#e9eef0"), boneDark: col("#b9c4cc"),
     iron: col("#2f3440"), roof: col("#586d8a"), thatch: col("#9a8a62"), bark: col("#4f4038"), leaf: [col("#3b5f52"), col("#2f5048"), col("#46705c")],
     cliff: [col("#7d8a9c"), col("#93a1b3"), col("#667488")], lip: col("#c4d4e2"),
@@ -163,6 +167,15 @@ class Bucket {
   pos: number[] = [];
   nor: number[] = [];
   col: number[] = [];
+  /**
+   * For the combat view (cutaway.ts), four numbers a corner: the height of the ground it stands on, how it gives
+   * way, and where on the map (x, z) the thing it is part of stands, so the whole of that thing sinks as one.
+   */
+  cut: number[] = [];
+  /** Give these to every corner added since without them: none, unless told otherwise. */
+  mark(foot = 0, how = CUT_NONE, x = 0, z = 0) {
+    for (let n = (this.pos.length / 3) * 4; this.cut.length < n; ) this.cut.push(foot, how, x, z);
+  }
 }
 
 const unitCache = new Map<string, Float32Array>();
@@ -256,15 +269,33 @@ class Kit {
   private cur: Bucket[] = [];
   private stack: THREE.Matrix4[] = [];
   private M = new THREE.Matrix4();
-  private faces = 0;
   /** The ground the piece stands on: its paint is darker near it. */
   baseY = 0;
   clime: Clime = "greenwood";
-  flames: { at: THREE.Vector3; size: number; small: boolean }[] = [];
+  /** Under a roof or under ground: nothing has snowed, drifted or grown on what stands there. */
+  roofed = false;
+  /** While set, what is added goes dark with depth: whole at the first height (in the world) and black by the second. */
+  sink: [number, number] | null = null;
+  /**
+   * How what is added gives way to the combat view (cutaway.ts): not at all, sunk to a kerb, or thinned to a ghost.
+   * Set back to none by `begin`. A hex's piece gives way as one thing, from the hex's own top and by where the
+   * middle of the hex is; unless `cutFoot` gives the ground for each point (x, z) of the world, and then every
+   * point gives way by where it is itself (a cave's rock, which is one mass with no hex of floor under it).
+   */
+  cut = CUT_NONE;
+  cutFoot: ((x: number, z: number) => number) | null = null;
+  /** The middle of the hex being built on. */
+  private at = { x: 0, z: 0 };
+  flames: { at: THREE.Vector3; size: number; small: boolean; sunk: [foot: number, x: number, z: number] | null }[] = [];
   emitters: Emitter[] = [];
   pools: Pool[] = [];
   motes: Mote[] = [];
-  portals: { matrix: THREE.Matrix4; color: THREE.Color; deep: THREE.Color }[] = [];
+  portals: { matrix: THREE.Matrix4; color: THREE.Color; deep: THREE.Color; stone: THREE.Color }[] = [];
+  /**
+   * Under a roof, the hexes of the outer wall, which the ground leaves out (past the wall there is nothing, not
+   * even floor): each with what is left of its top inside the wall, as points [x, z] in the world.
+   */
+  rims = new Map<string, number[][]>();
 
   begin(x: number, y: number, z: number, clime: Clime) {
     const [cx, cz] = [Math.floor(x / CHUNK), Math.floor(z / CHUNK)];
@@ -279,6 +310,9 @@ class Kit {
     this.stack.length = 0;
     this.baseY = y;
     this.clime = clime;
+    this.cut = CUT_NONE;
+    this.cutFoot = null;
+    this.at = { x, z };
   }
 
   push(x = 0, y = 0, z = 0, ry = 0, rx = 0, rz = 0, s = 1) {
@@ -309,6 +343,8 @@ class Kit {
     const b = this.cur[layer];
     const { pos, nor, col: out } = b;
     const flat = plain || RAW.has(tone);
+    b.mark();
+    const [how, foot, footAt, ox, oz] = [this.cut, this.baseY, this.cut === CUT_NONE ? null : this.cutFoot, this.at.x, this.at.z];
     for (let i = 0; i < src.length; i += 9) {
       const ax = e[0] * src[i] + e[4] * src[i + 1] + e[8] * src[i + 2] + e[12];
       const ay = e[1] * src[i] + e[5] * src[i + 1] + e[9] * src[i + 2] + e[13];
@@ -328,7 +364,10 @@ class Kit {
       nz /= len;
       pos.push(ax, ay, az, bx, by, bz, cx, cy, cz);
       nor.push(nx, ny, nz, nx, ny, nz, nx, ny, nz);
-      const j = this.jitter();
+      if (footAt) b.cut.push(footAt(ax, az), how, ax, az, footAt(bx, bz), how, bx, bz, footAt(cx, cz), how, cx, cz);
+      else b.cut.push(foot, how, ox, oz, foot, how, ox, oz, foot, how, ox, oz);
+      // One shade to a flat face, however many triangles it is made of: the two halves of a slab's top are not two tones.
+      const j = this.jitter(Math.round(nx * 40) + Math.round(ny * 40) * 3.7 + Math.round(nz * 40) * 9.1 + Math.round((nx * ax + ny * ay + nz * az) * 60) * 0.37);
       let [r, g, bl] = [tone.r, tone.g, tone.b];
       if (layer === GLOW) {
         if (!flat) {
@@ -345,12 +384,18 @@ class Kit {
         if (!flat) [r, g, bl] = this.weather(r, g, bl, (ay + by + cy) / 3 - this.baseY, ny, j);
       }
       if (layer === FADE) out.push(r, g, bl, 1, r, g, bl, 1, r, g, bl, 1);
-      else out.push(r, g, bl, r, g, bl, r, g, bl);
+      else if (this.sink && layer === SOLID) {
+        const [top, deep] = this.sink;
+        for (const y of [ay, by, cy]) {
+          const f = Math.pow(Math.min(1, Math.max(0, (y - deep) / (top - deep))), 1.6);
+          out.push(r * f, g * f, bl * f);
+        }
+      } else out.push(r, g, bl, r, g, bl, r, g, bl);
     }
   }
 
-  private jitter(): number {
-    const n = Math.sin(++this.faces * 12.9898) * 43758.5453;
+  private jitter(face: number): number {
+    const n = Math.sin(face * 12.9898 + 4.1) * 43758.5453;
     return n - Math.floor(n);
   }
 
@@ -366,11 +411,18 @@ class Kit {
     r *= foot;
     g *= foot;
     b *= foot;
+    if (this.roofed) {
+      // No sky over it: only the cold's rime and the wet's green on its sides, and the ashlands' soot.
+      if (this.clime === "frost" && ny < 0.25) mix(RIME, j > 0.8 ? 0.2 : 0.05);
+      else if (this.clime === "mire" && ny < 0.55 && (j > 0.78 || y < 0.3)) mix(MOSS_DARK, 0.26);
+      else if (this.clime === "ash" && ny > 0.6) mix(ASH_DUST, 0.16);
+      return [r, g, b];
+    }
     switch (this.clime) {
       case "frost":
         if (ny > 0.6) mix(SNOW, 0.92);
         else if (ny > 0.25) mix(SNOW, 0.45);
-        else mix(RIME, j > 0.8 ? 0.28 : 0.1);
+        else mix(RIME, j > 0.8 ? 0.2 : 0.05);
         break;
       case "dunes":
         if (y < 0.34 && ny > -0.3) mix(SAND, (1 - Math.max(0, y) / 0.34) * 0.6);
@@ -480,10 +532,13 @@ class Kit {
   // ---- fire and light ----
 
   /** A flame standing on this point, with the light and the sparks that go with it. */
-  fire(x: number, y: number, z: number, size: number, opts: { power?: number; range?: number; pool?: number; sparks?: number; small?: boolean } = {}) {
+  fire(x: number, y: number, z: number, size: number, opts: { power?: number; range?: number; pool?: number; sparks?: number; small?: boolean; unlit?: boolean } = {}) {
     const at = this.world(x, y, z);
-    this.flames.push({ at, size, small: !!opts.small });
-    this.emitters.push({ x: at.x, y: at.y + size * 1.6, z: at.z, color: FIRE, power: opts.power ?? 1, range: opts.range ?? 8.5, fire: true });
+    // (A flame on something that sinks for the combat view goes down with it: see ZoneScenery.update.)
+    const sunk: [number, number, number] | null = this.cut !== CUT_SINK ? null : this.cutFoot ? [this.cutFoot(at.x, at.z), at.x, at.z] : [this.baseY, this.at.x, this.at.z];
+    this.flames.push({ at, size, small: !!opts.small, sunk });
+    // (`unlit`: the flame and its glow on the ground, and no light of its own: its twin through the wall has that.)
+    if (!opts.unlit) this.emitters.push({ x: at.x, y: at.y + size * 1.6, z: at.z, color: FIRE, power: opts.power ?? 1, range: opts.range ?? 8.5, fire: true });
     this.pools.push({ x: at.x, y: at.y, z: at.z, color: FIRE, radius: opts.pool ?? 3.4, strength: 0.42 * (opts.power ?? 1), layer: WARM });
     for (let i = 0; i < (opts.sparks ?? 0); i++) {
       const n = hash(Math.round(at.x * 31), Math.round(at.z * 31), 900 + i);
@@ -496,6 +551,59 @@ class Kit {
     const at = this.world(x, y, z);
     this.emitters.push({ x: at.x, y: at.y, z: at.z, color, power, range, fire: false });
     this.pools.push({ x: at.x, y: this.baseY, z: at.z, color, radius: pool, strength: 0.34 * power, layer: COOL });
+  }
+
+  /**
+   * A shaft of pale light falling on a point: a tall cone of glow, `r0` across at its foot and `r1` at its head,
+   * brightest a little above the foot and gone at the top.
+   */
+  beam(x: number, y: number, z: number, r0: number, r1: number, h: number, color: THREE.Color, strength: number) {
+    const b = this.cur[COOL];
+    const sides = 10;
+    const rows = [[0, r0, 0], [0.16, r0 + (r1 - r0) * 0.16, 1], [0.5, r0 + (r1 - r0) * 0.5, 0.55], [1, r1, 0]];
+    for (let s = 0; s < sides; s++) {
+      const [a0, a1] = [(s / sides) * Math.PI * 2, ((s + 1) / sides) * Math.PI * 2];
+      for (let r = 0; r < rows.length - 1; r++) {
+        const [lo, hi] = [rows[r], rows[r + 1]];
+        const quad = [[a0, lo], [a1, lo], [a1, hi], [a0, lo], [a1, hi], [a0, hi]] as const;
+        for (const [a, row] of quad) {
+          const p = this.world(x + Math.cos(a) * row[1], y + row[0] * h, z + Math.sin(a) * row[1]);
+          b.pos.push(p.x, p.y, p.z);
+          b.nor.push(0, 1, 0);
+          const k = row[2] * strength * (0.75 + 0.25 * Math.sin(s * 2.4));
+          b.col.push(color.r * k, color.g * k, color.b * k);
+        }
+      }
+    }
+  }
+
+  /**
+   * Light thrown on an upright face: a round of glow lying in the frame's x-y plane about a point, facing along z,
+   * `rx` across and `ry` high, brightest in the middle. A torch's light on its own wall, which no real light
+   * placed so close to the stone would give.
+   */
+  wash(x: number, y: number, z: number, rx: number, ry: number, color: THREE.Color, strength: number, warm = true) {
+    const b = this.cur[warm ? WARM : COOL];
+    b.mark();
+    const sides = 12;
+    const mid = this.world(x, y, z);
+    const ring = (a: number, k: number) => this.world(x + Math.cos(a) * rx * k, y + Math.sin(a) * ry * k, z);
+    for (let s = 0; s < sides; s++) {
+      const [a0, a1] = [(s / sides) * Math.PI * 2, ((s + 1) / sides) * Math.PI * 2];
+      const [i0, i1, o0, o1] = [ring(a0, 0.45), ring(a1, 0.45), ring(a0, 1), ring(a1, 1)];
+      const tri = (pts: THREE.Vector3[], ks: number[]) =>
+        pts.forEach((p, i) => {
+          b.pos.push(p.x, p.y, p.z);
+          b.nor.push(0, 1, 0);
+          b.col.push(color.r * ks[i] * strength, color.g * ks[i] * strength, color.b * ks[i] * strength);
+        });
+      tri([mid, i0, i1], [1, 0.42, 0.42]);
+      tri([i0, o0, o1], [0.42, 0, 0]);
+      tri([i0, o1, i1], [0.42, 0, 0.42]);
+    }
+    // The light lies on the face: it gives way as the face does.
+    if (this.cutFoot) b.mark(this.cutFoot(mid.x, mid.z), this.cut, mid.x, mid.z);
+    else b.mark(this.baseY, this.cut, this.at.x, this.at.z);
   }
 
   /** Only the pool of glow on the ground, for a light too small to be given a real one. */
@@ -520,6 +628,8 @@ class Kit {
       const g = new THREE.BufferGeometry();
       g.setAttribute("position", new THREE.Float32BufferAttribute(b.pos, 3));
       g.setAttribute("normal", new THREE.Float32BufferAttribute(b.nor, 3));
+      b.mark();
+      g.setAttribute("aCut", new THREE.Float32BufferAttribute(b.cut, 4));
       g.setAttribute("color", new THREE.Float32BufferAttribute(b.col, layer === FADE ? 4 : 3));
       g.computeBoundingSphere();
       out.push(new THREE.Mesh(g, material));
@@ -543,12 +653,23 @@ interface Ctx {
   rise(i: number): number | undefined;
   /** The side that looks out on the most open ground: a statue faces it, a tent opens on it. */
   open: number;
+  /**
+   * The way a thing with a front faces (an angle in the x-z plane): out through `open`; or, under a roof, square
+   * to the room (north, south, east or west), its back to a wall if there is one to put it against.
+   */
+  facing: number;
+  /** Under a roof or under ground (SceneryOptions.roofed). */
+  roofed: boolean;
+  /** The hex this far off (in hexes), if there is one. */
+  tile(dq: number, dr: number): Tile | undefined;
+  /** Whether the hex through side `i` is ground somebody can stand on. */
+  floor(i: number): boolean;
 }
 
 /** Kinds that join up into runs: a wall goes on into the tower, the arch or the palisade beside it. */
-const RUNS = new Set(["wall", "wall_broken", "tower", "arch", "palisade"]);
+const RUNS = new Set(["wall", "wall_torch", "wall_broken", "tower", "arch", "palisade"]);
 /** Kinds that leave their hex open to walk on. */
-const WALKABLE = new Set(["arch", "banner", "stairs"]);
+const WALKABLE = new Set(["arch", "banner", "stairs", "rug", "bones"]);
 const WALL_H = 2.2;
 const WALL_T = 0.62;
 
@@ -579,7 +700,8 @@ function emberCrack(k: Kit, x: number, y: number, z: number, long: number, ry: n
 /** What the climate heaps against the foot of a thing: a drift of snow or sand, a hummock of moss, a bank of cinders. */
 function drift(k: Kit, c: Ctx, x: number, z: number, size: number, salt: number) {
   const tone = c.clime === "frost" ? SNOW : c.clime === "dunes" ? SAND : c.clime === "mire" ? MOSS_DARK : c.clime === "ash" ? ASH_DUST : null;
-  if (!tone) return;
+  // (Nothing drifts in under a roof.)
+  if (!tone || c.roofed) return;
   k.blob(tone, size, size * (c.clime === "mire" ? 0.22 : 0.3), size * 0.8, x, 0, z, 2, c.n(salt) * 6, 0, 0, SOLID, true);
   if (c.clime === "ash" && c.n(salt + 1) < 0.6) k.blob(EMBER, size * 0.16, size * 0.08, size * 0.14, x + size * 0.3, size * 0.14, z + size * 0.1, 3, 0, 0, 0, GLOW, true);
 }
@@ -681,6 +803,7 @@ function wallPier(k: Kit, c: Ctx, a: number, h: number, wide = 0.74) {
 }
 
 function wall(k: Kit, c: Ctx) {
+  if (c.roofed && hallWall(k, c, c.t.prop === "wall_torch")) return;
   const runs = joined(c);
   const to = runs.flatMap((on, i) => (on ? [i] : []));
   if (to.length === 0) {
@@ -691,6 +814,14 @@ function wall(k: Kit, c: Ctx) {
     for (const s of [-1, 1]) {
       k.push(Math.cos(a) * 0.62 * s, 0, Math.sin(a) * 0.62 * s);
       wallPier(k, c, a, WALL_H, 0.7);
+      k.pop();
+    }
+    if (c.t.prop === "wall_torch") {
+      const s = Math.sign(Math.sin(SIDE[c.open].a - a)) || 1;
+      k.push(0, 0, 0, alongX(a));
+      k.push(0, 0, s * (WALL_T / 2), s < 0 ? Math.PI : 0);
+      sconce(k, c, true);
+      k.pop();
       k.pop();
     }
     return;
@@ -709,9 +840,14 @@ function wall(k: Kit, c: Ctx) {
   const side = SIDE[c.open];
   const along = SIDE[to[0]];
   const s = Math.sign(Math.sin(side.a - along.a)) || 1;
-  const dress = c.n(7);
+  const dress = c.t.prop === "wall_torch" ? 0 : c.n(7);
   k.push(0, 0, 0, alongX(along.a));
-  if (dress < 0.16) {
+  if (c.t.prop === "wall_torch") {
+    // A wall that is there to carry a torch: a proper one, with the light a brazier would give.
+    k.push(0.42, 0, s * (WALL_T / 2), s < 0 ? Math.PI : 0);
+    sconce(k, c, true);
+    k.pop();
+  } else if (dress < 0.16) {
     const z = s * (WALL_T / 2);
     k.box(c.pal.iron, 0.05, 0.05, 0.22, 0.42, 1.42, z + s * 0.1);
     k.cyl(c.pal.iron, 0.05, 0.075, 0.1, 0.42, 1.45, z + s * 0.2, 6);
@@ -851,6 +987,7 @@ function gateWall(): Float32Array {
 }
 
 function arch(k: Kit, c: Ctx) {
+  if (c.roofed && hallDoor(k, c)) return;
   const P = c.pal;
   const runs = joined(c);
   // In line with the walls beside it: through a pair of them that face each other, or along the one there is.
@@ -940,7 +1077,7 @@ function pillar(k: Kit, c: Ctx) {
   const y = 0.36 + H;
   k.box(P.stoneLight, 0.66, 0.12, 0.66, 0, y, 0);
   k.box(P.stone, 0.84, 0.16, 0.84, 0, y + 0.12, 0);
-  k.box(P.stoneDark, 0.94, 0.1, 0.94, 0, y + 0.28, 0);
+  k.box(P.stoneLight, 0.94, 0.1, 0.94, 0, y + 0.28, 0);
   if (c.clime === "frost") {
     k.blob(SNOW, 0.4, 0.1, 0.4, 0, y + 0.4, 0, 2, 0, 0, 0, SOLID, true);
     for (const s of [-1, 1]) icicles(k, c, -0.4, 0.4, y + 0.28, s * 0.47, 3, 30 + s);
@@ -995,7 +1132,7 @@ function statue(k: Kit, c: Ctx) {
   const P = c.pal;
   const who = Math.floor(c.n(1) * 2.999);
   const headless = c.n(2) < 0.2;
-  k.push(0, 0, 0, faceZ(SIDE[c.open].a));
+  k.push(0, 0, 0, faceZ(c.facing));
   const y = pedestal(k, c, 0.88);
   const limb = (pts: number[][], r = 0.085) => k.tube(P.stone, pts, (t) => r * (1 - t * 0.25), 6);
   if (who === 1) {
@@ -1088,7 +1225,7 @@ function obelisk(k: Kit, c: Ctx) {
 
 function altar(k: Kit, c: Ctx) {
   const P = c.pal;
-  k.push(0, 0, 0, faceZ(SIDE[c.open].a));
+  k.push(0, 0, 0, faceZ(c.facing));
   k.box(P.stoneDark, 1.5, 0.12, 1.1);
   k.box(P.stone, 1.3, 0.12, 0.9, 0, 0.12, 0);
   for (const s of [-1, 1]) {
@@ -1112,6 +1249,16 @@ function altar(k: Kit, c: Ctx) {
     k.cone(col("#ffd98a"), 0.022, 0.07, 0.3 + s * 0.14, 0.9 + h, -0.2 + s * 0.06, 5, 0, 0, 0, GLOW, true);
   }
   k.glowPool(0.3, -0.2, FIRE, 1.6, 0.2, true);
+  // A shaft of pale light falls on it from somewhere above, with dust turning in it.
+  const pale = col("#dfeaff").lerp(P.glyph, 0.25);
+  k.push(0, 0, 0, 0, 0.1, 0.06);
+  k.beam(0, 0.5, 0, 0.56, 0.24, 6.5, pale, 0.085);
+  k.pop();
+  k.glowPool(0, 0, pale, 1.7, 0.2);
+  for (let j = 0; j < 7; j++) {
+    const at = k.world((c.n(40 + j) - 0.5) * 0.8, 1.2 + c.n(50 + j) * 3, (c.n(60 + j) - 0.5) * 0.6);
+    k.motes.push({ x: at.x, y: at.y, z: at.z, color: pale, rise: -0.6, sway: 0.2, rate: 0.09 + c.n(70 + j) * 0.06, phase: c.n(80 + j), size: 0.55 });
+  }
   if (c.clime === "frost") icicles(k, c, -0.55, 0.55, 0.74, 0.38, 4, 20);
   if (c.clime === "mire") vine(k, 0.48, 0.74, 0.39, 0.5);
   k.pop();
@@ -1475,17 +1622,18 @@ function ribs(k: Kit, c: Ctx) {
   pairs.forEach((x, p) => {
     for (const s of [-1, 1]) {
       const salt = 20 + p * 10 + (s + 1);
-      const H = 2.35 + c.n(salt) * 0.5;
-      const W = 0.92 + c.n(salt + 1) * 0.08;
+      const H = 2.5 + c.n(salt) * 0.5;
+      const W = 0.9 + c.n(salt + 1) * 0.08;
       const whole = c.n(salt + 2) < 0.72 ? 1 : 0.5 + c.n(salt + 3) * 0.3;
-      const lean = (c.n(salt + 4) - 0.5) * 0.3;
+      // Each leans along the spine, one pair forward and the next back, so the curve of them shows from any side.
+      const lean = (p ? 0.34 : -0.34) + (c.n(salt + 4) - 0.5) * 0.24;
       const pts: number[][] = [];
-      const steps = 9;
+      const steps = 10;
       for (let i = 0; i <= steps * whole; i++) {
-        const phi = (i / steps) * 1.42;
-        pts.push([x + lean * Math.sin(phi), -0.12 + (H * Math.sin(phi)) / Math.sin(1.42), s * W * (Math.cos(phi) + 0.1 * Math.sin(phi * 2))]);
+        const phi = (i / steps) * 1.5;
+        pts.push([x + lean * Math.sin(phi) * Math.sin(phi), -0.14 + (H * Math.sin(phi)) / Math.sin(1.5), s * W * (Math.cos(phi) + 0.2 * Math.sin(phi * 2))]);
       }
-      k.tube(s * p > 0 ? P.boneDark : P.bone, pts, (t) => 0.135 * (1 - 0.72 * t * whole), 6, 0.62);
+      k.tube(s * (p - 0.5) > 0 ? P.boneDark : P.bone, pts, (t) => 0.2 * (1 - 0.74 * Math.pow(t * whole, 1.4)), 6, 0.72);
       // The stub of the one that broke, with the rest of it lying by.
       if (whole < 1) k.tube(P.boneDark, [[x + 0.3, 0.05, s * 0.5], [x + 0.55, 0.07, s * 0.2], [x + 0.75, 0.03, s * -0.02]], (t) => 0.07 * (1 - 0.6 * t), 5, 0.7);
     }
@@ -1751,54 +1899,895 @@ function basalt(k: Kit, c: Ctx) {
   drift(k, c, Math.cos(slope + 4) * 0.74, Math.sin(slope + 4) * 0.74, 0.3, 30);
 }
 
-// ---- the way in ----
+// ---- under a roof: a hall's walls ----
+//
+// Out of doors a wall goes from the middle of its hex to the middle of the next, which along a row is a straight
+// line and down a column is a zigzag. Under a roof (SceneryOptions.roofed) the rooms are square, so a column's
+// wall is drawn straight too: down the line half way between the hexes it zigzags through, each hex carrying the
+// length of it that passes through that hex. Where it meets a row's wall it runs on into it and a pier stands at
+// the corner.
 
-const GATE_RING = { mid: 1.34, inner: 0.86, outer: 1.17 };
-function waygate(k: Kit, c: Ctx) {
+const HALL = { h: 2.45, t: 0.6, door: 0.46, spring: 1.5 };
+/** What a hall's wall runs on into. */
+const HALL_RUNS = new Set(["wall", "wall_torch", "arch", "wall_broken", "tower"]);
+/** The mortar between its stones, the cut top of it (the roof it carried is not drawn), and the soot over a torch. */
+const JOINT = raw("#191820");
+const CUT = raw("#121118");
+const SOOT = raw("#0f0e13");
+const BOOKS = [col("#6e2a2a"), col("#2f4a3a"), col("#2c3c5e"), col("#6a5230"), col("#8a7a56"), col("#4a2f52"), col("#3a3a40"), col("#7a3e24")];
+
+interface HallPlan {
+  /** Along its row (east and west), down its column, or neither: then it is drawn as a wall out of doors is. */
+  lie: "row" | "column" | "odd";
+  east: boolean;
+  west: boolean;
+  /** A column's line: this many half-hexes east of the hex's middle (+1 or -1; 0 for a stub with nothing to line up on). */
+  shift: number;
+  /** A column's north and south ends: on down the column, into the wall of a row, or stopping here. */
+  north: "on" | "row" | "end";
+  south: "on" | "row" | "end";
+}
+
+const hallRuns = (c: Ctx, dq: number, dr: number) => HALL_RUNS.has(c.tile(dq, dr)?.prop ?? "");
+
+function hallPlan(c: Ctx): HallPlan {
+  const [east, west] = [hallRuns(c, 1, 0), hallRuns(c, -1, 0)];
+  if (east || west) return { lie: "row", east, west, shift: 0, north: "end", south: "end" };
+  const up = [0, 5].filter((i) => hallRuns(c, DIRS[i].q, DIRS[i].r));
+  const down = [2, 3].filter((i) => hallRuns(c, DIRS[i].q, DIRS[i].r));
+  // A neighbour with a wall to its own east or west is part of a row: the column runs into it, and does not zigzag with it.
+  const inRow = (i: number) => hallRuns(c, DIRS[i].q + 1, DIRS[i].r) || hallRuns(c, DIRS[i].q - 1, DIRS[i].r);
+  const members = [...up, ...down].filter((i) => !inRow(i));
+  const right = members.some((i) => i === 0 || i === 2);
+  const left = members.some((i) => i === 3 || i === 5);
+  if (up.length + down.length === 0 || (right && left)) return { lie: "odd", east, west, shift: 0, north: "end", south: "end" };
+  const end = (side: number[]): "on" | "row" | "end" => (side.some((i) => !inRow(i)) ? "on" : side.length > 0 ? "row" : "end");
+  return { lie: "column", east, west, shift: right ? 1 : left ? -1 : 0, north: end(up), south: end(down) };
+}
+
+/** The top of a hall's wall: a cornice in three steps, and the dark of the cut above it. Along x from `x0` to `x1`. */
+function hallCornice(k: Kit, c: Ctx, x0: number, x1: number, cap = hallCap(c.pal)) {
   const P = c.pal;
-  const { mid, inner, outer } = GATE_RING;
-  k.cyl(P.stoneDark, 1.0, 1.0, 0.12, 0, 0, 0, 6);
-  k.cyl(P.stone, 0.82, 0.82, 0.1, 0, 0.12, 0, 6);
-  inlay(k, c, 0.5, 0.012, 0.5, 0, 0.215, 0, Math.PI / 4);
-  k.push(0, 0, 0, faceZ(SIDE[c.open].a));
-  // The ring: wedges of stone set round, every third one cut with a sign that burns cold.
-  const blocks = 14;
-  const wide = 2 * outer * Math.tan(Math.PI / blocks) + 0.015;
-  for (let j = 0; j < blocks; j++) {
-    const phi = ((j + 0.5) / blocks) * Math.PI * 2;
-    const top = j === 3;
-    const tone = top ? P.stoneLight : j % 2 ? P.stone : P.stoneDark;
-    const deep = top ? 0.44 : 0.36 + (j % 3 === 0 ? 0.04 : 0);
-    k.push(Math.cos(phi) * inner, mid + Math.sin(phi) * inner, 0, 0, 0, phi - Math.PI / 2);
-    k.box(tone, wide, outer - inner + (top ? 0.1 : 0), deep, 0, 0, 0);
-    if (j % 3 === 0 || top) {
-      for (const s of [-1, 1]) {
-        k.box(P.glyph, 0.06, 0.2, 0.012, 0, 0.05, s * (deep / 2 + 0.004), 0, 0, 0, GLOW, true);
-        k.box(P.glyph, 0.16, 0.05, 0.012, 0, 0.16, s * (deep / 2 + 0.004), 0, 0, 0, GLOW, true);
+  const { h: H, t: T } = HALL;
+  const [len, mid] = [x1 - x0, (x0 + x1) / 2];
+  k.box(P.stoneLight, len, 0.1, T + 0.1, mid, H - 0.3, 0);
+  k.box(P.stone, len, 0.12, T + 0.18, mid, H - 0.2, 0);
+  k.box(P.stoneLight, len, 0.08, T + 0.24, mid, H - 0.08, 0);
+  // The cut: the stones of the wall's heart, each its own shade, with the dark between them.
+  k.box(CUT, len, 0.02, T + 0.12, mid, H, 0);
+  const at = k.world(x0, 0, 0);
+  const stones = Math.max(1, Math.round(len / 0.62));
+  for (let j = 0; j < stones; j++) {
+    const n = hash(Math.round(at.x * 7) + j * 3, Math.round(at.z * 7), 1300);
+    const w = len / stones;
+    k.box(cap.clone().multiplyScalar(0.8 + n * 0.45), w - 0.03, 0.03, T + 0.1 - (n > 0.7 ? 0.08 : 0), x0 + w * (j + 0.5), H + 0.005, n > 0.7 ? (n - 0.85) * 0.3 : 0, 0, 0, 0, SOLID, true);
+  }
+}
+
+/** The cut top of a hall's wall (the roof it carried is not drawn): its own stone, in shadow. */
+const hallCap = (pal: Pal) => pal.stoneDark.clone().multiplyScalar(0.46);
+
+/** What is left of a flat shape (points [x, z], in order) on the side of a line where a·x + b·z is no more than `lim`. */
+function clipped(pts: number[][], a: number, b: number, lim: number): number[][] {
+  const out: number[][] = [];
+  pts.forEach((p, i) => {
+    const q = pts[(i + 1) % pts.length];
+    const [dp, dq] = [a * p[0] + b * p[1] - lim, a * q[0] + b * q[1] - lim];
+    if (dp <= 0) out.push(p);
+    if (dp <= 0 !== dq <= 0) out.push([p[0] + ((q[0] - p[0]) * dp) / (dp - dq), p[1] + ((q[1] - p[1]) * dp) / (dp - dq)]);
+  });
+  return out;
+}
+
+/**
+ * A hex of a hall's outer wall: past the wall there is nothing, so the ground leaves the whole hex out (see
+ * `ZoneScenery.draws`) and what is inside the wall is laid here, as a kerb along its foot. The wall's outer face
+ * goes on down a way into the dark. `X` is a column's line.
+ */
+function hallRim(k: Kit, c: Ctx, plan: HallPlan, X: number) {
+  const gone = (i: number) => !c.tile(DIRS[i].q, DIRS[i].r);
+  if (![0, 1, 2, 3, 4, 5].some(gone)) return;
+  const P = c.pal;
+  const edge = HALL.t / 2 + 0.08;
+  let top = SIDE.map((s) => [Math.cos(s.a + Math.PI / 6), Math.sin(s.a + Math.PI / 6)]);
+  const deep = 2.8;
+  k.sink = [k.baseY - 0.05, k.baseY - deep];
+  if (plan.lie === "row") {
+    for (const [s, sides] of [[-1, [0, 5]], [1, [2, 3]]] as const) {
+      if (!sides.every(gone)) continue;
+      top = clipped(top, 0, s, edge);
+      k.box(P.stoneDark, APO * 2 + 0.02, deep, 0.1, 0, -deep, s * (edge - 0.05));
+    }
+    if (!plan.west && gone(4)) top = clipped(top, -1, 0, 0.5);
+    if (!plan.east && gone(1)) top = clipped(top, 1, 0, 0.5);
+  } else {
+    for (const [s, side] of [[-1, 4], [1, 1]] as const) {
+      if (!gone(side)) continue;
+      top = clipped(top, s, 0, edge + s * X);
+      k.box(P.stoneDark, 0.1, deep, 1.52, X + s * (edge - 0.05), -deep, 0);
+    }
+    if (plan.north === "end" && gone(0) && gone(5)) top = clipped(top, 0, -1, 0.5);
+    if (plan.south === "end" && gone(2) && gone(3)) top = clipped(top, 0, 1, 0.5);
+  }
+  k.sink = null;
+  if (top.length >= 3) k.poly(P.stone, top.map(([x, z]) => [x, 0, z]), [0, 1, 0], false, SOLID, true);
+  k.rims.set(key(c.t.q, c.t.r), top.length >= 3 ? top.map(([x, z]) => {
+    const w = k.world(x, 0, z);
+    return [w.x, w.z];
+  }) : []);
+}
+
+/** A straight length of a hall's wall between two points of the hex's own frame: a plinth, courses of stone with their joints, a cornice. */
+function hallPiece(k: Kit, c: Ctx, x0: number, z0: number, x1: number, z1: number, salt: number) {
+  const P = c.pal;
+  const { h: H, t: T } = HALL;
+  const len = Math.hypot(x1 - x0, z1 - z0);
+  if (len < 0.03) return;
+  k.push(x0, 0, z0, alongX(Math.atan2(z1 - z0, x1 - x0)));
+  const mid = len / 2;
+  k.box(P.stoneDark, len, 0.3, T + 0.16, mid, 0, 0);
+  // The courses: each its own shade, every other one standing a finger proud.
+  const courses = 4;
+  const [low, high] = [0.3, H - 0.3];
+  const tall = (high - low) / courses;
+  for (let j = 0; j < courses; j++) {
+    const n = c.n(salt + j * 3);
+    const tone = n < 0.4 ? P.stone : n < 0.62 ? P.stone.clone().lerp(P.stoneLight, 0.4) : n < 0.84 ? P.stone.clone().lerp(P.stoneDark, 0.36) : P.stone.clone().multiplyScalar(0.9);
+    k.box(tone, len, tall, T + (j % 2 ? 0 : 0.03), mid, low + j * tall, 0);
+  }
+  for (const s of [-1, 1]) {
+    const z = s * (T / 2 + 0.019);
+    const face = [0, 0, s];
+    // The beds between courses, and the upright joints, staggered from one course to the next.
+    for (let j = 1; j < courses; j++) k.poly(JOINT, [[0, low + j * tall - 0.011, z], [len, low + j * tall - 0.011, z], [len, low + j * tall + 0.011, z], [0, low + j * tall + 0.011, z]], face);
+    for (let j = 0; j < courses; j++) {
+      const each = 0.62 + c.n(salt + 40 + j) * 0.2;
+      for (let x = (j % 2 ? 0.2 : 0.52) + c.n(salt + 50 + j + s) * 0.12; x < len - 0.06; x += each) {
+        k.poly(JOINT, [[x - 0.011, low + j * tall, z], [x + 0.011, low + j * tall, z], [x + 0.011, low + (j + 1) * tall, z], [x - 0.011, low + (j + 1) * tall, z]], face);
       }
+    }
+    // A stone or two of another quarry's colour.
+    if (len > 0.7) {
+      const j = Math.floor(c.n(salt + 70 + s) * courses * 0.999);
+      const w = 0.3 + c.n(salt + 71 + s) * 0.2;
+      const x = 0.08 + c.n(salt + 72 + s) * (len - w - 0.16);
+      k.poly(c.n(salt + 73 + s) < 0.5 ? P.stoneLight : P.stoneDark, [[x, low + j * tall + 0.02, z - s * 0.003], [x + w, low + j * tall + 0.02, z - s * 0.003], [x + w, low + (j + 1) * tall - 0.02, z - s * 0.003], [x, low + (j + 1) * tall - 0.02, z - s * 0.003]], face);
+    }
+    if (c.clime === "frost") icicles(k, c, 0.05, len - 0.05, H - 0.3, s * (T / 2 + 0.09), Math.max(1, Math.round(len * 1.6)), salt + 200 + s);
+    else if (c.clime === "mire" && c.n(salt + 210 + s) < 0.5) vine(k, 0.15 + c.n(salt + 211 + s) * Math.max(0, len - 0.3), H - 0.3, s * (T / 2 + 0.06), 0.5 + c.n(salt + 212 + s) * 0.9);
+    else if (c.clime === "ash" && c.n(salt + 220 + s) < 0.4) emberCrack(k, 0.2 + c.n(salt + 221 + s) * Math.max(0, len - 0.4), 0.06, s * (T / 2 + 0.09), 0.24 + c.n(salt + 222 + s) * 0.2, 0, (c.n(salt + 223 + s) - 0.5) * 0.9);
+  }
+  hallCornice(k, c, 0, len);
+  k.pop();
+}
+
+/** The pier at a corner of a hall, or where one wall runs into another: a head taller than the walls it joins. */
+function hallPier(k: Kit, c: Ctx, x: number, z: number) {
+  const P = c.pal;
+  const H = HALL.h + 0.14;
+  k.push(x, 0, z);
+  k.box(P.stoneDark, 0.92, 0.36, 0.92);
+  k.box(P.stone, 0.8, H - 0.5, 0.8, 0, 0.36, 0);
+  inlay(k, c, 0.83, 0.05, 0.83, 0, H - 0.72, 0);
+  k.box(P.stoneLight, 0.92, 0.1, 0.92, 0, H - 0.34, 0);
+  k.box(P.stone, 1.02, 0.14, 1.02, 0, H - 0.24, 0);
+  k.box(P.stoneLight, 1.08, 0.1, 1.08, 0, H - 0.1, 0);
+  k.box(hallCap(P), 1.0, 0.025, 1.0, 0, H, 0, 0, 0, 0, SOLID, true);
+  if ([0, 1, 2, 3, 4, 5].some((i) => !c.tile(DIRS[i].q, DIRS[i].r))) {
+    // At the outer wall: it goes on down into the dark, as the wall does.
+    k.sink = [k.baseY - 0.05, k.baseY - 2.8];
+    k.box(P.stoneDark, 0.9, 2.8, 0.9, 0, -2.8, 0);
+    k.sink = null;
+  }
+  // Its corner stones, long and short by turns.
+  for (let j = 0; j < 4; j++) for (const [sx, sz] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) k.box(j % 2 ? P.stoneLight : P.stoneDark, j % 2 ? 0.2 : 0.3, 0.2, j % 2 ? 0.3 : 0.2, sx * 0.31, 0.5 + j * 0.42, sz * 0.31);
+  k.pop();
+}
+
+/** A half-column standing against both faces of a wall at a point of it; `turn` for a wall that runs north and south. */
+function hallPilaster(k: Kit, c: Ctx, x: number, z: number, turn: boolean) {
+  const P = c.pal;
+  const { h: H, t: T } = HALL;
+  k.push(x, 0, z, turn ? Math.PI / 2 : 0);
+  k.box(P.stoneDark, 0.46, 0.4, T + 0.36);
+  k.box(P.stoneLight, 0.38, 0.07, T + 0.3, 0, 0.4, 0);
+  k.box(P.stone, 0.3, H - 0.86, T + 0.22, 0, 0.47, 0);
+  inlay(k, c, 0.32, 0.05, T + 0.24, 0, H - 0.78, 0);
+  k.box(P.stoneLight, 0.38, 0.1, T + 0.3, 0, H - 0.44, 0);
+  k.box(P.stone, 0.46, 0.12, T + 0.4, 0, H - 0.34, 0);
+  k.pop();
+}
+
+/**
+ * A torch in an iron bracket: in a frame whose origin is the foot of the wall's face and whose z points out from it.
+ * `light`: it carries the hex's own light; without, only its flame and its glow (the torch through the wall has the light).
+ */
+function sconce(k: Kit, c: Ctx, light: boolean) {
+  const P = c.pal;
+  k.box(P.iron, 0.15, 0.36, 0.03, 0, 1.2, 0.035);
+  k.box(P.iron, 0.05, 0.05, 0.2, 0, 1.3, 0.13);
+  k.cyl(P.iron, 0.07, 0.1, 0.08, 0, 1.3, 0.22, 6);
+  // The torch: a stave leaning out of its ring, its head bound in pitch.
+  k.cyl(P.wood, 0.032, 0.038, 0.52, 0, 1.12, 0.17, 5, 0, 0.3, 0);
+  k.blob(P.woodDark, 0.062, 0.08, 0.062, 0, 1.63, 0.325, 1);
+  k.cone(EMBER, 0.05, 0.16, 0, 1.64, 0.33, 5, 0, 0, 0, GLOW, true);
+  k.fire(0, 1.68, 0.33, 0.15, { power: 0.95, range: 7.5, pool: 3.1, small: true, sparks: 3, unlit: !light });
+  k.poly(SOOT, [[-0.09, 1.72, 0.03], [0.09, 1.72, 0.03], [0.05, 2.12, 0.03], [-0.05, 2.12, 0.03]], [0, 0, 1]);
+  k.wash(0, 1.5, 0.06, 1.2, 0.62, FIRE, 0.46);
+}
+
+/** What hangs on (or is let into) a hall's wall here and there: in the same frame as a sconce. */
+function wallDressing(k: Kit, c: Ctx, salt: number) {
+  const P = c.pal;
+  const pick = c.n(salt);
+  if (pick < 0.15) {
+    hanging(k, BANNERS[Math.floor(c.n(salt + 1) * BANNERS.length * 0.999)], P.trim, 0.46, 1.2, 0, HALL.h - 0.4, 0.04, 1);
+  } else if (pick < 0.27) {
+    // A niche: a dark arched recess with its sill, and a candle (or what is left of whoever was remembered here).
+    const [w, y0, y1] = [0.19, 0.92, 1.36];
+    const pts: number[][] = [[-w, y0, 0.03], [w, y0, 0.03], [w, y1, 0.03]];
+    for (let j = 1; j < 6; j++) pts.push([Math.cos((j / 6) * Math.PI) * w, y1 + Math.sin((j / 6) * Math.PI) * w, 0.03]);
+    pts.push([-w, y1, 0.03]);
+    k.poly(CUT, pts, [0, 0, 1]);
+    k.box(P.stoneLight, w * 2 + 0.16, 0.06, 0.14, 0, y0 - 0.06, 0.04);
+    for (const s of [-1, 1]) k.box(P.stoneLight, 0.07, y1 - y0, 0.06, s * (w + 0.035), y0, 0.02);
+    for (let j = 0; j < 5; j++) {
+      const phi = ((j + 0.5) / 5) * Math.PI;
+      k.box(j === 2 ? P.trim : j % 2 ? P.stoneDark : P.stoneLight, 0.13, 0.08, 0.06, Math.cos(phi) * (w + 0.035), y1 + Math.sin(phi) * (w + 0.035), 0.02, 0, 0, phi - Math.PI / 2, j === 2 && P.trimGlows ? GLOW : SOLID, j === 2);
+    }
+    if (c.n(salt + 2) < 0.6) {
+      const h = 0.1 + c.n(salt + 3) * 0.1;
+      k.cyl(P.bone, 0.035, 0.03, h, 0, y0, 0.08, 6);
+      k.cone(col("#ffd98a"), 0.024, 0.08, 0, y0 + h, 0.08, 5, 0, 0, 0, GLOW, true);
+      k.wash(0, y0 + h + 0.08, 0.045, 0.34, 0.34, FIRE, 0.5);
+      k.glowPool(0, 0.5, FIRE, 1.5, 0.14, true);
+    } else {
+      k.blob(P.bone, 0.09, 0.09, 0.085, 0, y0 + 0.08, 0.07, 1);
+      for (const s of [-1, 1]) k.blob(DARK, 0.022, 0.026, 0.02, s * 0.035, y0 + 0.09, 0.145, 3);
+    }
+  } else if (pick < 0.36) {
+    // A shield hung over two crossed spears.
+    for (const s of [-1, 1]) {
+      k.cyl(P.wood, 0.02, 0.02, 1.5, s * 0.42, 0.72, 0.05, 5, 0, 0, s * 0.56);
+      k.cone(P.iron, 0.045, 0.16, s * -0.376, 1.99, 0.05, 4, 0, 0, s * 0.56);
+    }
+    k.cyl(BANNERS[Math.floor(c.n(salt + 1) * BANNERS.length * 0.999)], 0.3, 0.3, 0.05, 0, 1.36, 0.06, 6, 0, Math.PI / 2, 0, 1, SOLID, true);
+    k.cyl(P.iron, 0.32, 0.32, 0.03, 0, 1.36, 0.05, 6, 0, Math.PI / 2, 0);
+    k.blob(P.trim, 0.07, 0.07, 0.05, 0, 1.36, 0.12, 1, 0, 0, 0, P.trimGlows ? GLOW : SOLID, true);
+  } else if (pick < 0.43) {
+    // An iron ring let into the stone, and a length of chain.
+    k.box(P.iron, 0.1, 0.1, 0.03, 0, 1.52, 0.035);
+    k.put(SOLID, U.torus(), placed(0, 1.44, 0.07, 0.09, 0.09, 0.09, 0, 0, 0), P.iron);
+    for (let j = 0; j < 5; j++) k.box(P.iron, j % 2 ? 0.02 : 0.05, 0.1, j % 2 ? 0.05 : 0.02, (c.n(salt + 5) - 0.5) * 0.02 * j, 1.26 - j * 0.105, 0.07);
+    k.put(SOLID, U.torus(), placed(0, 0.76, 0.07, 0.075, 0.075, 0.075, 0, 0.5, 0), P.iron);
+  } else if (pick < 0.56) {
+    // A crack running down the face.
+    let [x, y] = [(c.n(salt + 6) - 0.5) * 0.3, HALL.h - 0.36];
+    for (let j = 0; j < 5; j++) {
+      const [nx, ny] = [x + (c.n(salt + 7 + j) - 0.5) * 0.26, y - 0.2 - c.n(salt + 14 + j) * 0.22];
+      k.poly(c.clime === "ash" && j > 2 ? EMBER_DEEP : SOOT, [[x - 0.016, y, 0.026], [x + 0.016, y, 0.026], [nx + 0.01, ny, 0.026], [nx - 0.01, ny, 0.026]], [0, 0, 1], false, c.clime === "ash" && j > 2 ? GLOW : SOLID, true);
+      [x, y] = [nx, ny];
+    }
+  }
+}
+
+/** A wall of a hall, with or without its torch. False if the walls round it are not a hall's (it is drawn as any other wall then). */
+function hallWall(k: Kit, c: Ctx, torch: boolean): boolean {
+  const plan = hallPlan(c);
+  if (plan.lie === "odd") return false;
+  const T = HALL.t;
+  const column = plan.lie === "column";
+  // The wall's line, in a frame whose x runs along it: a row's through the middle, a column's to one side and turned.
+  const X = column ? plan.shift * (APO / 2) : 0;
+  hallRim(k, c, plan, X);
+  let lit = false;
+  const dress = (along: number, s: number, salt: number, plain: boolean) => {
+    // (In a column's frame "along" is north and south, and the faces look east and west.)
+    if (column) k.push(X + s * (T / 2), 0, along, (s * Math.PI) / 2);
+    else k.push(along, 0, s * (T / 2), s < 0 ? Math.PI : 0);
+    if (torch) {
+      sconce(k, c, !lit);
+      lit = true;
+    } else if (!plain) wallDressing(k, c, salt);
+    k.pop();
+  };
+  if (!column) {
+    hallPiece(k, c, plan.west ? -APO : -0.07, 0, plan.east ? APO : 0.07, 0, 10);
+    // Where a column's wall comes in from above or below: it brings its own pier, and nothing hangs there.
+    const joins = [0, 2, 3, 5].filter((i) => hallRuns(c, DIRS[i].q, DIRS[i].r));
+    if (!(plan.east && plan.west) && joins.length === 0) hallPier(k, c, 0, 0);
+    const pilaster = plan.east && plan.west && joins.length === 0 && !torch && (((c.t.q + Math.floor(c.t.r / 2)) % 3) + 3) % 3 === 0;
+    if (pilaster) hallPilaster(k, c, 0, 0, false);
+    // The side the view opens from first: it has the light, if only one side can.
+    for (const s of [1, -1]) {
+      const mine = joins.filter((i) => (s < 0 ? i === 0 || i === 5 : i === 2 || i === 3));
+      const looks = s < 0 ? c.floor(0) || c.floor(5) : c.floor(2) || c.floor(3);
+      if (!looks || mine.length === 2) continue;
+      dress(mine.length ? (SIDE[mine[0]].x > 0 ? -0.44 : 0.44) : 0, s, 300 + s, pilaster);
+    }
+    return true;
+  }
+  const reach = (end: "on" | "row" | "end") => (end === "on" ? 0.75 : end === "row" ? 1.5 : 0.07);
+  hallPiece(k, c, X, -reach(plan.north), X, reach(plan.south), 10);
+  for (const [end, way, sides] of [[plan.north, -1, [0, 5]], [plan.south, 1, [2, 3]]] as const) {
+    if (end === "end") hallPier(k, c, X, 0);
+    if (end !== "row") continue;
+    hallPier(k, c, X, way * 1.5);
+    // The row's own wall may stop short of the corner: carry it on to here.
+    for (const i of sides) {
+      if (!hallRuns(c, DIRS[i].q, DIRS[i].r)) continue;
+      const at = SIDE[i].x > 0 ? APO : -APO;
+      const lo = at - (hallRuns(c, DIRS[i].q - 1, DIRS[i].r) ? APO : 0);
+      const hi = at + (hallRuns(c, DIRS[i].q + 1, DIRS[i].r) ? APO : 0);
+      if (X < lo - 0.3) hallPiece(k, c, X, way * 1.5, lo, way * 1.5, 80 + i);
+      else if (X > hi + 0.3) hallPiece(k, c, hi, way * 1.5, X, way * 1.5, 80 + i);
+    }
+  }
+  const through = plan.north === "on" && plan.south === "on";
+  const pilaster = through && !torch && ((c.t.r % 3) + 3) % 3 === 0;
+  if (pilaster) hallPilaster(k, c, X, 0, true);
+  for (const s of SIDE[c.open].x >= 0 ? [1, -1] : [-1, 1]) if (c.floor(s > 0 ? 1 : 4)) dress(0, s, 300 + s, pilaster);
+  return true;
+}
+
+/** A doorway's wall with the way through it cut out: along x for `half` either way, the way through along z. */
+function doorWall(half: number): Float32Array {
+  return unit(`door${half.toFixed(2)}`, () => {
+    const { h, t, door, spring } = HALL;
+    const s = new THREE.Shape();
+    s.moveTo(-half, 0);
+    s.lineTo(-door, 0);
+    s.lineTo(-door, spring);
+    s.absarc(0, spring, door, Math.PI, 0, true);
+    s.lineTo(door, 0);
+    s.lineTo(half, 0);
+    s.lineTo(half, h - 0.3);
+    s.lineTo(-half, h - 0.3);
+    s.lineTo(-half, 0);
+    return new THREE.ExtrudeGeometry(s, { depth: t, bevelEnabled: false, curveSegments: 6 }).translate(0, 0, -t / 2);
+  });
+}
+
+/** One leaf of a door, hung on the frame's origin and reaching along x to its free edge, where it is tallest (the arch it shuts into). */
+function doorLeaf(k: Kit, c: Ctx, salt: number) {
+  const P = c.pal;
+  const { door: W, spring: S } = HALL;
+  const w = W - 0.02;
+  const top = (x: number) => S + Math.sqrt(Math.max(0, W * W - (W - x) * (W - x))) - 0.04;
+  for (const f of [-1, 1]) {
+    const z = f * 0.03;
+    const pts: number[][] = [[0, 0.03, z], [w, 0.03, z]];
+    for (let j = 4; j >= 0; j--) pts.push([(j / 4) * w, top((j / 4) * w), z]);
+    k.poly(P.wood, pts, [0, 0, f]);
+    for (const x of [w * 0.34, w * 0.67]) k.poly(P.woodDark, [[x - 0.008, 0.05, z + f * 0.003], [x + 0.008, 0.05, z + f * 0.003], [x + 0.008, top(x) - 0.03, z + f * 0.003], [x - 0.008, top(x) - 0.03, z + f * 0.003]], [0, 0, f]);
+    // An iron ring to pull it by.
+    k.put(SOLID, U.torus(), placed(w * 0.76, S * 0.56, z + f * 0.035, 0.06, 0.06, 0.06, 0, 0, 0), P.iron);
+  }
+  k.box(P.woodDark, 0.05, S - 0.06, 0.07, 0.025, 0.03, 0);
+  k.box(P.woodDark, 0.05, top(w) - 0.03, 0.07, w - 0.025, 0.03, 0);
+  // Iron straps across it, nailed.
+  for (const y of [0.4, S - 0.2]) {
+    k.box(P.iron, w * 0.86, 0.075, 0.078, w * 0.43, y, 0);
+    for (let j = 0; j < 3; j++) k.box(P.stoneLight, 0.025, 0.025, 0.09, w * (0.14 + j * 0.3), y + 0.025, 0);
+  }
+  if (c.clime === "ash" && c.n(salt) < 0.5) k.box(EMBER_DEEP, 0.02, 0.4, 0.075, w * 0.5, 0.7, 0, 0, 0, 0.3, GLOW, true);
+}
+
+/** A doorway through a hall's wall: a frame of dressed stone round an arched way through, and its two leaves swung back. */
+function doorway(k: Kit, c: Ctx, half: number) {
+  const P = c.pal;
+  const { h: H, t: T, door: W, spring: S } = HALL;
+  k.put(SOLID, doorWall(half), null, P.stone);
+  const pier = half - W;
+  for (const s of [-1, 1]) {
+    k.box(P.stoneDark, pier + 0.03, 0.3, T + 0.16, s * (W + pier / 2 + 0.015), 0, 0);
+    // The jambs: a half-column either side, and the stone the arch springs from.
+    k.box(P.stoneDark, 0.24, 0.34, T + 0.26, s * (W + 0.1), 0, 0);
+    k.box(P.stoneLight, 0.17, S - 0.34, T + 0.16, s * (W + 0.1), 0.34, 0);
+    k.box(P.stone, 0.26, 0.13, T + 0.26, s * (W + 0.09), S - 0.07, 0);
+    for (const f of [-1, 1]) {
+      const z = f * (T / 2 + 0.004);
+      for (let j = 1; j < 4; j++) {
+        const y = 0.3 + (j * (H - 0.6)) / 4;
+        k.poly(JOINT, [[s * (W + 0.19), y - 0.011, z], [s * half, y - 0.011, z], [s * half, y + 0.011, z], [s * (W + 0.19), y + 0.011, z]], [0, 0, f]);
+      }
+    }
+    if (c.clime === "frost") icicles(k, c, s * 0.08, s * 0.36, S + W * 0.88, 0, 2, 50 + s);
+    if (c.clime === "mire") vine(k, s * (W + 0.24), H - 0.3, T / 2 + 0.05, 0.6 + c.n(60 + s) * 0.7);
+  }
+  // The ring of stones round the arch, and its keystone.
+  const stones = 9;
+  for (let j = 0; j < stones; j++) {
+    const phi = ((j + 0.5) / stones) * Math.PI;
+    const keystone = j === (stones - 1) / 2;
+    const tone = keystone ? P.trim : j % 2 ? P.stoneLight : P.stoneDark;
+    k.box(tone, keystone ? 0.2 : 0.17, keystone ? 0.27 : 0.17, T + (keystone ? 0.2 : 0.1), Math.cos(phi) * (W + 0.01), S + Math.sin(phi) * (W + 0.01), 0, 0, 0, phi - Math.PI / 2, keystone && P.trimGlows ? GLOW : SOLID, keystone);
+  }
+  // Its head is paler than the walls' and carries the sign of the house, so a way through is told from above.
+  hallCornice(k, c, -half, half, P.stone.clone().multiplyScalar(0.8));
+  k.box(P.stoneLight, W * 2 + 0.5, 0.05, T + 0.34, 0, H + 0.02, 0);
+  k.box(P.trim, 0.26, 0.03, 0.26, 0, H + 0.07, 0, Math.PI / 4, 0, 0, P.trimGlows ? GLOW : SOLID, true);
+  // The sill, worn, reaching out into both rooms; and the leaves, swung back into whichever room they open on, one further than the other.
+  k.box(P.stoneLight, W * 2 + 0.2, 0.04, T + 0.9, 0, -0.012, 0);
+  k.box(P.stoneDark, W * 2 - 0.1, 0.006, T + 0.6, 0, 0.028, 0, 0, 0, 0, SOLID, true);
+  const into = c.n(3) < 0.5 ? 1 : -1;
+  const [wide, ajar] = [1.78 + c.n(4) * 0.22, 1.25 + c.n(5) * 0.4];
+  const swing = c.n(6) < 0.5 ? [wide, ajar] : [ajar, wide];
+  k.push(-W, 0, into * (T / 2 + 0.035), alongX(into * swing[0]));
+  doorLeaf(k, c, 7);
+  k.pop();
+  k.push(W, 0, into * (T / 2 + 0.035), alongX(Math.PI - into * swing[1]));
+  doorLeaf(k, c, 8);
+  k.pop();
+  for (const s of [-1, 1]) for (const y of [0.42, S - 0.18]) k.box(P.iron, 0.07, 0.11, 0.07, s * (W + 0.005), y, into * (T / 2 + 0.035));
+}
+
+/** An archway standing in a hall's wall. False if the walls round it are not a hall's. */
+function hallDoor(k: Kit, c: Ctx): boolean {
+  const plan = hallPlan(c);
+  if (plan.lie === "odd") return false;
+  hallRim(k, c, plan, plan.shift * (APO / 2));
+  if (plan.lie === "row") {
+    doorway(k, c, APO + 0.004);
+    return true;
+  }
+  const X = plan.shift * (APO / 2);
+  k.push(X, 0, 0, -Math.PI / 2);
+  doorway(k, c, 0.754);
+  k.pop();
+  for (const [end, way] of [[plan.north, -1], [plan.south, 1]] as const) {
+    if (end !== "row") continue;
+    // (The wall the doorway stands in gives way to the combat view as walls do, not as the doorway does.)
+    k.cut = CUT_SINK;
+    hallPiece(k, c, X, way * 0.75, X, way * 1.5, 20 + way);
+    hallPier(k, c, X, way * 1.5);
+  }
+  return true;
+}
+
+function wallTorch(k: Kit, c: Ctx) {
+  wall(k, c);
+}
+
+// ---- under a roof: what stands in the rooms ----
+
+function throne(k: Kit, c: Ctx) {
+  const P = c.pal;
+  const cloth = BANNERS[Math.floor(c.n(1) * BANNERS.length * 0.999)];
+  const glow = P.trimGlows ? GLOW : SOLID;
+  k.push(0, 0, 0, faceZ(c.facing));
+  // Two steps up to it.
+  k.box(P.stoneDark, 1.56, 0.14, 1.34, 0, 0, 0.04);
+  k.box(P.stone, 1.26, 0.14, 1.04, 0, 0.14, -0.06);
+  inlay(k, c, 1.28, 0.04, 1.06, 0, 0.2, -0.06);
+  const y = 0.28;
+  // The seat, and what little comfort it has.
+  k.box(P.stone, 0.78, 0.5, 0.66, 0, y, -0.12);
+  k.box(cloth, 0.6, 0.09, 0.52, 0, y + 0.5, -0.06, 0, 0, 0, SOLID, true);
+  k.box(P.trim, 0.62, 0.035, 0.03, 0, y + 0.5, 0.2, 0, 0, 0, glow, true);
+  k.box(cloth, 0.44, 0.34, 0.02, 0, y + 0.14, 0.215, 0, 0, 0, SOLID, true);
+  for (const s of [-1, 1]) {
+    // The arms: each ends in a beast's head, worn smooth by a great many hands.
+    k.box(P.stoneDark, 0.18, 0.84, 0.74, s * 0.47, y, -0.1);
+    k.box(P.stoneLight, 0.22, 0.07, 0.78, s * 0.47, y + 0.84, -0.1);
+    k.blob(P.stoneLight, 0.14, 0.13, 0.15, s * 0.47, y + 0.9, 0.3, 1, s * 0.4);
+    k.cone(P.stoneDark, 0.04, 0.13, s * 0.47 + s * 0.07, y + 0.98, 0.26, 4, 0, -0.5, 0);
+    k.cone(P.stoneDark, 0.04, 0.13, s * 0.47 - s * 0.07, y + 0.98, 0.26, 4, 0, -0.5, 0);
+    inlay(k, c, 0.2, 0.05, 0.76, s * 0.47, y + 0.6, -0.1);
+    // The wings of the back, and a spike on each.
+    k.box(P.stoneDark, 0.2, 1.72, 0.26, s * 0.42, y, -0.5);
+    k.cone(P.stoneLight, 0.13, 0.42, s * 0.42, y + 1.72, -0.5, 4, Math.PI / 4);
+    k.cone(P.trim, 0.035, 0.16, s * 0.42, y + 2.1, -0.5, 4, 0, 0, 0, glow, true);
+  }
+  // The back: a slab taller than whoever sits in it, rising to a point.
+  k.box(P.stone, 0.7, 2.0, 0.2, 0, y, -0.5);
+  k.box(P.stoneDark, 0.5, 1.2, 0.04, 0, y + 0.66, -0.39);
+  k.cyl(P.stoneLight, 0.5, 0.07, 0.62, 0, y + 2.0, -0.5, 4, Math.PI / 4, 0, 0, 0.3);
+  k.cone(P.trim, 0.05, 0.24, 0, y + 2.6, -0.5, 4, 0, 0, 0, glow, true);
+  // The sign of whoever rules here, let into the stone over the seat.
+  k.cyl(P.trim, 0.17, 0.17, 0.03, 0, y + 1.56, -0.375, 8, 0, Math.PI / 2, 0, 1, glow, true);
+  for (let j = 0; j < 8; j++) {
+    const a = (j / 8) * Math.PI * 2;
+    k.box(P.trim, 0.025, 0.12, 0.02, Math.sin(a) * 0.25, y + 1.56 + Math.cos(a) * 0.25 - 0.06, -0.372, 0, 0, -a, glow, true);
+  }
+  hanging(k, cloth, P.trim, 0.3, 0.62, 0, y + 1.3, -0.365, 1);
+  if (c.clime === "mire") vine(k, 0.4, y + 1.7, -0.36, 0.7);
+  if (c.clime === "frost") icicles(k, c, -0.3, 0.3, y + 0.84, 0.3, 3, 20);
+  k.pop();
+}
+
+function bookshelf(k: Kit, c: Ctx) {
+  const P = c.pal;
+  const [W, H, D, back] = [1.5, 2.3, 0.44, -0.52];
+  k.push(0, 0, 0, faceZ(c.facing));
+  k.box(P.woodDark, W, 0.14, D, 0, 0, back);
+  for (const s of [-1, 1]) k.box(P.woodDark, 0.07, H, D, s * (W / 2 - 0.035), 0, back);
+  k.box(P.woodDark, W, H, 0.04, 0, 0, back - D / 2 + 0.02);
+  k.box(P.wood, W + 0.1, 0.08, D + 0.06, 0, H, back);
+  k.box(P.woodDark, W + 0.04, 0.05, D + 0.02, 0, H - 0.05, back);
+  const shelves = 5;
+  const gap = (H - 0.14) / shelves;
+  for (let i = 0; i < shelves; i++) {
+    const y = 0.14 + i * gap;
+    if (i > 0) k.box(P.wood, W - 0.14, 0.04, D - 0.04, 0, y - 0.04, back);
+    // Books: upright in a row, one leaning where there is a gap, a few lying flat.
+    let x = -W / 2 + 0.1;
+    const end = W / 2 - 0.1;
+    let j = 0;
+    while (x < end - 0.07) {
+      const n = c.n(100 + i * 20 + j);
+      const w = 0.055 + c.n(101 + i * 20 + j) * 0.06;
+      const tone = BOOKS[Math.floor(c.n(102 + i * 20 + j) * BOOKS.length * 0.999)];
+      j++;
+      if (n < 0.1) {
+        x += 0.1 + n;
+        continue;
+      }
+      if (n < 0.2 && x + 0.3 < end) {
+        for (let p = 0; p < 3; p++) k.box(BOOKS[(j + p) % BOOKS.length], 0.26 - p * 0.02, 0.055, 0.2, x + 0.13, y + p * 0.056, back + 0.04, (c.n(103 + i + p) - 0.5) * 0.4);
+        x += 0.3;
+        continue;
+      }
+      const h = gap * (0.5 + c.n(104 + i * 20 + j) * 0.3);
+      const lean = n > 0.9 ? 0.26 : 0;
+      k.box(tone, w, h, 0.24, x + w / 2 + lean * h * 0.5, y, back + 0.05 + (c.n(105 + i * 20 + j) - 0.5) * 0.04, 0, 0, -lean, SOLID, true);
+      if (n > 0.55) k.box(P.trim, w + 0.004, 0.025, 0.244, x + w / 2 + lean * h * 0.5, y + h * 0.7, back + 0.05, 0, 0, -lean, P.trimGlows ? GLOW : SOLID, true);
+      x += w + 0.006 + lean * 0.12;
+    }
+  }
+  // On top, out of reach: scrolls, a skull, a candle burned down to a stub.
+  for (let j = 0; j < 3; j++) k.cyl(P.canvas, 0.04, 0.04, 0.34, -0.5 + j * 0.07, H + 0.12 + (j === 2 ? 0.07 : 0), back - 0.06 + (j % 2) * 0.09, 6, 0.2, 0, Math.PI / 2, 1, SOLID, true);
+  k.blob(P.bone, 0.1, 0.1, 0.1, 0.36, H + 0.17, back, 1, 0.4);
+  k.cyl(P.bone, 0.04, 0.035, 0.1, 0.05, H + 0.08, back + 0.05, 6);
+  k.cone(col("#ffd98a"), 0.024, 0.08, 0.05, H + 0.18, back + 0.05, 5, 0, 0, 0, GLOW, true);
+  k.glowPool(0, 0.3, FIRE, 1.5, 0.12, true);
+  // And what somebody pulled down and never put back.
+  k.box(BOOKS[Math.floor(c.n(7) * BOOKS.length * 0.999)], 0.24, 0.05, 0.18, 0.44, 0, 0.06, 0.5, 0, 0, SOLID, true);
+  k.box(P.canvas, 0.3, 0.02, 0.2, -0.3, 0.005, 0.12, -0.3, 0, 0, SOLID, true);
+  k.box(BOOKS[Math.floor(c.n(8) * BOOKS.length * 0.999)], 0.15, 0.015, 0.21, -0.38, 0.02, 0.1, -0.3, 0, 0.12, SOLID, true);
+  if (c.clime === "mire") vine(k, 0.6, H, back + D / 2 + 0.02, 0.8);
+  k.pop();
+}
+
+function table(k: Kit, c: Ctx) {
+  const P = c.pal;
+  const cloth = BANNERS[Math.floor(c.n(1) * BANNERS.length * 0.999)];
+  const top = 0.74;
+  // Long ways across the view, a bench either side.
+  k.push(0, 0, 0, faceZ(c.facing) + (c.n(2) - 0.5) * 0.08);
+  k.box(P.wood, 1.56, 0.07, 0.78, 0, top - 0.07, 0);
+  for (const z of [-0.13, 0.13]) k.box(P.woodDark, 1.56, 0.004, 0.012, 0, top, z, 0, 0, 0, SOLID, true);
+  for (const s of [-1, 1]) {
+    k.box(P.woodDark, 0.09, top - 0.07, 0.6, s * 0.58, 0, 0);
+    k.box(P.woodDark, 0.13, 0.07, 0.72, s * 0.58, 0, 0);
+    // The benches.
+    k.box(P.wood, 1.36, 0.055, 0.24, 0, 0.4, s * 0.64);
+    for (const e of [-1, 1]) k.box(P.woodDark, 0.07, 0.4, 0.2, e * 0.54, 0, s * 0.64);
+  }
+  k.box(P.wood, 1.1, 0.07, 0.07, 0, 0.3, 0);
+  // A runner down the middle of it.
+  k.box(cloth, 1.62, 0.012, 0.26, 0, top, 0, 0, 0, 0, SOLID, true);
+  for (const s of [-1, 1]) k.box(cloth, 0.012, 0.2, 0.26, s * 0.81, top - 0.19, 0, 0, 0, 0, SOLID, true);
+  // What was on it when they left: a candle, plates, tankards, a jug, a loaf, a knife standing in the board.
+  k.cyl(P.iron, 0.07, 0.05, 0.03, 0, top + 0.012, 0, 6);
+  k.cyl(P.bone, 0.03, 0.026, 0.17, 0, top + 0.04, 0, 6);
+  k.cone(col("#ffd98a"), 0.026, 0.09, 0, top + 0.21, 0, 5, 0, 0, 0, GLOW, true);
+  k.glowPool(0, 0, FIRE, 2.0, 0.2, true);
+  for (let j = 0; j < 4; j++) {
+    const [x, z] = [-0.52 + j * 0.36 + (c.n(10 + j) - 0.5) * 0.08, (j % 2 ? 0.24 : -0.24) + (c.n(20 + j) - 0.5) * 0.06];
+    if (c.n(30 + j) < 0.8) k.cyl(j % 2 ? P.stoneLight : P.trim, 0.1, 0.12, 0.02, x, top, z, 8, 0, 0, 0, 1, SOLID, true);
+    if (c.n(40 + j) < 0.5) k.blob(P.thatch, 0.06, 0.035, 0.05, x, top + 0.04, z, 2, j);
+    const [tx, tz] = [x + 0.16, z * 0.55];
+    if (c.n(50 + j) < 0.7) {
+      const fell = c.n(60 + j) < 0.25;
+      k.cyl(P.wood, 0.042, 0.048, 0.11, tx, top + (fell ? 0.045 : 0), tz, 7, c.n(70 + j) * 6, 0, fell ? Math.PI / 2 : 0);
+      if (!fell) k.cyl(P.iron, 0.05, 0.05, 0.02, tx, top + 0.07, tz, 7);
+    }
+  }
+  k.cyl(P.stoneDark, 0.07, 0.085, 0.13, 0.4, top, -0.05, 7);
+  k.cyl(P.stoneDark, 0.085, 0.045, 0.09, 0.4, top + 0.13, -0.05, 7);
+  k.blob(P.thatch, 0.11, 0.065, 0.085, -0.34, top + 0.05, 0.03, 2, 0.6, 0, 0, SOLID, true);
+  k.box(P.stoneLight, 0.018, 0.16, 0.035, -0.62, top - 0.01, -0.2, 0.5, 0, 0.14);
+  k.box(P.woodDark, 0.026, 0.07, 0.04, -0.598, top + 0.146, -0.2, 0.5, 0, 0.14);
+  // A stool, kicked over.
+  if (c.n(3) < 0.6) {
+    const a = c.n(4) * 6;
+    k.push(Math.cos(a) * 0.2 + 0.6, 0.14, 0.62 + Math.sin(a) * 0.05, a, 0, Math.PI / 2);
+    k.cyl(P.wood, 0.15, 0.15, 0.05, 0, 0, 0, 7);
+    for (let j = 0; j < 3; j++) k.cyl(P.woodDark, 0.022, 0.018, 0.3, Math.sin(j * 2.1) * 0.09, -0.3, Math.cos(j * 2.1) * 0.09, 4);
+    k.pop();
+  }
+  k.pop();
+}
+
+function weaponRack(k: Kit, c: Ctx) {
+  const P = c.pal;
+  const back = -0.5;
+  k.push(0, 0, 0, faceZ(c.facing));
+  for (const s of [-1, 1]) {
+    k.box(P.wood, 0.09, 1.46, 0.09, s * 0.66, 0, back);
+    k.box(P.woodDark, 0.13, 0.08, 0.62, s * 0.66, 0, back + 0.2);
+    k.tube(P.woodDark, [[s * 0.66, 0.06, back + 0.46], [s * 0.66, 0.74, back + 0.03]], () => 0.03, 4);
+    k.cone(P.woodDark, 0.07, 0.12, s * 0.66, 1.46, back, 4, Math.PI / 4);
+  }
+  k.box(P.wood, 1.42, 0.08, 0.11, 0, 1.24, back);
+  k.box(P.woodDark, 1.42, 0.06, 0.24, 0, 0.3, back + 0.1);
+  // Spears and bills, their butts in the lower rail and their necks in the notches of the upper.
+  const arms = 5;
+  for (let j = 0; j < arms; j++) {
+    const x = -0.48 + j * 0.24;
+    const kind = Math.floor(c.n(10 + j) * 2.999);
+    const long = 2.05 + c.n(20 + j) * 0.4;
+    if (c.n(30 + j) < 0.14) continue;
+    k.push(x, 0.34, back + 0.18, 0, -0.085, (c.n(40 + j) - 0.5) * 0.05);
+    k.cyl(j % 2 ? P.wood : P.woodDark, 0.022, 0.02, long, 0, 0, 0, 5);
+    k.cyl(P.iron, 0.03, 0.026, 0.08, 0, long - 0.04, 0, 5);
+    if (kind === 0) k.cyl(P.stoneLight, 0.055, 0.004, 0.3, 0, long + 0.03, 0, 4, 0, 0, 0, 0.3);
+    else if (kind === 1) {
+      // A bill: a broad blade with a hook at the back of it.
+      k.box(P.stoneLight, 0.11, 0.34, 0.018, 0.045, long, 0);
+      k.cone(P.stoneLight, 0.04, 0.18, 0.02, long + 0.33, 0, 4, 0, 0, -0.3);
+      k.cone(P.stoneLight, 0.03, 0.14, -0.03, long + 0.16, 0, 4, 0, 0, 1.9);
+    } else {
+      // A poleaxe: a blade one side, a beak the other, a spike on top.
+      k.cyl(P.stoneLight, 0.15, 0.09, 0.2, 0.01, long + 0.02, 0, 3, Math.PI / 6, 0, 0, 0.1);
+      k.cone(P.stoneLight, 0.028, 0.26, 0, long + 0.2, 0, 4);
+      k.cone(P.stoneLight, 0.03, 0.14, -0.02, long + 0.12, 0, 4, 0, 0, 1.57);
     }
     k.pop();
   }
-  for (const s of [-1, 1]) {
-    k.box(P.stoneDark, 0.44, 0.52, 0.62, s * 1.0, 0, 0);
-    k.box(P.stoneLight, 0.36, 0.08, 0.54, s * 1.0, 0.52, 0);
-    k.cone(P.glyph, 0.07, 0.2, s * 1.0, 0.6, 0, 4, Math.PI / 4, 0, 0, GLOW);
-    if (c.clime === "mire") vine(k, s * 0.9, mid + 0.8, 0.2, 0.7);
-    if (c.clime === "frost") icicles(k, c, s * 0.2, s * 0.8, mid + inner * 0.72, 0, 2, 30 + s);
-  }
-  if (c.clime === "frost") k.blob(SNOW, 0.5, 0.07, 0.16, 0, mid + outer + 0.06, 0, 2, 0, 0, 0, SOLID, true);
-  // The portal itself is drawn apart (it turns), and its light.
-  k.push(0, mid, 0);
-  k.portals.push({ matrix: k.frame(), color: P.glyph, deep: P.crystalDeep });
+  // A shield stood against the foot of it, and a sword hung by its guard.
+  const cloth = BANNERS[Math.floor(c.n(1) * BANNERS.length * 0.999)];
+  k.push(0.3, 0.3, back + 0.44, 0.25, -0.34, 0);
+  k.cyl(P.iron, 0.31, 0.31, 0.03, 0, 0, 0, 8, 0, Math.PI / 2, 0);
+  k.cyl(cloth, 0.28, 0.28, 0.05, 0, 0, 0.012, 8, 0, Math.PI / 2, 0, 1, SOLID, true);
+  k.blob(P.trim, 0.07, 0.07, 0.05, 0, 0, 0.07, 1, 0, 0, 0, P.trimGlows ? GLOW : SOLID, true);
   k.pop();
-  k.shine(0, mid, 0.5, P.glyph, 1.3, 7.5, 3.2);
-  for (let j = 0; j < 16; j++) {
-    const a = c.n(40 + j) * Math.PI * 2;
-    const d = 0.3 + c.n(60 + j) * 0.6;
-    const at = k.world(Math.cos(a) * d, mid + Math.sin(a) * d - 0.4, (c.n(80 + j) - 0.5) * 0.7);
-    k.motes.push({ x: at.x, y: at.y, z: at.z, color: P.glyph, rise: 0.9 + c.n(100 + j), sway: 0.16, rate: 0.2 + c.n(120 + j) * 0.2, phase: c.n(140 + j), size: 0.6 + c.n(160 + j) * 0.6 });
+  k.push(-0.66, 1.2, back + 0.07);
+  k.box(P.stoneLight, 0.05, 0.74, 0.016, 0, -0.78, 0);
+  k.box(P.trim, 0.22, 0.035, 0.04, 0, -0.045, 0, 0, 0, 0, P.trimGlows ? GLOW : SOLID, true);
+  k.box(P.woodDark, 0.035, 0.16, 0.035, 0, -0.01, 0);
+  k.pop();
+  k.pop();
+}
+
+function cage(k: Kit, c: Ctx) {
+  const P = c.pal;
+  const [half, H] = [0.58, 1.72];
+  const bar = P.iron.clone().lerp(P.stoneDark, 0.25);
+  k.push(0, 0, 0, faceZ(c.facing) + (c.n(1) - 0.5) * 0.3);
+  k.box(P.iron, half * 2 + 0.08, 0.07, half * 2 + 0.08);
+  k.box(P.woodDark, half * 2 - 0.02, 0.03, half * 2 - 0.02, 0, 0.07, 0);
+  const ajar = c.n(2) < 0.35;
+  for (let side = 0; side < 4; side++) {
+    k.push(0, 0, 0, (side * Math.PI) / 2);
+    // In this frame the side is the one at +z: bars along x, and rails at the top and the middle.
+    k.box(P.iron, half * 2 + 0.06, 0.06, 0.06, 0, H, half);
+    k.box(P.iron, half * 2, 0.04, 0.045, 0, H * 0.52, half);
+    k.box(P.iron, 0.06, H, 0.06, half, 0.07, half);
+    for (let j = 1; j < 6; j++) {
+      const x = -half + (j * half * 2) / 6;
+      // The front's middle bars are the door's: it hangs a little open on some.
+      if (side === 0 && (j === 3 || j === 2 || j === 4)) continue;
+      k.box(bar, 0.03, H - 0.07, 0.03, x, 0.07, half);
+    }
+    k.pop();
+  }
+  // The door: its own frame of three bars, a lock plate, and hinges.
+  k.push(-half / 3 - 0.1, 0.07, half, ajar ? -0.6 : 0);
+  const dw = (half * 2) / 3 + 0.2;
+  for (const x of [0.03, dw / 2, dw - 0.03]) k.box(bar, 0.035, H * 0.86, 0.035, x, 0.04, 0);
+  for (const y of [0.04, H * 0.5, H * 0.88]) k.box(P.iron, dw, 0.04, 0.04, dw / 2, y, 0);
+  k.box(P.trim, 0.1, 0.15, 0.07, dw - 0.05, H * 0.42, 0.01, 0, 0, 0, P.trimGlows ? GLOW : SOLID, true);
+  k.box(DARK, 0.02, 0.04, 0.075, dw - 0.05, H * 0.45, 0.012);
+  k.pop();
+  // The roof of it: bars across, and a ring to haul it up by.
+  for (const x of [-half / 3, half / 3]) k.box(bar, 0.03, 0.03, half * 2, x, H + 0.015, 0);
+  for (const z of [-half / 3, half / 3]) k.box(bar, half * 2, 0.03, 0.03, 0, H + 0.015, z);
+  k.put(SOLID, U.torus(), placed(0, H + 0.14, 0, 0.1, 0.1, 0.1, 0.6, 0, 0), P.iron);
+  // Straw, a bowl, and what the last one in here left behind.
+  for (let j = 0; j < 4; j++) k.blob(j % 2 ? P.thatch : P.thatch.clone().multiplyScalar(0.8), 0.24 + c.n(10 + j) * 0.12, 0.05, 0.2, (c.n(20 + j) - 0.5) * 0.6, 0.11, (c.n(30 + j) - 0.5) * 0.6, 2, c.n(40 + j) * 6, 0, 0, SOLID, true);
+  k.cyl(P.wood, 0.06, 0.09, 0.05, 0.3, 0.1, 0.32, 7);
+  if (c.n(3) < 0.6) {
+    k.blob(P.bone, 0.085, 0.085, 0.09, -0.3, 0.19, -0.26, 1, 0.8);
+    k.tube(P.boneDark, [[-0.1, 0.14, -0.34], [0.2, 0.14, -0.2]], () => 0.022, 4);
+    k.tube(P.bone, [[-0.24, 0.14, 0.0], [-0.02, 0.14, -0.14]], () => 0.02, 4);
+  }
+  for (let j = 0; j < 4; j++) k.box(P.iron, j % 2 ? 0.02 : 0.045, 0.02, j % 2 ? 0.045 : 0.02, -0.4 + j * 0.05, 0.11, 0.3 - j * 0.03);
+  k.pop();
+}
+
+function sarcophagus(k: Kit, c: Ctx) {
+  const P = c.pal;
+  const glow = P.trimGlows ? GLOW : SOLID;
+  // Long ways across the view, so whoever is carved on the lid is seen from the side.
+  k.push(0, 0, 0, faceZ(c.facing) + (c.n(1) - 0.5) * 0.1);
+  k.box(P.stoneDark, 1.66, 0.14, 0.94);
+  k.box(P.stone, 1.5, 0.12, 0.8, 0, 0.14, 0);
+  k.box(P.stone, 1.42, 0.42, 0.72, 0, 0.26, 0);
+  inlay(k, c, 1.44, 0.04, 0.74, 0, 0.6, 0);
+  for (const f of [-1, 1]) {
+    // Panels down each long side, a sign cut in the middle one.
+    for (let j = 0; j < 4; j++) k.box(P.stoneLight, 0.07, 0.34, 0.05, -0.66 + j * 0.44, 0.26, f * 0.345);
+    for (let j = 0; j < 3; j++) k.box(P.stoneDark, 0.37, 0.3, 0.02, -0.44 + j * 0.44, 0.28, f * 0.354);
+    k.box(P.glyph.clone().multiplyScalar(0.6), 0.13, 0.13, 0.012, 0, 0.36, f * 0.366, 0, 0, Math.PI / 4, GLOW, true);
+  }
+  // The lid, and on some it has been shifted: by whom is the question.
+  const shifted = c.n(2) < 0.34;
+  k.push(shifted ? 0.05 : 0, 0.68, shifted ? 0.13 : 0, shifted ? 0.13 : 0);
+  k.box(P.stoneLight, 1.56, 0.11, 0.86);
+  k.box(P.stone, 1.38, 0.07, 0.68, 0, 0.11, 0);
+  // Whoever lies here, carved lying: a pillow, the head, the body under a shield, hands on a sword's hilt, the feet.
+  k.box(P.stoneLight, 0.24, 0.06, 0.34, 0.5, 0.18, 0);
+  k.blob(P.stone, 0.11, 0.1, 0.11, 0.48, 0.3, 0, 1);
+  k.tube(P.stone, [[0.36, 0.25, 0], [0.1, 0.28, 0], [-0.3, 0.24, 0], [-0.56, 0.22, 0]], (t) => 0.15 * (1 - t * 0.4), 6, 0.62);
+  k.blob(P.stoneDark, 0.09, 0.1, 0.14, -0.6, 0.27, 0, 1);
+  for (const s of [-1, 1]) k.tube(P.stoneDark, [[0.3, 0.3, s * 0.17], [0.12, 0.34, s * 0.14], [0.06, 0.38, s * 0.02]], () => 0.045, 5);
+  k.box(P.trim, 0.72, 0.022, 0.05, -0.32, 0.385, 0, 0, 0, 0, glow, true);
+  k.box(P.trim, 0.035, 0.03, 0.2, 0.04, 0.385, 0, 0, 0, 0, glow, true);
+  k.pop();
+  if (shifted) {
+    // Dark in the gap, and a cold light in the dark.
+    k.box(DARK, 1.36, 0.012, 0.16, 0, 0.675, -0.26);
+    k.box(P.glyph.clone().multiplyScalar(0.8), 1.2, 0.014, 0.05, 0, 0.678, -0.3, 0, 0, 0, GLOW, true);
+    k.glowPool(0, -0.5, P.glyph, 1.7, 0.2);
+  }
+  if (c.clime === "mire") vine(k, 0.5, 0.68, 0.44, 0.5);
+  if (c.clime === "frost") icicles(k, c, -0.7, 0.7, 0.68, 0.43, 4, 20);
+  if (c.clime === "ash") emberCrack(k, -0.3, 0.16, 0.41, 0.3, 0, 0.4);
+  k.pop();
+}
+
+function rug(k: Kit, c: Ctx) {
+  const P = c.pal;
+  const is = (i: number) => c.kindAt(i) === "rug";
+  const cloth = BANNERS[Math.floor(hash(Math.floor((c.t.q + 500) / 4), Math.floor((c.t.r + 500) / 4), 3) * BANNERS.length * 0.999)].clone().multiplyScalar(0.72);
+  const deep = cloth.clone().multiplyScalar(0.62);
+  const worn = cloth.clone().lerp(P.canvasDark, 0.4);
+  const gold = P.trim.clone().multiplyScalar(0.8);
+  const wide = 0.46;
+  // A length of it along x in the current frame, from `x0` to `x1`: `e0` and `e1` say which ends are finished with a fringe.
+  const length = (x0: number, x1: number, e0: boolean, e1: boolean) => {
+    const flat = (tone: THREE.Color, a: number, b: number, w0: number, w1: number, y: number) => k.poly(tone, [[a, y, w0], [b, y, w0], [b, y, w1], [a, y, w1]], [0, 1, 0], false, SOLID, true);
+    flat(cloth, x0, x1, -wide, wide, 0.012);
+    for (const s of [-1, 1]) {
+      flat(deep, x0, x1, s * (wide - 0.1), s * wide, 0.015);
+      flat(gold, x0, x1, s * (wide - 0.125), s * (wide - 0.1), 0.016);
+    }
+    // Worn pale down the middle by a great many boots.
+    flat(worn, x0 + (e0 ? 0.16 : 0), x1 - (e1 ? 0.16 : 0), -0.14, 0.14, 0.014);
+    // Diamonds along it, at the same places whichever hex draws them.
+    const p = k.world(0, 0, 0);
+    const q = k.world(1, 0, 0);
+    const along = Math.abs(q.x - p.x) > Math.abs(q.z - p.z) ? p.x * Math.sign(q.x - p.x) : p.z * Math.sign(q.z - p.z);
+    const step = 0.5;
+    for (let m = Math.ceil((along + x0 + 0.12) / step); m * step < along + x1 - 0.12; m++) {
+      const x = m * step - along;
+      k.poly(gold, [[x - 0.1, 0.017, 0], [x, 0.017, 0.2], [x + 0.1, 0.017, 0], [x, 0.017, -0.2]], [0, 1, 0], false, SOLID, true);
+      k.poly(deep, [[x - 0.05, 0.018, 0], [x, 0.018, 0.1], [x + 0.05, 0.018, 0], [x, 0.018, -0.1]], [0, 1, 0], false, SOLID, true);
+    }
+    for (const [end, at, out] of [[e0, x0, -1], [e1, x1, 1]] as const) {
+      if (!end) continue;
+      flat(deep, Math.min(at, at - out * 0.1), Math.max(at, at - out * 0.1), -wide, wide, 0.0155);
+      for (let j = 0; j < 9; j++) {
+        const z = -wide + 0.05 + j * ((wide * 2 - 0.1) / 8);
+        k.poly(P.canvas, [[at, 0.012, z - 0.022], [at + out * 0.1, 0.01, z - 0.03 + (c.n(20 + j) - 0.5) * 0.03], [at + out * 0.1, 0.01, z + 0.03 + (c.n(30 + j) - 0.5) * 0.03], [at, 0.012, z + 0.022]], [0, 1, 0], false, SOLID, true);
+      }
+    }
+  };
+  if (is(1) || is(4)) {
+    // A runner along the row.
+    length(is(4) ? -APO : -0.6, is(1) ? APO : 0.6, !is(4), !is(1));
+    return;
+  }
+  const up = [0, 5].find(is);
+  const down = [2, 3].find(is);
+  if (up !== undefined || down !== undefined) {
+    // Or down a column, which it runs straight down as a hall's wall does: half way between the hexes it zigzags through.
+    const side = SIDE[(down ?? up)!].x > 0 ? 1 : -1;
+    k.push(side * (APO / 2), 0, 0, -Math.PI / 2);
+    length(up !== undefined ? -0.75 : -0.56, down !== undefined ? 0.75 : 0.56, up === undefined, down === undefined);
+    k.pop();
+    return;
+  }
+  // On its own: laid the way the room looks.
+  k.push(0, 0, 0, faceZ(c.facing) + Math.PI / 2);
+  length(-0.74, 0.74, true, true);
+  k.pop();
+}
+
+// ---- under ground ----
+
+/** The rock of a cave, from a climate's cliffs: darker, as nothing has ever dried or bleached it. */
+const caveRock = (pal: Pal) => pal.cliff.map((t) => t.clone().multiplyScalar(0.8));
+/** A cave's floor in each climate (the ground is painted this; what lies on it here is a shade either side). */
+export const CAVE_FLOOR: Record<Clime, string> = { greenwood: "#5e5967", frost: "#6a788f", dunes: "#85533b", mire: "#45443a", ash: "#322c36" };
+
+function stalagmite(k: Kit, c: Ctx) {
+  const rock = caveRock(c.pal);
+  const pale = c.clime === "frost" ? ICE_LIGHT : rock[2].clone().lerp(c.pal.stoneLight, 0.55);
+  const turn = c.n(1) * 6;
+  // One fang: three lengths, each narrower and a little out of true with the one under it, and the rings the drip has left.
+  const fang = (x: number, z: number, r: number, h: number, lean: number, salt: number) => {
+    k.push(x, -0.06, z, c.n(salt) * 6, lean, 0);
+    k.cyl(rock[0], r, r * 0.7, h * 0.42, 0, 0, 0, 6);
+    k.cyl(rock[1], r * 0.7, r * 0.4, h * 0.33, r * 0.06, h * 0.41, 0, 6, 0.5, 0.05);
+    k.cone(pale, r * 0.4, h * 0.3, r * 0.1, h * 0.72, r * 0.02, 6, 1.0, 0.08);
+    k.cyl(pale, r * 0.9, r * 0.85, 0.035, 0, h * 0.18, 0, 6, 0, 0, 0, 1, SOLID, true);
+    if (h > 1.2) k.cyl(pale, r * 0.62, r * 0.58, 0.03, r * 0.06, h * 0.52, 0, 6, 0.5, 0.05, 0, 1, SOLID, true);
+    k.pop();
+  };
+  k.blob(rock[2], 0.66, 0.15, 0.6, 0, 0.02, 0, 2, turn);
+  fang(0, 0, 0.42, 2.5 + c.n(2) * 0.7, (c.n(3) - 0.5) * 0.12, 10);
+  const more = 3 + Math.floor(c.n(4) * 2.99);
+  for (let j = 0; j < more; j++) {
+    const a = turn + (j / more) * Math.PI * 2 + c.n(20 + j) * 0.6;
+    const d = 0.42 + c.n(30 + j) * 0.24;
+    fang(Math.cos(a) * d, Math.sin(a) * d, 0.13 + c.n(40 + j) * 0.13, 0.5 + c.n(50 + j) * 1.1, 0.06 + c.n(60 + j) * 0.1, 70 + j);
+  }
+  // The water that made it, standing at its foot.
+  const a = turn + 1.3;
+  k.disc(c.clime === "ash" ? raw("#2a0f08") : raw("#0b131d"), 0.2, Math.cos(a) * 0.68, 0.013, Math.sin(a) * 0.68, 8, false, SOLID, true);
+  if (c.clime === "ash") emberCrack(k, 0.1, 0.1, 0.4, 0.4, 0, 0.3);
+  if (c.clime === "mire" || c.clime === "greenwood") k.blob(MOSS_DARK, 0.3, 0.06, 0.24, Math.cos(turn) * 0.5, 0.03, Math.sin(turn) * 0.5, 2, turn, 0, 0, SOLID, true);
+}
+
+function bones(k: Kit, c: Ctx) {
+  const P = c.pal;
+  const turn = c.n(1) * 6;
+  // A long bone lying flat: a shaft with a knuckle at each end.
+  const long = (x: number, z: number, a: number, len: number, r: number, tone: THREE.Color) => {
+    const [dx, dz] = [(Math.cos(a) * len) / 2, (Math.sin(a) * len) / 2];
+    k.tube(tone, [[x - dx, r + 0.004, z - dz], [x + dx, r + 0.004, z + dz]], () => r, 5);
+    k.blob(tone, r * 1.8, r * 1.5, r * 1.8, x - dx, r + 0.004, z - dz, 1, a);
+    k.blob(tone, r * 1.7, r * 1.4, r * 1.7, x + dx, r + 0.004, z + dz, 0, a);
+  };
+  // All of it toward the rim of the hex: whoever walks across steps through the middle.
+  const count = 5 + Math.floor(c.n(2) * 3.99);
+  for (let j = 0; j < count; j++) {
+    const a = turn + (j / count) * Math.PI * 2 + (c.n(10 + j) - 0.5) * 0.7;
+    const d = 0.42 + c.n(20 + j) * 0.3;
+    long(Math.cos(a) * d, Math.sin(a) * d, c.n(30 + j) * Math.PI, 0.2 + c.n(40 + j) * 0.22, 0.02 + c.n(50 + j) * 0.012, j % 3 ? P.bone : P.boneDark);
+  }
+  // A cage of ribs on its side, half of them gone.
+  const at = turn + 0.6;
+  k.push(Math.cos(at) * 0.56, 0, Math.sin(at) * 0.56, at + 1.2);
+  k.tube(P.boneDark, [[-0.2, 0.03, 0], [0.2, 0.035, 0.02]], () => 0.022, 5);
+  for (let j = 0; j < 5; j++) {
+    if (c.n(60 + j) < 0.25) continue;
+    const x = -0.16 + j * 0.08;
+    k.tube(P.bone, [[x, 0.03, 0], [x, 0.14, 0.09], [x + 0.01, 0.17, 0.2], [x + 0.02, 0.09, 0.27]], (t) => 0.014 * (1 - t * 0.5), 4);
   }
   k.pop();
+  // And a skull, looking at you.
+  const sk = turn + 3.4;
+  k.push(Math.cos(sk) * 0.6, 0, Math.sin(sk) * 0.6, faceZ(c.facing) + (c.n(3) - 0.5) * 1.6, 0, (c.n(4) - 0.5) * 0.5);
+  k.blob(P.bone, 0.1, 0.095, 0.11, 0, 0.09, -0.02, 1);
+  k.box(P.boneDark, 0.11, 0.05, 0.07, 0, 0.0, 0.05);
+  for (const s of [-1, 1]) k.blob(DARK, 0.026, 0.03, 0.02, s * 0.04, 0.1, 0.085, 3);
+  k.blob(DARK, 0.014, 0.022, 0.016, 0, 0.06, 0.1, 3);
+  k.pop();
+  if (c.clime === "ash" && c.n(5) < 0.5) k.blob(EMBER_DEEP, 0.05, 0.02, 0.04, Math.cos(turn) * 0.3, 0.02, Math.sin(turn) * 0.3, 3, 0, 0, 0, GLOW, true);
+}
+
+// ---- the way in ----
+
+/**
+ * The hex a waygate hangs over: a worn round of stone let into the ground with a few of its kerb stones left, and
+ * nothing more. The gate itself is made apart (waygate.ts: it moves, every piece of it), the same one the Harbor has.
+ */
+function waygate(k: Kit, c: Ctx) {
+  const P = c.pal;
+  k.cyl(P.stoneDark, 1.0, 1.0, 0.07, 0, 0, 0, 12);
+  k.cyl(P.stone, 0.9, 0.9, 0.05, 0, 0.05, 0, 12);
+  for (let j = 0; j < 6; j++) {
+    const a = (j / 6) * Math.PI * 2 + 0.3;
+    k.blob(j % 2 ? P.stone : P.stoneDark, 0.1 + c.n(10 + j) * 0.06, 0.07, 0.1, Math.cos(a) * 1.0, 0.04, Math.sin(a) * 1.0, j, a);
+  }
+  // Its stone ring faces the south, where the view opens from; its light is seen whole from anywhere.
+  k.portals.push({ matrix: k.frame(), color: P.glyph, deep: P.crystalDeep, stone: P.stone });
+  k.shine(0, 1.9, 0.5, P.glyph, 1.3, 7.5, 3.2);
+  if (c.clime === "frost") k.blob(SNOW, 0.3, 0.06, 0.2, 0.7, 0.06, -0.5, 2, 0, 0, 0, SOLID, true);
 }
 
 /** Every kind of thing a hex may carry (`Tile.prop`), and how it is drawn. */
@@ -1832,15 +2821,40 @@ const DRAW = {
   mushrooms,
   stilt_hut: stiltHut,
   basalt,
+  wall_torch: wallTorch,
+  throne,
+  bookshelf,
+  table,
+  weapon_rack: weaponRack,
+  cage,
+  sarcophagus,
+  rug,
+  stalagmite,
+  bones,
   waygate,
 } satisfies Record<string, (k: Kit, c: Ctx) => void>;
 
 /** The kinds drawn here: every one in the world's PROPS must be among them. */
 export const SCENERY_KINDS: readonly string[] = Object.keys(DRAW);
 
+/**
+ * How each kind gives way to the combat view (cutaway.ts). What is built or made of stone sinks to a kerb; what
+ * is grown, pitched or stands open (and a doorway, so the way through is still told from the wall) thins to a
+ * ghost over its foot. The rest keep whole: what is low, what burns, and what is walked on or used.
+ */
+const GIVES: Record<string, number> = {
+  wall: CUT_SINK, wall_torch: CUT_SINK, wall_broken: CUT_SINK, tower: CUT_SINK, palisade: CUT_SINK, pillar: CUT_SINK, pillar_broken: CUT_SINK,
+  obelisk: CUT_SINK, standing_stone: CUT_SINK, basalt: CUT_SINK, boulder: CUT_SINK, stalagmite: CUT_SINK, ice_spire: CUT_SINK, bookshelf: CUT_SINK,
+  arch: CUT_GHOST, statue: CUT_GHOST, tent: CUT_GHOST, banner: CUT_GHOST, ribs: CUT_GHOST, dead_tree: CUT_GHOST, great_tree: CUT_GHOST,
+  mushrooms: CUT_GHOST, stilt_hut: CUT_GHOST, crystal: CUT_GHOST, cage: CUT_GHOST, weapon_rack: CUT_GHOST, throne: CUT_GHOST,
+};
+
 // ---------------------------------------------------------------- the map ---
 
 type Place = { x: number; y: number; z: number };
+
+/** How long after a map is first shown its waygate bursts open, in seconds: time for the place to rise round it. */
+const GATE_OPENS_AFTER = 1.6;
 
 export interface SceneryOptions {
   /**
@@ -1848,53 +2862,14 @@ export interface SceneryOptions {
    * and trails away into roots, so the land is a thick slab and not a sheet.
    */
   floating?: boolean;
+  /**
+   * The map is under a roof or under ground (the `dark` backdrop): its walls are a hall's, joined into straight
+   * runs with their doorways; its `rock` is the living rock of a cave, drawn here in place of the ground's own
+   * hexes (see `ZoneScenery.draws`); and where the ground stops, it drops away into the dark.
+   */
+  roofed?: boolean;
 }
 
-/** A waygate's portal: a disc of slow, turning light. */
-function portalMaterial(color: THREE.Color, deep: THREE.Color): THREE.ShaderMaterial {
-  return new THREE.ShaderMaterial({
-    uniforms: { uTime: { value: 0 }, uColor: { value: color }, uDeep: { value: deep }, gqRise: { value: (globalThis as { __gqRise?: Float32Array }).__gqRise ?? new Float32Array(4) } },
-    vertexShader: /* glsl */ `
-      #include <common>
-      varying vec2 vAt;
-      void main() {
-        vAt = position.xy;
-        vec3 transformed = position;
-        #include <project_vertex>
-      }`,
-    fragmentShader: /* glsl */ `
-      uniform float uTime;
-      uniform vec3 uColor;
-      uniform vec3 uDeep;
-      varying vec2 vAt;
-      float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
-      float noise(vec2 p) {
-        vec2 i = floor(p), f = fract(p);
-        f = f * f * (3.0 - 2.0 * f);
-        return mix(mix(hash(i), hash(i + vec2(1.0, 0.0)), f.x), mix(hash(i + vec2(0.0, 1.0)), hash(i + vec2(1.0, 1.0)), f.x), f.y);
-      }
-      void main() {
-        float r = length(vAt);
-        float a = atan(vAt.y, vAt.x);
-        // Two arms winding in, and a slow boil under them.
-        float arms = 0.5 + 0.5 * sin(a * 2.0 + r * 9.0 - uTime * 1.3);
-        float fine = 0.5 + 0.5 * sin(a * 5.0 - r * 16.0 + uTime * 0.8 + noise(vAt * 3.0 + uTime * 0.2) * 4.0);
-        float boil = noise(vec2(cos(a), sin(a)) * (2.0 + r * 3.0) + vec2(uTime * 0.25, -uTime * 0.18));
-        float heart = smoothstep(0.75, 0.0, r);
-        float edge = smoothstep(1.0, 0.86, r);
-        float rim = smoothstep(0.7, 0.98, r) * edge;
-        float glow = 0.22 + 0.5 * arms * (0.4 + 0.6 * boil) + 0.22 * fine + 0.75 * heart * heart + 0.5 * rim;
-        vec3 c = mix(uDeep, uColor, clamp(arms * 0.6 + heart * 0.7 + rim * 0.5, 0.0, 1.0)) * glow;
-        c += vec3(1.0) * pow(heart, 5.0) * 0.5;
-        gl_FragColor = vec4(c * edge, edge * (0.62 + 0.3 * arms));
-        #include <tonemapping_fragment>
-        #include <colorspace_fragment>
-      }`,
-    transparent: true,
-    depthWrite: false,
-    side: THREE.DoubleSide,
-  });
-}
 
 /**
  * A zone's scenery: everything in `group`, built once from the map's tiles. `place` gives the middle of a
@@ -1905,15 +2880,35 @@ export class ZoneScenery {
   /** Where every fire and cold light on the map is, for anything else that wants to know (fireflies, sound). */
   readonly lights: { at: THREE.Vector3; fire: boolean }[] = [];
   private flames: THREE.Group[] = [];
+  /** The flames on things that sink for the combat view (a torch on a wall): where each burns, and the ground its wall stands on. */
+  private sinking: { flame: THREE.Group; y: number; sunk: [foot: number, x: number, z: number] }[] = [];
   private emitters: Emitter[] = [];
   private slots: { light: THREE.PointLight; of: Emitter | null; gain: number }[] = [];
   private warm: THREE.MeshBasicMaterial;
   private cool: THREE.MeshBasicMaterial;
   private glow: THREE.MeshBasicMaterial;
-  private portals: THREE.ShaderMaterial[] = [];
+  private gates: Waygate[] = [];
+  /**
+   * What stands so tall on its hex that a pointer on it would otherwise land on the ground behind: a waygate's
+   * unseen column (see Waygate.pick). The view reads a hit on one as a click on the hex under it.
+   */
+  readonly picks: THREE.Object3D[] = [];
   private motes: MoteField | null = null;
   private since = 1;
+  /** The map's waygates are still shut, waiting to burst open; and how long the map has been shown, in seconds. */
+  private gatesShut = true;
+  private shown = 0;
   private still = typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  /**
+   * Whether a hex of the ground is drawn here in place of the ground's own column: under ground, the rock is
+   * (see `cavern`), so whoever draws the ground leaves those hexes out. `tile` finds a hex of the map.
+   */
+  static draws(t: Tile, opts: SceneryOptions, tile: (q: number, r: number) => Tile | undefined): boolean {
+    if (!opts.roofed) return false;
+    // (And a hex of a hall's outer wall: past the wall there is nothing, so only what is inside it is laid: see hallRim.)
+    return t.biome === "rock" || (HALL_RUNS.has(t.prop ?? "") && DIRS.some((d) => !tile(t.q + d.q, t.r + d.r)));
+  }
 
   constructor(tiles: readonly Tile[], place: (t: Tile) => Place, opts: SceneryOptions = {}) {
     const byKey = new Map<string, Tile>();
@@ -1921,6 +2916,7 @@ export class ZoneScenery {
     const at = new Map<Tile, Place>();
     for (const t of byKey.values()) at.set(t, place(t));
     const kit = new Kit();
+    const roofed = (kit.roofed = !!opts.roofed);
     const walkable = (t: Tile | undefined) => !!t && t.biome !== "water" && t.biome !== "rock" && (!t.prop || WALKABLE.has(t.prop));
 
     for (const t of byKey.values()) {
@@ -1934,8 +2930,22 @@ export class ZoneScenery {
         let open = Math.floor(hash(t.q, t.r, 777) * 5.99);
         let best = -1;
         for (let i = 0; i < 6; i++) {
-          const score = (walkable(nb(i)) ? 2 : 0) + (walkable(nb((i + 1) % 6)) ? 1 : 0) + (walkable(nb((i + 5) % 6)) ? 1 : 0) + hash(t.q, t.r, 780 + i) * 0.5;
+          // Of sides as open as each other, one toward the south, where the view opens from.
+          const score = (walkable(nb(i)) ? 2 : 0) + (walkable(nb((i + 1) % 6)) ? 1 : 0) + (walkable(nb((i + 5) % 6)) ? 1 : 0) + (SIDE[i].z > 0.1 ? 0.9 : 0) + hash(t.q, t.r, 780 + i) * 0.5;
           if (score > best) [best, open] = [score, i];
+        }
+        let facing = SIDE[open].a;
+        if (roofed) {
+          const free = (i: number) => (walkable(nb(i)) ? 1 : 0);
+          const solid = (i: number) => {
+            const n = nb(i);
+            return !n || n.biome === "rock" || HALL_RUNS.has(n.prop ?? "") ? 1 : 0;
+          };
+          let most = -1;
+          for (const [a, clear, backed, lean] of [[Math.PI / 2, free(2) + free(3), solid(0) + solid(5), 0.7], [-Math.PI / 2, free(0) + free(5), solid(2) + solid(3), 0], [0, 2 * free(1), 2 * solid(4), 0.3], [Math.PI, 2 * free(4), 2 * solid(1), 0.3]]) {
+            const score = clear + backed * 1.5 + lean + hash(t.q, t.r, 790 + a) * 0.2;
+            if (score > most) [most, facing] = [score, a];
+          }
         }
         const ctx: Ctx = {
           t,
@@ -1948,18 +2958,27 @@ export class ZoneScenery {
             return n ? at.get(n)!.y - p.y : undefined;
           },
           open,
+          facing,
+          roofed,
+          tile: (dq, dr) => byKey.get(key(t.q + dq, t.r + dr)),
+          floor: (i) => walkable(nb(((i % 6) + 6) % 6)),
         };
         kit.begin(p.x, p.y, p.z, clime);
+        kit.cut = GIVES[t.prop] ?? CUT_NONE;
         (DRAW as Record<string, (k: Kit, c: Ctx) => void>)[t.prop](kit, ctx);
       }
       if (t.ladder) this.ladders(kit, t, p, nb, at);
-      this.edges(kit, t, p, nb, at, !!opts.floating);
+      if (roofed && t.biome === "cave" && !t.prop) this.caveFloor(kit, t, p, nb);
+      this.edges(kit, t, p, nb, at, !!opts.floating, roofed);
     }
     if (opts.floating) this.roots(kit, byKey, at);
+    if (roofed) this.cavern(kit, byKey, at);
     this.pools(kit, byKey, at);
 
     // ---- the meshes ----
     const solid = new THREE.MeshLambertMaterial({ vertexColors: true });
+    // What stands tall gives way to the combat view, each corner as it was marked when it was built (see `Kit.cut`).
+    addCutaway(solid, { how: "marked" });
     for (const mesh of kit.meshes(SOLID, solid)) {
       mesh.castShadow = true;
       mesh.receiveShadow = true;
@@ -1968,6 +2987,7 @@ export class ZoneScenery {
       this.group.add(mesh);
     }
     this.glow = new THREE.MeshBasicMaterial({ vertexColors: true });
+    addCutaway(this.glow, { how: "marked" });
     for (const mesh of kit.meshes(GLOW, this.glow)) {
       mesh.userData.glow = true;
       this.group.add(mesh);
@@ -1980,6 +3000,7 @@ export class ZoneScenery {
     const pool = () => new THREE.MeshBasicMaterial({ vertexColors: true, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide });
     this.warm = pool();
     this.cool = pool();
+    for (const material of [this.warm, this.cool]) addCutaway(material, { how: "marked" });
     for (const [layer, material] of [[WARM, this.warm], [COOL, this.cool]] as const)
       for (const mesh of kit.meshes(layer, material)) {
         mesh.userData.glow = true;
@@ -1994,21 +3015,21 @@ export class ZoneScenery {
       const flame = torchFlame(f.size);
       flame.position.copy(f.at);
       this.flames.push(flame);
+      if (f.sunk) this.sinking.push({ flame, y: f.at.y, sunk: f.sunk });
       this.group.add(flame);
     }
     if (kit.motes.length > 0) {
       this.motes = moteField(kit.motes, 0.11);
       this.group.add(this.motes.points);
     }
-    const disc = new THREE.CircleGeometry(0.9, 40);
     for (const p of kit.portals) {
-      const material = portalMaterial(p.color, p.deep);
-      const mesh = new THREE.Mesh(disc, material);
-      mesh.applyMatrix4(p.matrix);
-      mesh.userData.glow = true;
-      mesh.renderOrder = 2;
-      this.portals.push(material);
-      this.group.add(mesh);
+      // (On a map the gate is always open: you came through it. It is made shut only so that it can burst open
+      // once, a moment after the map is first shown: see `update`.)
+      const gate = makeWaygate({ color: p.color, deep: p.deep, stone: p.stone, open: this.still });
+      gate.object.applyMatrix4(p.matrix);
+      this.gates.push(gate);
+      this.picks.push(gate.pick);
+      this.group.add(gate.object);
     }
     this.emitters = kit.emitters;
     for (const e of kit.emitters) this.lights.push({ at: new THREE.Vector3(e.x, e.y, e.z), fire: e.fire });
@@ -2057,7 +3078,9 @@ export class ZoneScenery {
    * living rock under anything else, with what the climate hangs on it), and a parapet along the brink of
    * paved ground that stands two levels up or more.
    */
-  private edges(kit: Kit, t: Tile, p: Place, nb: (i: number) => Tile | undefined, at: Map<Tile, Place>, floating: boolean) {
+  private edges(kit: Kit, t: Tile, p: Place, nb: (i: number) => Tile | undefined, at: Map<Tile, Place>, floating: boolean, roofed: boolean) {
+    // (Under ground the rock is drawn whole, by `cavern`.)
+    if (roofed && t.biome === "rock") return;
     const clime = t.clime ?? "greenwood";
     const pal = PALS[clime];
     const paved = t.biome === "paved";
@@ -2067,7 +3090,7 @@ export class ZoneScenery {
     for (let i = 0; i < 6; i++) {
       const next = nb(i);
       const drop = next ? p.y - at.get(next)!.y : Infinity;
-      walled.push(paved && next?.biome !== "fog" && (drop === Infinity || drop >= LEVEL * 2 - 0.12));
+      walled.push(paved && next?.biome !== "fog" && ((drop === Infinity && !roofed) || (drop !== Infinity && drop >= LEVEL * 2 - 0.12)));
     }
     for (let i = 0; i < 6; i++) {
       const next = nb(i);
@@ -2075,7 +3098,24 @@ export class ZoneScenery {
       // How far down the face goes: to the hex below, to the rim of a floating map, or (paved, by the sea) to the water.
       let foot: number;
       if (next?.biome === "fog") continue;
-      if (next) foot = at.get(next)!.y - 0.03;
+      // Under a roof, where the ground stops it drops away into the dark: a pit in the floor, or what is past the outer wall.
+      const pit = roofed && !next;
+      // (A hex of a hall's outer wall is not there at all past the wall: see hallRim.)
+      if (pit && kit.rims.has(key(t.q, t.r))) continue;
+      if (pit && t.biome === "dock") {
+        // (A bridge over a pit has nothing under it but the posts that carry it.)
+        kit.begin(p.x, p.y, p.z, clime);
+        kit.sink = [p.y - 0.4, p.y - PIT];
+        for (const e of [-1, 1]) {
+          const a = side.a + (e * Math.PI) / 6;
+          kit.cyl(pal.woodDark, 0.07, 0.06, PIT, Math.cos(a) * 0.9, -PIT, Math.sin(a) * 0.9, 5);
+        }
+        kit.tube(pal.wood, [[Math.cos(side.a - Math.PI / 6) * 0.9, -0.3, Math.sin(side.a - Math.PI / 6) * 0.9], [Math.cos(side.a + Math.PI / 6) * 0.9, -1.3, Math.sin(side.a + Math.PI / 6) * 0.9]], () => 0.04, 4);
+        kit.sink = null;
+        continue;
+      }
+      if (pit) foot = p.y - PIT;
+      else if (next) foot = at.get(next)!.y - 0.03;
       else if (floating) foot = RIM;
       else if (paved) foot = 0.04;
       else continue;
@@ -2085,6 +3125,7 @@ export class ZoneScenery {
       if (tall < (!next ? 0.1 : next.biome === "water" ? 0.9 : 0.34)) continue;
       const salt = 500 + i * 37;
       kit.begin(p.x, foot, p.z, clime);
+      if (pit) kit.sink = [p.y - 0.25, foot + 0.3];
       kit.push(side.x * APO, 0, side.z * APO, faceZ(side.a));
       // In this frame the face is the x-y plane: x along the edge, y up from its foot, z out from it.
       if (paved) {
@@ -2112,11 +3153,14 @@ export class ZoneScenery {
         for (let r = 0; r < rows; r++) {
           const [y0, y1] = [mid[r][1], mid[r + 1][1]];
           const top = r === rows - 1;
-          const tone = top ? pal.lip : pal.cliff[(r + Math.floor(n(salt + 70) * 3)) % 3];
+          // (Under ground a ledge has no lip of earth: it is the cave's own rock to the top.)
+          const cliff = roofed ? caveRock(pal) : pal.cliff;
+          const lip = roofed ? cliff[2] : pal.lip;
+          const tone = top ? lip : cliff[(r + Math.floor(n(salt + 70) * 3)) % 3];
           const face = [0, 0.2, 1];
           kit.poly(tone, [[ax, y0, 0.004], [mid[r][0], y0, mid[r][2]], [mid[r + 1][0], y1, mid[r + 1][2]]], face);
           kit.poly(tone, [[ax, y0, 0.004], [mid[r + 1][0], y1, mid[r + 1][2]], [ax, y1, 0.004]], face);
-          kit.poly(top ? pal.lip : pal.cliff[(r + 1 + Math.floor(n(salt + 70) * 3)) % 3], [[mid[r][0], y0, mid[r][2]], [bx, y0, 0.004], [mid[r + 1][0], y1, mid[r + 1][2]]], face);
+          kit.poly(top ? lip : cliff[(r + 1 + Math.floor(n(salt + 70) * 3)) % 3], [[mid[r][0], y0, mid[r][2]], [bx, y0, 0.004], [mid[r + 1][0], y1, mid[r + 1][2]]], face);
           kit.poly(tone, [[bx, y0, 0.004], [bx, y1, 0.004], [mid[r + 1][0], y1, mid[r + 1][2]]], face);
         }
         if (tall > 0.7) {
@@ -2134,6 +3178,7 @@ export class ZoneScenery {
         }
       }
       kit.pop();
+      kit.sink = null;
     }
     if (!paved) return;
     // The parapet: a low wall along each brink, two merlons on it; left open where a ladder comes up.
@@ -2164,6 +3209,314 @@ export class ZoneScenery {
         kit.cone(pal.stoneLight, 0.17, 0.12, 0.5, 0.62, back - 0.02, 4, Math.PI / 6 + Math.PI / 4);
       }
       kit.pop();
+    }
+  }
+
+  /**
+   * The floor of a cave, hex by hex: slabs of darker and paler stone, loose stones toward the rim, a crack, a
+   * puddle, and now and then something small that glows. Nothing stands up in the middle, where people walk.
+   */
+  private caveFloor(kit: Kit, t: Tile, p: Place, nb: (i: number) => Tile | undefined) {
+    const clime = t.clime ?? "greenwood";
+    const pal = PALS[clime];
+    const rock = caveRock(pal);
+    const n = (salt: number) => hash(t.q, t.r, salt);
+    kit.begin(p.x, p.y, p.z, clime);
+    // Slabs: flat, many-sided, a shade off the floor's own.
+    const slabs = 1 + Math.floor(n(900) * 2.4);
+    for (let j = 0; j < slabs; j++) {
+      const a = n(901 + j) * Math.PI * 2;
+      const d = n(904 + j) * 0.46;
+      const r = 0.2 + n(907 + j) * 0.3;
+      const pts: number[][] = [];
+      const sides = 5 + Math.floor(n(910 + j) * 2.99);
+      for (let v = 0; v < sides; v++) {
+        const b = (v / sides) * Math.PI * 2 + n(913 + j * 7 + v) * 0.5;
+        const rr = r * (0.7 + n(940 + j * 7 + v) * 0.5);
+        pts.push([Math.cos(a) * d + Math.cos(b) * rr, 0.011 + j * 0.002, Math.sin(a) * d + Math.sin(b) * rr]);
+      }
+      kit.poly(col(CAVE_FLOOR[clime]).multiplyScalar(n(960 + j) < 0.55 ? 0.8 : 1.16), pts, [0, 1, 0], false, SOLID, true);
+    }
+    const stones = Math.floor(n(970) * 4.2);
+    for (let j = 0; j < stones; j++) {
+      const a = n(971 + j) * Math.PI * 2;
+      const d = 0.52 + n(975 + j) * 0.3;
+      const s = 0.035 + n(979 + j) * 0.06;
+      kit.blob(rock[j % 3], s, s * 0.7, s * 1.1, Math.cos(a) * d, s * 0.4, Math.sin(a) * d, j % 2 ? 0 : 3, a);
+    }
+    if (n(983) < 0.22) {
+      // A crack, wandering.
+      let [x, z] = [(n(984) - 0.5) * 0.8, (n(985) - 0.5) * 0.8];
+      let a = n(986) * Math.PI * 2;
+      for (let j = 0; j < 4; j++) {
+        a += (n(987 + j) - 0.5) * 1.3;
+        const [x1, z1] = [x + Math.cos(a) * 0.24, z + Math.sin(a) * 0.24];
+        if (Math.hypot(x1, z1) > 0.8) break;
+        const [ox, oz] = [-Math.sin(a) * 0.014, Math.cos(a) * 0.014];
+        kit.poly(clime === "ash" ? EMBER_DEEP : SOOT, [[x - ox, 0.016, z - oz], [x + ox, 0.016, z + oz], [x1 + ox * 0.6, 0.016, z1 + oz * 0.6], [x1 - ox * 0.6, 0.016, z1 - oz * 0.6]], [0, 1, 0], false, clime === "ash" ? GLOW : SOLID, true);
+        [x, z] = [x1, z1];
+      }
+    }
+    const walls = [0, 1, 2, 3, 4, 5].filter((i) => nb(i)?.biome === "rock");
+    if (n(991) < 0.1 && clime !== "ash") {
+      // Standing water: black, with a paler lip.
+      const a = n(992) * Math.PI * 2;
+      const r = 0.16 + n(993) * 0.14;
+      const [x, z] = [Math.cos(a) * 0.42, Math.sin(a) * 0.42];
+      const pts: number[][] = [];
+      for (let v = 0; v < 8; v++) {
+        const b = (v / 8) * Math.PI * 2;
+        const rr = r * (0.75 + n(1020 + v) * 0.5);
+        pts.push([x + Math.cos(b) * rr * 1.25, 0.019, z + Math.sin(b) * rr * 0.85]);
+      }
+      kit.poly(clime === "frost" ? ICE_DEEP.clone().multiplyScalar(0.7) : col("#2c4257"), pts, [0, 1, 0], false, SOLID, true);
+      // What little light there is, lying on it.
+      kit.poly(clime === "frost" ? ICE_LIGHT : col("#5d7f98"), [[x - r * 0.5, 0.021, z - r * 0.2], [x + r * 0.1, 0.021, z - r * 0.32], [x + r * 0.3, 0.021, z - r * 0.22], [x - r * 0.3, 0.021, z - r * 0.1]], [0, 1, 0], false, SOLID, true);
+    }
+    if (n(995) < (walls.length > 0 ? 0.09 : 0.03) && (clime === "greenwood" || clime === "mire" || clime === "frost")) {
+      // Something small that glows: caps no bigger than a thumb, in a cluster, toward the wall if there is one.
+      const tone = pal.gillGlows ? pal.gill : pal.crystal;
+      const a = walls.length > 0 ? SIDE[walls[Math.floor(n(996) * walls.length * 0.999)]].a : n(996) * Math.PI * 2;
+      const [x, z] = [Math.cos(a) * 0.62, Math.sin(a) * 0.62];
+      for (let j = 0; j < 5; j++) {
+        const [dx, dz] = [(n(1000 + j) - 0.5) * 0.3, (n(1005 + j) - 0.5) * 0.3];
+        const h = 0.05 + n(1010 + j) * 0.09;
+        kit.cyl(col("#cfc6b0"), 0.012, 0.01, h, x + dx, 0, z + dz, 4);
+        kit.dome(tone, 0.035 + n(1015 + j) * 0.03, 0.03, x + dx, h, z + dz, 6, GLOW);
+      }
+      kit.glowPool(x, z, tone, 1.5, 0.2);
+    }
+  }
+
+  /**
+   * The living rock of a cave: every `rock` hex of a map under ground, drawn as one mass and not as hexes (the
+   * ground leaves them out: see `draws`). Its top is the dark of a cut through solid stone, uneven, darker the
+   * further from open ground. Its faces onto the cave lean and bulge row by row, in the bands of the climate's
+   * rock, with scree and stalagmites at their feet, stone hanging from their overhangs, and here and there a
+   * vein of crystal with its own cold light. Every point two faces share is worked out from where it is, so the
+   * faces of neighbouring hexes meet. Past the last of the rock there is nothing: it ends in black.
+   */
+  private cavern(kit: Kit, byKey: Map<string, Tile>, at: Map<Tile, Place>) {
+    const rocks = [...byKey.values()].filter((t) => t.biome === "rock");
+    if (rocks.length === 0) return;
+    const id = (x: number, z: number) => `${Math.round(x * 20)},${Math.round(z * 20)}`;
+    const noise = (x: number, z: number, salt: number) => hash(Math.round(x * 20), Math.round(z * 20), salt);
+    const nbOf = (t: Tile, i: number) => byKey.get(key(t.q + DIRS[i].q, t.r + DIRS[i].r));
+    /** What a side of a rock hex looks on: more rock (or ground not yet seen), open ground, or nothing at all. */
+    const sideOf = (t: Tile, i: number): "rock" | "open" | "void" => {
+      const n = nbOf(t, i);
+      return !n ? "void" : n.biome === "rock" || n.biome === "fog" ? "rock" : "open";
+    };
+    /** A side's two corners and its middle, in the world. */
+    const points = (p: Place, i: number) => {
+      const s = SIDE[i];
+      return [-1, 0, 1].map((e) => (e === 0 ? { x: p.x + s.x * APO, z: p.z + s.z * APO } : { x: p.x + Math.cos(s.a + (e * Math.PI) / 6), z: p.z + Math.sin(s.a + (e * Math.PI) / 6) }));
+    };
+    // First: at every point of the rim, the rock's height (the mean of the hexes that meet there) and the way out into the open.
+    const high = new Map<string, { sum: number; n: number }>();
+    const out = new Map<string, THREE.Vector2>();
+    for (const t of rocks) {
+      const p = at.get(t)!;
+      for (let i = 0; i < 6; i++) {
+        const open = sideOf(t, i) === "open";
+        points(p, i).forEach((c, j) => {
+          const k = id(c.x, c.z);
+          // (A corner is two sides' corner: counted once a hex.)
+          if (j < 2) {
+            const h = high.get(k) ?? { sum: 0, n: 0 };
+            h.sum += p.y;
+            h.n += 1;
+            high.set(k, h);
+          }
+          if (open) out.set(k, (out.get(k) ?? new THREE.Vector2()).add(new THREE.Vector2(SIDE[i].x, SIDE[i].z)));
+        });
+      }
+    }
+    for (const v of out.values()) v.normalize();
+    // For the combat view (cutaway.ts) the rock sinks toward the cave's floor, and it has no floor of its own: each
+    // hex of it takes the floor of the open ground nearest it, and a point takes the hexes' round it blended by how
+    // near each is, so the faces of neighbouring hexes still meet when they have sunk.
+    const floors = new Map<Tile, number>();
+    let reached = [...byKey.values()].filter((t) => t.biome !== "rock" && t.biome !== "fog");
+    for (const t of reached) floors.set(t, at.get(t)!.y);
+    while (reached.length > 0) {
+      const next: Tile[] = [];
+      for (const t of reached)
+        for (let i = 0; i < 6; i++) {
+          const n = nbOf(t, i);
+          if (!n || floors.has(n)) continue;
+          floors.set(n, floors.get(t)!);
+          next.push(n);
+        }
+      reached = next;
+    }
+    const floorAt = (x: number, z: number) => {
+      const r0 = Math.round(z / 1.5);
+      const q0 = Math.round(x / SQRT3 - r0 / 2);
+      let [sum, share] = [0, 0];
+      for (let dq = -1; dq <= 1; dq++)
+        for (let dr = -1; dr <= 1; dr++) {
+          const t = byKey.get(key(q0 + dq, r0 + dr));
+          const floor = t && floors.get(t);
+          if (!t || floor === undefined) continue;
+          const p = at.get(t)!;
+          const w = Math.max(0, 1 - Math.hypot(p.x - x, p.z - z) / 1.8) ** 2;
+          sum += floor * w;
+          share += w;
+        }
+      return share > 1e-6 ? sum / share : 0;
+    };
+    /** How far the top of the rock stands out over its foot at a point of the rim: back from it, mostly; here and there an overhang. */
+    const lean = (c: { x: number; z: number }) => (noise(c.x, c.z, 1101) > 0.76 ? 0.1 + noise(c.x, c.z, 1102) * 0.2 : -0.04 - noise(c.x, c.z, 1103) * 0.26);
+    /** The top of the rock at a point its hexes share. */
+    const crest = (c: { x: number; z: number }): number[] => {
+      const k = id(c.x, c.z);
+      const h = high.get(k)!;
+      const way = out.get(k);
+      const y = h.sum / h.n + (noise(c.x, c.z, 1104) - 0.5) * 0.46 - (way ? 0.1 : 0);
+      const l = way ? lean(c) : 0;
+      return [c.x + (way ? way.x * l : 0), y, c.z + (way ? way.y * l : 0)];
+    };
+    for (const t of rocks) {
+      const p = at.get(t)!;
+      const clime = t.clime ?? "greenwood";
+      const pal = PALS[clime];
+      const rock = caveRock(pal);
+      const pale = clime === "frost" ? ICE_LIGHT : rock[2].clone().lerp(pal.stoneLight, 0.5);
+      const n = (salt: number) => hash(t.q, t.r, salt);
+      const kinds = [0, 1, 2, 3, 4, 5].map((i) => sideOf(t, i));
+      const lit = kinds.some((k) => k === "open");
+      const edge = kinds.some((k) => k === "void");
+      // ---- the top: a fan from the middle to the twelve points of the rim ----
+      kit.begin(p.x, p.y, p.z, clime);
+      kit.cut = CUT_SINK;
+      kit.cutFoot = floorAt;
+      kit.push(-p.x, -p.y, -p.z);
+      const mid = [p.x + (n(1110) - 0.5) * 0.3, p.y + (n(1111) - 0.35) * 0.5, p.z + (n(1112) - 0.5) * 0.3];
+      for (let i = 0; i < 6; i++) {
+        const [a, m, b] = points(p, i).map(crest);
+        // Rock that looks on the cave is seen as rock; the rest is the dark of the cut, and black at the map's own edge.
+        const tone = kinds[i] === "open" ? rock[(i + Math.floor(n(1113) * 3)) % 3].clone().multiplyScalar(0.5) : kinds[i] === "void" || edge ? CUT : rock[i % 3].clone().multiplyScalar(lit ? 0.28 : 0.16);
+        kit.poly(tone, [mid, a, m], [0, 1, 0], false, SOLID, true);
+        kit.poly(tone, [mid, m, b], [0, 1, 0], false, SOLID, true);
+      }
+      for (let i = 0; i < 6; i++) {
+        const side = SIDE[i];
+        const [A, M, B] = points(p, i);
+        if (kinds[i] === "rock") continue;
+        if (kinds[i] === "void") {
+          // Past the last of the rock: black, straight down.
+          const [a, b] = [crest(A), crest(B)];
+          kit.poly(CUT, [a, b, [b[0], -0.6, b[2]], [a[0], -0.6, a[2]]], [side.x, 0, side.z], false, SOLID, true);
+          continue;
+        }
+        const foot = at.get(nbOf(t, i)!)!.y - 0.03;
+        kit.baseY = foot;
+        // ---- a face: three columns (corner, middle, corner) by rows from the floor to the crest ----
+        const tops = [A, M, B].map(crest);
+        const rows = Math.max(2, Math.round((Math.max(tops[0][1], tops[2][1]) - foot) / 0.56));
+        const column = (c: { x: number; z: number }, top: number[], middle: boolean) => {
+          const way = middle ? new THREE.Vector2(side.x, side.z) : (out.get(id(c.x, c.z)) ?? new THREE.Vector2(side.x, side.z));
+          const top0 = (top[0] - c.x) * way.x + (top[2] - c.z) * way.y;
+          const list: number[][] = [];
+          for (let r = 0; r <= rows; r++) {
+            const u = r / rows;
+            const y = foot + (top[1] - foot) * u;
+            // Its foot stands a little out on the floor (never back from the hex's own edge); between foot and crest it bulges by its own amount at each height.
+            const base = 0.03 + noise(c.x, c.z, 1120) * 0.1;
+            const bulge = (noise(c.x, c.z, 1130 + Math.round(y / 0.5)) - 0.32) * 0.36 * Math.sin(Math.PI * u);
+            const off = base + (top0 - base) * u * u + bulge;
+            list.push(r === rows ? top : [c.x + way.x * off, y + (r === 0 ? 0 : (noise(c.x, c.z, 1150 + r) - 0.5) * 0.14), c.z + way.y * off]);
+          }
+          return list;
+        };
+        const cols = [column(A, tops[0], false), column(M, tops[1], true), column(B, tops[2], false)];
+        const face = [side.x, 0.25, side.z];
+        const band = Math.floor(noise(M.x, M.z, 1160) * 3);
+        for (let r = 0; r < rows; r++) {
+          for (let e = 0; e < 2; e++) {
+            const [p00, p10, p01, p11] = [cols[e][r], cols[e + 1][r], cols[e][r + 1], cols[e + 1][r + 1]];
+            // (The last row, under the crest, is paler: the lip of the rock is what draws the cave's outline against the dark above it.)
+            const tone = r === rows - 1 ? rock[2].clone().multiplyScalar(1.22) : rock[(r + band + (e && noise(M.x, M.z, 1170 + r) < 0.4 ? 1 : 0)) % 3];
+            // Split the way that keeps the middle column's bulge a ridge and not a fold.
+            if (e === 0) {
+              kit.poly(tone, [p00, p10, p11], face);
+              kit.poly(tone, [p00, p11, p01], face);
+            } else {
+              kit.poly(tone, [p00, p10, p01], face);
+              kit.poly(tone, [p10, p11, p01], face);
+            }
+          }
+        }
+        // ---- what stands at its foot, hangs from it and grows on it ----
+        const salt = 1200 + i * 41;
+        const [tx, tz] = [-side.z, side.x];
+        const spot = (along: number, outBy: number) => [M.x + tx * along + side.x * outBy, M.z + tz * along + side.z * outBy];
+        if (n(salt) < 0.5) {
+          for (let j = 0; j < 1 + Math.floor(n(salt + 1) * 2.6); j++) {
+            const [x, z] = spot((n(salt + 2 + j) - 0.5) * 0.9, 0.16 + n(salt + 6 + j) * 0.24);
+            const s = 0.07 + n(salt + 10 + j) * 0.12;
+            kit.blob(rock[j % 3], s, s * 0.75, s * 0.9, x, foot + s * 0.35, z, j % 2 ? 0 : 1, n(salt + 14 + j) * 6);
+          }
+        }
+        if (n(salt + 20) < 0.36) {
+          for (let j = 0; j < 1 + (n(salt + 21) < 0.45 ? 1 : 0); j++) {
+            const [x, z] = spot((n(salt + 22 + j) - 0.5) * 0.8, 0.2 + n(salt + 25 + j) * 0.18);
+            const h = 0.26 + n(salt + 28 + j) * 0.55;
+            const r = 0.07 + n(salt + 31 + j) * 0.06;
+            kit.cyl(rock[(j + 1) % 3], r, r * 0.55, h * 0.55, x, foot - 0.02, z, 6, n(salt + 34 + j) * 6);
+            kit.cone(pale, r * 0.55, h * 0.5, x, foot + h * 0.53, z, 6, n(salt + 34 + j) * 6);
+          }
+        }
+        const over = (tops[1][0] - M.x) * side.x + (tops[1][2] - M.z) * side.z;
+        const height = tops[1][1] - foot;
+        if (over > 0.06 || clime === "frost") {
+          // Under an overhang (and anywhere, in the frost): stone, or ice, hanging in fangs.
+          for (let j = 0; j < 2 + Math.floor(n(salt + 40) * 2.2); j++) {
+            const [x, z] = spot((n(salt + 41 + j) - 0.5) * 0.8, Math.max(0.04, over) - 0.02 + n(salt + 45 + j) * 0.04);
+            const long = 0.22 + n(salt + 49 + j) * 0.5;
+            kit.cone(clime === "frost" ? (j % 2 ? ICE : ICE_LIGHT) : j % 2 ? pale : rock[2], 0.04 + n(salt + 53 + j) * 0.05, long, x, foot + height - 0.12 - n(salt + 57 + j) * 0.2, z, 5, 0, Math.PI, 0);
+          }
+        }
+        // (The rest is set against the face, in a frame at its foot whose z points out from it.)
+        const reach = (y: number) => {
+          const u = THREE.MathUtils.clamp(y / height, 0, 1);
+          const r = Math.min(rows - 1, Math.floor(u * rows));
+          const [lo, hi] = [cols[1][r], cols[1][r + 1]];
+          const f = u * rows - r;
+          return (lo[0] + (hi[0] - lo[0]) * f - M.x) * side.x + (lo[2] + (hi[2] - lo[2]) * f - M.z) * side.z;
+        };
+        if (clime === "ash" && n(salt + 60) < 0.5) {
+          const y = 0.1 + n(salt + 61) * 0.5;
+          kit.push(M.x + side.x * (reach(y + 0.2) + 0.05), foot, M.z + side.z * (reach(y + 0.2) + 0.05), faceZ(side.a));
+          emberCrack(kit, (n(salt + 62) - 0.5) * 0.5, y, 0, 0.3 + n(salt + 63) * 0.3, 0, (n(salt + 64) - 0.5) * 0.9);
+          kit.glowPool(0, 0.4, EMBER_DEEP, 1.4, 0.16, true);
+          kit.pop();
+        } else if ((clime === "mire" || clime === "greenwood") && n(salt + 60) < (clime === "mire" ? 0.6 : 0.3)) {
+          const y = 0.15 + n(salt + 61) * 0.7;
+          const [x, z] = spot((n(salt + 62) - 0.5) * 0.6, reach(y) + 0.02);
+          kit.blob(n(salt + 63) < 0.5 ? MOSS_DARK : MOSS.clone().multiplyScalar(0.6), 0.2 + n(salt + 64) * 0.14, 0.14, 0.07, x, foot + y, z, 2, faceZ(side.a), 0, 0, SOLID, true);
+        }
+        if (clime !== "ash" && noise(M.x, M.z, 1180) < 0.07) {
+          // A vein of crystal breaking out of the rock, with its own cold light.
+          const y = 0.5 + n(salt + 70) * 0.9;
+          const along = (n(salt + 71) - 0.5) * 0.4;
+          kit.push(M.x + tx * along + side.x * reach(y), foot, M.z + tz * along + side.z * reach(y), faceZ(side.a));
+          for (let j = 0; j < 5; j++) {
+            const r = 0.035 + n(salt + 72 + j) * 0.04;
+            const h = 0.16 + n(salt + 77 + j) * 0.3;
+            const [sx, sy] = [(n(salt + 82 + j) - 0.5) * 0.36, y + (n(salt + 87 + j) - 0.5) * 0.4];
+            const tilt = [0.7 + n(salt + 92 + j) * 0.6, (n(salt + 97 + j) - 0.5) * 1.2];
+            kit.push(sx, sy, -0.03, 0, tilt[0], tilt[1]);
+            kit.cyl(j % 2 ? pal.crystalDeep : pal.crystal, r, r * 0.8, h, 0, 0, 0, 6, 0, 0, 0, 1, GLOW);
+            kit.cone(pal.crystal, r * 0.8, r * 2, 0, h, 0, 6, 0, 0, 0, GLOW);
+            kit.pop();
+          }
+          kit.wash(0, y, 0.12, 0.8, 0.7, pal.crystal, 0.3, false);
+          kit.glowPool(0, 0.45, pal.crystal, 2.2, 0.26);
+          kit.pop();
+        }
+      }
     }
   }
 
@@ -2208,8 +3561,9 @@ export class ZoneScenery {
         const id = cornerKey(c.x, c.z);
         const way = middle ? new THREE.Vector2(-s.x, -s.z) : inward.get(id)!;
         const h = hash(Math.round(c.x * 20), Math.round(c.z * 20), 650 + row);
-        const pull = PULL[row] * (0.7 + h * 0.6);
-        const y = DEEP[row] - (row === 0 ? 0 : h * 0.7 + (middle ? 0.5 * row : 0));
+        const pull = PULL[row] * (0.6 + h * 0.8);
+        // The middles hang lower than the corners, each by its own amount: a ragged edge, not a row of teeth.
+        const y = DEEP[row] - (row === 0 ? 0 : h * 0.9 + (middle ? row * (0.1 + 1.1 * hash(Math.round(c.x * 20), Math.round(c.z * 20), 660)) : 0));
         return [c.x + way.x * pull, y, c.z + way.y * pull];
       };
       const shade = (row: number) => [1, 0.5, 0.16][row];
@@ -2277,8 +3631,22 @@ export class ZoneScenery {
             const d = Math.hypot(p.x + x - pool.x, p.z + z - pool.z);
             return pool.strength * Math.pow(Math.max(0, 1 - d / reach), 2.1);
           });
-          if (Math.max(...bright) < 0.004) continue;
           const b = kit.bucketAt(pool.layer, p.x, p.z);
+          const rim = kit.rims.get(key(t.q, t.r));
+          if (rim) {
+            // A hex of the outer wall: the glow lies on what there is of it, inside the wall.
+            if (rim.length < 3) continue;
+            const pts = [[rim.reduce((n, v) => n + v[0], 0) / rim.length, rim.reduce((n, v) => n + v[1], 0) / rim.length], ...rim];
+            const lit = pts.map(([x, z]) => pool.strength * Math.pow(Math.max(0, 1 - Math.hypot(x - pool.x, z - pool.z) / reach), 2.1));
+            for (let v = 1; v < pts.length; v++)
+              for (const u of [0, v, v === pts.length - 1 ? 1 : v + 1]) {
+                b.pos.push(pts[u][0], p.y + 0.022, pts[u][1]);
+                b.nor.push(0, 1, 0);
+                b.col.push(pool.color.r * lit[u], pool.color.g * lit[u], pool.color.b * lit[u]);
+              }
+            continue;
+          }
+          if (Math.max(...bright) < 0.004) continue;
           for (const tri of tris)
             for (const v of tri) {
               b.pos.push(p.x + ring[v][0], p.y + 0.022, p.z + ring[v][1]);
@@ -2296,13 +3664,20 @@ export class ZoneScenery {
   update(clock: number, dt: number, focus: THREE.Vector3, dark = 0) {
     const live = this.still ? 0 : 1;
     for (const f of this.flames) if (Math.abs(f.position.x - focus.x) + Math.abs(f.position.z - focus.z) < 70) flickerFlame(f, clock);
+    // A torch on a wall the combat view has cut down burns where its bracket now is.
+    for (const s of this.sinking) s.flame.position.y = sunkY(s.y, ...s.sunk);
     this.motes?.tick(clock);
-    for (const p of this.portals) p.uniforms.uTime.value = clock * (live ? 1 : 0.1);
+    // Arriving: the gate you came by bursts open once, when the map has had a moment to come up round it.
+    if (this.gatesShut && (this.shown += dt) > GATE_OPENS_AFTER) {
+      this.gatesShut = false;
+      for (const gate of this.gates) gate.setOpen(true);
+    }
+    for (const gate of this.gates) gate.update(clock, dark);
     // Glow on the ground is faint by day, when the sun drowns it.
-    const shown = 0.3 + 0.7 * dark;
+    const shown = 0.1 + 0.9 * dark;
     const waver = 1 + live * (Math.sin(clock * 9.1) * 0.05 + Math.sin(clock * 15.3) * 0.035);
     this.warm.color.setScalar(shown * waver);
-    this.cool.color.setScalar((0.4 + 0.6 * dark) * (1 + live * Math.sin(clock * 1.3) * 0.08));
+    this.cool.color.setScalar((0.25 + 0.75 * dark) * (1 + live * Math.sin(clock * 1.3) * 0.08));
     this.glow.color.setScalar(1 + live * Math.sin(clock * 1.7) * 0.05);
     if (this.slots.length === 0) return;
     // A few times a second: which fires are nearest. A light whose fire has dropped out fades, moves, and comes up again.
@@ -2347,8 +3722,12 @@ export class ZoneScenery {
       }
     });
     this.motes?.dispose();
+    for (const gate of this.gates) gate.dispose();
+    this.gates = [];
+    this.picks.length = 0;
     this.group.clear();
     this.flames = [];
+    this.sinking = [];
     this.slots = [];
   }
 }

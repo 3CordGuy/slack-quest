@@ -9,9 +9,10 @@
 
 import * as THREE from "three";
 import { fieldstoneTexture } from "./groundArt";
+import { LAPIDARY_MODELS } from "./lapidaryProps";
 
-/** The kinds of light a piece can give; Ambience sets how bright and how far each one reaches. A `brew` is the green glow off a bubbling cauldron. */
-export type LightKind = "fire" | "candle" | "lamp" | "brew";
+/** The kinds of light a piece can give; Ambience sets how bright and how far each one reaches. A `brew` is the green glow off a bubbling cauldron; a `lode`, the steady blue of lodestones that have taken their light. */
+export type LightKind = "fire" | "candle" | "lamp" | "brew" | "lode";
 
 const WOOD = "#8a6a44";
 const DARK_WOOD = "#5a3d22";
@@ -1629,6 +1630,8 @@ const MODELS: Record<string, (b: Builder) => void> = {
     b.glow("#5ce1e6", new THREE.IcosahedronGeometry(0.2, 0), 0, 0.84, 0);
     for (const a of [0, 2.1, 4.2]) b.box(IRON, 0.06, 0.34, 0.06, Math.sin(a) * 0.22, 0.5, Math.cos(a) * 0.22);
   },
+  // ---- the Lapidary (packages/world/src/keepers.ts): fittings, never sold. Their models are in lapidaryProps.ts. ----
+  ...LAPIDARY_MODELS,
 };
 
 /** Anything without a model of its own is drawn as a crate, so it is still visible and movable. */

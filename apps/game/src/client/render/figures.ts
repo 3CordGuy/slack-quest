@@ -3071,6 +3071,18 @@ function lowHead(head: Part, look: Look, asleep: boolean, covered = false) {
     head.ball(tone(look.bandana, -0.1), 0.45, 0, 4.15, -3.6 + back, 0);
     for (const s of [-1, 1]) head.shape(look.bandana, [[s * 0.1, 4.2, -3.6 + back], [s * 0.45, 4.2, -3.7 + back], [s * 1.1, 2.7, -3.85 + back], [s * 1.5, 2.85, -3.85 + back]]);
   }
+  if (look.loupe) {
+    // A jeweller's loupe: a leather band round the brow, and hung from it over one eye a short brass tube, wider at
+    // the eye than at its end, with a glass in it.
+    const band = "#4a3426";
+    head.loft(band, fitted([[3.95, 3.86, 3.56], [4.4, 3.89, 3.59]]), 10);
+    const x = 1.15;
+    const z = faceZ(rings, x, 3.05);
+    head.box(band, 0.3, 1.1, 0.25, x, 3.65, z + 0.12);
+    head.cyl(look.loupe, 0.5, 0.62, 1.1, x, 3.05, z + 0.55, 8, [HALF_PI, 0, 0]);
+    head.cyl(tone(look.loupe, -0.14), 0.66, 0.66, 0.2, x, 3.05, z + 0.12, 8, [HALF_PI, 0, 0]);
+    head.cyl("#cfeaff", 0.4, 0.4, 0.08, x, 3.05, z + 1.1, 8, [HALF_PI, 0, 0]);
+  }
   if (chosen?.ink) inkPart(head, "head", chosen.ink);
   if (chosen) lowFacialHair(head, chosen.beard, chosen.mustache, skin, look.hair, rings, chinY, mouthY);
   // A stock figure's own (the galley's cook): no beard, just what its look names.
@@ -4782,6 +4794,12 @@ function drawHead(head: Part, look: Look, asleep: boolean) {
     head.box(look.hair, look.mustache === "pencil" ? 2.2 : 3, look.mustache === "pencil" ? 0.35 : 0.7, 0.4, 0, 1.55, 3.05);
     if (look.mustache !== "pencil") for (const s of [-1, 1]) head.box(look.hair, 0.6, 1, 0.4, s * 1.3, look.mustache === "handlebar" ? 1.85 : 1.1, 3.05);
   }
+  if (look.loupe) {
+    // A jeweller's loupe over one eye, on a leather band round the brow.
+    head.box("#4a3426", 6.9, 0.5, 6.3, 0, 4.25, -0.05);
+    head.box(look.loupe, 1.5, 1.5, 1.1, 1.5, 2.95, 3.5);
+    head.box("#cfeaff", 0.9, 0.9, 0.2, 1.5, 2.95, 4.1);
+  }
 }
 
 /** The headgear a class or enemy has by default. */
@@ -5190,6 +5208,14 @@ function drawHeld(id: string, b: Biped, trim: string, look: Look, shield: boolea
       w.box(GEAR.steel, 0.36, 5.2, 0.5, 0, 5.3, 1.82);
       w.box("#2a2623", 0.38, 0.5, 0.5, 0, 7.3, -0.5);
       return { tilt: 0.5 };
+    case "dop":
+      // The lapidary's dop: a short turned stick with a brass ferrule, a lump of dark wax on its end and the stone
+      // being cut set in the wax. It is what she holds the stone to the wheel with.
+      w.cyl("#8a6a44", 0.34, 0.42, 4.6, 0, 1.9, 0, 6);
+      w.cyl(GEAR.gold, 0.46, 0.46, 0.5, 0, 4.2, 0, 6);
+      w.ball("#3a2a22", 0.6, 0, 4.9, 0, 0);
+      w.glowBall(look.accent, 0.42, 0, 5.5, 0);
+      return { tilt: 0.3 };
     case "paddle":
       // A brewer's paddle, taller than he is: a long shaft of pale, scrubbed ash, a dark band where it is gripped,
       // and a broad blade on the end, stained green where it goes into the brew. Pale so it shows against the

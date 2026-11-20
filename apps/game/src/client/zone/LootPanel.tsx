@@ -5,9 +5,14 @@
 // and (pointed at) the same card out to the side.
 //
 //   click a thing       take it
-//   drag a thing        onto the sea bag (a "text/gq-loot" drag carrying its index)
+//   drag a thing        onto the sea bag (a "text/gq-loot" drag carrying its index, and
+//                       "text/gq-loot-uid" its own number where it has one)
 //   Take all, E, Space  take everything
 //   ×, Esc              close
+//
+// `share` says whose it is in a short line under the title: a body or a chest is
+// everyone's, first come first served, and what someone else takes goes from
+// the window as it goes from the body; the spoils are your own share.
 //
 // `blocked` ("Not in the middle of a fight") greys the lot and says why:
 // nothing can be taken until it is lifted. The window decides nothing: it
@@ -30,6 +35,11 @@ export interface LootPanelProps {
   subtitle?: string;
   kind: "body" | "chest" | "spoils";
   items: LootItem[];
+  /**
+   * Whose it is: "shared" (a body, a chest: one lot for everyone, and whoever takes a thing first has it) or
+   * "own" (the spoils: your share, which nobody else can take). Said in a line under the title.
+   */
+  share?: "shared" | "own";
   /** Why nothing can be taken just now, if it cannot. */
   blocked?: string;
   onTake: (index: number) => void;
@@ -193,7 +203,10 @@ function LootCard({ item, viewer, how }: { item: LootItem; viewer?: LootPanelPro
 const WORD: Record<LootPanelProps["kind"], string> = { body: "Fallen", chest: "Chest", spoils: "Spoils" };
 const typing = (e: KeyboardEvent) => !!(e.target as HTMLElement | null)?.closest?.("input, textarea, select, [contenteditable]");
 
-export function LootPanel({ title, subtitle, kind, items, blocked, onTake, onTakeAll, onClose, viewer }: LootPanelProps) {
+/** Whose it is, in a short line. */
+const SHARE: Record<NonNullable<LootPanelProps["share"]>, string> = { shared: "Shared: first come, first served", own: "Your share" };
+
+export function LootPanel({ title, subtitle, kind, items, share, blocked, onTake, onTakeAll, onClose, viewer }: LootPanelProps) {
   const [hover, setHover] = useState<number | null>(null);
   const [dragging, setDragging] = useState<number | null>(null);
   const can = !blocked && items.length > 0;
@@ -219,9 +232,11 @@ export function LootPanel({ title, subtitle, kind, items, blocked, onTake, onTak
   // What the pointer was over may be gone once something is taken.
   const shown = hover !== null && hover < items.length && dragging === null ? items[hover] : null;
 
-  // A key for each square that stays with its thing as others are taken from before it.
+  // A key for each square that stays with its thing as others are taken from before it (by you, or by someone
+  // else from a body or a chest): its own number where it has one.
   const seenSigs = new Map<string, number>();
   const keys = items.map((item) => {
+    if (item.uid !== undefined) return `uid:${item.uid}`;
     const sig = item.t === "gear" ? `gear:${item.item.ref}:${item.item.rarity}:${item.item.name}` : item.t === "stone" ? `stone:${item.stone.join("+")}` : item.t === "blueprint" ? `bp:${item.id}` : item.t === "furnishing" ? `furn:${item.grant.defId}` : item.t === "gold" ? "gold" : `${item.t}:${item.kind}`;
     const nth = seenSigs.get(sig) ?? 0;
     seenSigs.set(sig, nth + 1);
@@ -232,11 +247,12 @@ export function LootPanel({ title, subtitle, kind, items, blocked, onTake, onTak
     <div className={`fight-ui fight-loot panel window ${kind} ${blocked ? "blocked" : ""}`} role="dialog" aria-label={`${WORD[kind]}: ${title}`}>
       <span className="win-plate">{title}</span>
       <button type="button" className="bag-close hud-btn" aria-label="Close" title="Close (Esc)" onClick={onClose}>×</button>
+      {share && <p className={`loot-share ${share}`}>{SHARE[share]}</p>}
       {subtitle && <p className="loot-sub">{subtitle}</p>}
       {blocked && <p className="loot-blocked" role="note">{blocked}</p>}
 
       {items.length === 0 ? (
-        <p className="loot-none">Nothing left.</p>
+        <p className="loot-none">{share === "shared" ? "Nothing left in it." : "Nothing left."}</p>
       ) : (
         <div className="loot-wrap">
           <div className="loot-grid" role="group" aria-label="What is in it" onPointerLeave={() => setHover(null)}>
@@ -254,6 +270,7 @@ export function LootPanel({ title, subtitle, kind, items, blocked, onTake, onTak
                   draggable={!blocked}
                   onDragStart={(e) => {
                     e.dataTransfer.setData("text/gq-loot", String(i));
+                    if (item.uid !== undefined) e.dataTransfer.setData("text/gq-loot-uid", String(item.uid));
                     e.dataTransfer.effectAllowed = "move";
                     setDragging(i);
                     setHover(null);

@@ -1,6 +1,8 @@
 // Inside the smithy, the apothecary and the galley: a small room each, with
 // the keeper who runs it, what they sell from their own stock for gold, and
-// haggling.
+// haggling. And inside the Lapidary, which is the same kind of room with its
+// own keeper, but was never a crew project: it stands from the start, since
+// nobody goes out on the atlas without a lodestone (lapidary.ts).
 //
 // The rooms work like the pub's (a fixed room, fixed fittings that are walked
 // around) but nobody else is in them: a customer walks about their own copy,
@@ -25,6 +27,14 @@ import type { Throwable } from "./zone/types";
 export const KEEPER_SHOPS = ["smithy", "apothecary", "galley"] as const;
 export type KeeperShop = (typeof KEEPER_SHOPS)[number];
 export const isKeeperShop = (shop: unknown): shop is KeeperShop => KEEPER_SHOPS.includes(shop as KeeperShop);
+
+/**
+ * Every building with a keeper inside: the three shops above, which the crew builds and whose keepers sell from
+ * a stock and haggle, and the Lapidary, which nobody had to build.
+ */
+export const KEEPER_HOUSES = [...KEEPER_SHOPS, "lapidary"] as const;
+export type KeeperHouse = (typeof KEEPER_HOUSES)[number];
+export const isKeeperHouse = (house: unknown): house is KeeperHouse => KEEPER_HOUSES.includes(house as KeeperHouse);
 
 // ---------- the rooms ----------
 
@@ -62,14 +72,14 @@ export interface KeeperFitting {
 
 const fit = (id: number, model: string, col: number, row: number, facing = 0, pull?: { x: number; z: number }): KeeperFitting => ({ id, model, ...at(col, row), facing, ...pull });
 
-/** How a keeper keeps busy: hammering at their anvil, stirring their cauldron, or chopping at their block, which is the fitting `fitting`. */
+/** How a keeper keeps busy: hammering at their anvil, stirring their cauldron, chopping at their block, or grinding a stone on their wheel, which is the fitting `fitting`. */
 export interface KeeperWork {
-  how: "hammer" | "stir" | "chop";
+  how: "hammer" | "stir" | "chop" | "grind";
   fitting: number;
 }
 
 export interface KeeperPlace {
-  shop: KeeperShop;
+  shop: KeeperHouse;
   /** "The smithy". */
   title: string;
   keeper: Keeper;
@@ -98,13 +108,13 @@ export interface KeeperWallPiece {
 const WALL_LIGHTS = new Set(["sconce", "wall_lantern"]);
 
 /** Fittings tall enough against a wall that nothing should hang over them. */
-const TALL = new Set(["forge", "weapon_rack", "armor_stand", "potion_shelf", "potion_shelf_lit", "herb_rack", "cupboard", "cook_range", "larder_shelf", "plate_dresser"]);
+const TALL = new Set(["forge", "weapon_rack", "armor_stand", "potion_shelf", "potion_shelf_lit", "herb_rack", "cupboard", "cook_range", "larder_shelf", "plate_dresser", "lodestone_case", "stone_shelf", "stone_shelf_lit"]);
 
 /**
  * Where a shop's wall pieces hang: spread evenly along the back and side walls, never over a tall fitting standing
  * against the wall, and none on the door's side. The same every time.
  */
-export function keeperWallPieces(shop: KeeperShop): KeeperWallPiece[] {
+export function keeperWallPieces(shop: KeeperHouse): KeeperWallPiece[] {
   const place = KEEPER_PLACES[shop];
   const models = place.wall ?? [];
   if (models.length === 0) return [];
@@ -136,7 +146,7 @@ const COOK_PULL = { x: -0.92, z: 0.48 };
 const COOK_POS = at(3, 2);
 const COOK_STAND = at(2, 3);
 
-export const KEEPER_PLACES: Record<KeeperShop, KeeperPlace> = {
+export const KEEPER_PLACES: Record<KeeperHouse, KeeperPlace> = {
   smithy: {
     shop: "smithy",
     title: "The smithy",
@@ -216,16 +226,44 @@ export const KEEPER_PLACES: Record<KeeperShop, KeeperPlace> = {
       fit(10, "barrel_lit", 6, 5),
     ],
   },
+  lapidary: {
+    shop: "lapidary",
+    title: "The Lapidary",
+    keeper: { id: "keeper:lapidary", name: "Tilda Glint", short: "Tilda", trade: "the lapidary", look: "keeper_lapidary", hello: "Hold it up to the lamp. Let's see what you have.", line: "Every stone has a flaw. I charge for finding it." },
+    keeperPos: KEEPER_POS,
+    stand: KEEPER_STAND,
+    work: { how: "grind", fitting: 3 },
+    // Candles round the walls, and a ship's lantern by the case: small warm pools, and the blue of the lodestones between.
+    wall: ["sconce", "wall_lantern", "sconce", "sconce"],
+    fittings: [
+      // The case of lodestones against the back wall behind her, glowing softly through its glass, with the
+      // trays of sorted stones beside it; the cutting wheel close before her (she faces it, to her left as you
+      // look) and the table she weighs and looks stones over on at her back.
+      fit(1, "lodestone_case", 4, 1),
+      fit(2, "stone_trays", 3, 1),
+      fit(3, "lap_wheel", 3, 2, 0, WORK_PULL),
+      fit(4, "gem_table", 5, 2),
+      // Shelves of rough stone and split geodes along the back wall, one of them with a candle on it; the bin
+      // of rough waiting to be cut down the side.
+      fit(5, "stone_shelf", 1, 1),
+      fit(6, "stone_shelf_lit", 6, 1),
+      fit(7, "rough_bin", 7, 2),
+      // The lamp is kept out here too: her work lamp, the case, the table's candle and a candle on a barrel light the shop.
+      fit(8, "workbench_lit", 1, 3),
+      fit(9, "crate", 1, 5),
+      fit(10, "barrel_lit", 6, 5),
+    ],
+  },
 };
 
 /** A shop's room: the same every time. The hex in front of the keeper is a place to stand, not an obstacle. */
-export function keeperRoom(shop: KeeperShop): WorldMap {
+export function keeperRoom(shop: KeeperHouse): WorldMap {
   const room = buildRoom(KEEPER_GRID);
   return { ...room, pois: [...room.pois, harborPoi("keeper", "dealer", KEEPER_PLACES[shop].stand)] };
 }
 
 /** A walkable route across a shop, or null. The fittings are walked around, and the keeper's spot is theirs alone. */
-export function keeperPath(shop: KeeperShop, room: WorldMap, from: HexPos, to: HexPos): HexPos[] | null {
+export function keeperPath(shop: KeeperHouse, room: WorldMap, from: HexPos, to: HexPos): HexPos[] | null {
   const place = KEEPER_PLACES[shop];
   return hutPath(room, [...place.fittings, place.keeperPos], from, to);
 }

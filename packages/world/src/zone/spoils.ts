@@ -1,7 +1,8 @@
 // What there is to take on a map: what a fallen enemy had on it, what a
 // chest holds, and the spoils of a place cleared. Each is a list of things
-// (LootItem), rolled for one hero the first time they look (loot.ts), and
-// theirs alone to take.
+// (LootItem) of the size one hero's share would be. A body's or a chest's
+// is rolled once and is everyone's, first come first served; the spoils
+// are rolled for each hero, and theirs alone to take (loot.ts).
 //
 // What a body holds follows from what it was:
 //
@@ -86,7 +87,7 @@ function tidy(items: LootItem[]): LootItem[] {
   return out;
 }
 
-/** What one hero finds on the body of an enemy of this kind and level. `classId` and `heroLevel`: whose gear it would be. */
+/** What is on the body of an enemy of this kind and level: one lot, however many are in the party. `hero`: whose gear a piece in it would be. */
 export function rollBody(rng: Rng, kind: string, level: number, hero: { classId: string; level: number }, options: Pick<ZoneOptions, "tier" | "mods">): LootItem[] {
   const family = ENEMY_FAMILY[kind];
   if (!family) return [];
@@ -118,7 +119,7 @@ export interface Pay {
   potion: number;
 }
 
-/** What one hero finds in a chest that pays `pay`: its gold, a few materials, and now and then gear, a potion, a blueprint or a furnishing. */
+/** What is in a chest that pays `pay` (one lot, however many are in the party): its gold, a few materials, and now and then gear, a potion, a blueprint or a furnishing. */
 export function rollChest(rng: Rng, pay: Pay, hero: { classId: string; level: number }): LootItem[] {
   const drops = cacheDrops(rng);
   const items: LootItem[] = [{ t: "gold", n: rng.int(pay.gold[0], pay.gold[1]) }];

@@ -20,6 +20,7 @@ import * as THREE from "three";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { HIDES } from "./silhouette";
 import { addOakSway, addWindSway } from "./wind";
+import { addCutaway } from "./cutaway";
 
 /** Every tree geometry is this tall, centred on y = 0 (as addWindSway expects); an instance scales it. */
 const TREE_H = 1;
@@ -419,6 +420,8 @@ export class Woods {
       mesh.renderOrder = HIDES;
       if (kind.stout) addOakSway(mesh.material as THREE.Material, TREE_H);
       else addWindSway(mesh.material as THREE.Material, TREE_H, true);
+      // In the combat view a tree in the way thins to a ghost over its foot (cutaway.ts).
+      addCutaway(mesh.material as THREE.Material, { how: "ghost", foot: -TREE_H / 2 });
       list.forEach((spot, index) => {
         const base = new THREE.Matrix4().compose(
           new THREE.Vector3(spot.x, spot.y + (TREE_H / 2) * spot.size, spot.z),
@@ -442,6 +445,8 @@ export class Woods {
     shapes.forEach((geometry, shape) => {
       const list = boulders.filter((b) => b.shape === shape);
       const mesh = this.instanced(geometry, list.length);
+      // And a boulder in the way sinks to a low stone: still plainly there, and seen over. (Its foot is a little under its middle.)
+      addCutaway(mesh.material as THREE.Material, { how: "sink", foot: -0.22 });
       list.forEach((b, i) => {
         const base = new THREE.Matrix4().compose(
           new THREE.Vector3(b.x, b.y + b.tall * 0.22, b.z),

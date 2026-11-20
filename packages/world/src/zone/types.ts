@@ -151,10 +151,15 @@ export interface Budget {
   ap: number;
   /** Movement already bought this turn and not yet walked, in steps of open ground. Lost when the turn ends. */
   move: number;
-  /** Steps of open ground 1 AP buys this turn: half the unit's speed, with whatever hastens or slows it. 0: it cannot move (knocked flat). */
+  /** Steps of open ground 1 AP buys this turn: the unit's stride (heroMove, enemyMove), with whatever hastens or slows it. 0: it cannot move (knocked flat). */
   stride: number;
   /** Disengaged: moving away from an enemy draws no opportunity attack this turn. */
   disengaged: boolean;
+  /**
+   * How many more AP may go on movement this turn, for one that is held to so many: an enemy, to ENEMY_MOVE_AP (kit.ts).
+   * Missing: as many as it has (a hero, and what a hero calls). Each stride bought takes one from it.
+   */
+  walk?: number;
   /** What a Wind-god's Shanty has added to `stride` this turn, so a shanty widened or begun mid-turn adds only what is still owed. */
   song?: number;
   /**
@@ -250,8 +255,12 @@ export interface ZoneOptions {
   clime?: Clime;
 }
 
-/** One thing lying in something that can be looted (zone/spoils.ts): taken, it goes to the taker's own pack or purse. */
-export type LootItem =
+/**
+ * One thing lying in something that can be looted (zone/spoils.ts): taken, it goes to the taker's own pack or purse.
+ * `uid` is which thing it is among those it was found with: given when they are rolled and never used again, so a
+ * `take` can name the thing itself and not its place in a list that others are taking from.
+ */
+export type LootItem = (
   | { t: "gold"; n: number }
   | { t: "res"; kind: ResourceKind; n: number }
   /** Something to drink or throw. */
@@ -260,11 +269,13 @@ export type LootItem =
   /** A lodestone: what it carries. */
   | { t: "stone"; stone: ZoneMod[] }
   | { t: "blueprint"; id: string }
-  | { t: "furnishing"; grant: FurnishingGrant };
+  | { t: "furnishing"; grant: FurnishingGrant }
+) & { uid?: number };
 
 /**
  * Something on the map with things in it to take: a fallen enemy, a chest thrown open, or the spoils of a place
- * cleared. What is in it is each hero's own: rolled for them the first time they look, and nobody else's to take.
+ * cleared (zone/loot.ts). A body and a chest hold one lot of things, the same for everyone, first come first
+ * served (`shared`); the spoils hold each hero's own share (`loot`).
  */
 export interface LootSpot {
   /** A body keeps the id of whoever fell; a chest, its place's. */
@@ -277,8 +288,19 @@ export interface LootSpot {
   level?: number;
   /** A chest: which kind. */
   chest?: "chest" | "vault" | "hoard";
-  /** What is in it, by hero: what is left of what was rolled for them. Missing: they have not looked yet. Empty: they have taken it all. */
+  /**
+   * The spoils: what is in it, by hero: what is left of what was rolled for them. Missing: they have not looked yet.
+   * Empty: they have taken it all. (A body or a chest on a map saved when those too were each hero's own, and
+   * already looked into by someone then, keeps its shares here and is taken from as it was.)
+   */
   loot: Record<string, LootItem[]>;
+  /**
+   * A body or a chest: what is left in it, for whoever takes it first. Rolled once, the first time anyone looks.
+   * Missing: nobody has looked yet. Empty: it has all been taken (or there was nothing).
+   */
+  shared?: LootItem[];
+  /** A body or a chest: who took each thing that has gone from it, by the thing's `uid`. */
+  gone?: Record<number, string>;
 }
 
 export interface ZoneState {
@@ -378,10 +400,14 @@ export type ZoneAction =
   | { type: "drink"; by: string; unit: string; item: Throwable }
   /** Open a chest, strongbox or hoard (a cache on the map) from beside it. */
   | { type: "open"; by: string; unit: string; poi: string }
-  /** Look into something lootable (a body, an open chest, the spoils) from beside it: what is in it for you is rolled the first time. */
+  /** Look into something lootable (a body, an open chest, the spoils) from beside it: what is in it is rolled the first time. */
   | { type: "loot"; by: string; unit: string; spot: string }
-  /** Take from it what is yours: the `index`th thing, or (none given) all of it. Out of a fight only. */
-  | { type: "take"; by: string; unit: string; spot: string; index?: number }
+  /**
+   * Take from it: the thing with this `uid`, or (neither given) all that is there. Out of a fight only. `index`,
+   * the place in the list, names a thing only in a share of your own: a body or a chest is everyone's, and
+   * what lies at a place in it may have changed since you looked.
+   */
+  | { type: "take"; by: string; unit: string; spot: string; index?: number; uid?: number }
   /** Light a torch from the pack and hold it: in the off hand, or in the main hand to swing as a weapon. */
   | { type: "light"; by: string; unit: string; hand?: "main" }
   /** Pick up a torch burning on the ground beside you: into a free hand still lit, or put out and into the pack. */
@@ -507,13 +533,15 @@ export type ZoneEvent =
   | { t: "door"; id: string; poi: string; how: "key" | "forced" | "held" }
   /** The crash of a forced door is heard by a band, which comes running. */
   | { t: "noise"; group: string }
+  /** A fight in the open rouses the rest of the place: these bands, and everyone in them, are in it and on their way. */
+  | { t: "roused"; groups: string[]; units: string[] }
   /** A cluster of glowing mushrooms is picked; what it gave follows as `spoils`. */
   | { t: "foraged"; id: string; poi: string }
   /** A chest, strongbox or hoard is opened. */
   | { t: "opened"; id: string; poi: string; loot: "chest" | "vault" | "hoard" }
-  /** A hero looks into something lootable: what is in it for them is in the state they are sent. */
+  /** A hero looks into something lootable: what is in it (for them, if it is the spoils) is in the state they are sent. */
   | { t: "looked"; id: string; spot: string }
-  /** A hero takes things out of it. */
+  /** A hero takes things out of it: out of what everyone could have taken, if it is a body or a chest. */
   | { t: "took"; id: string; spot: string; items: LootItem[] }
   /** A crate takes a blow, a blast or the fire under it. `actor` is who did it, if anyone did. */
   | { t: "crate_hit"; poi: string; actor: string | null; amount: number; what: string }

@@ -5,6 +5,7 @@ import type { ContractBoard } from "../server/board";
 
 /** What the contract dealer in the pub has: the crew goal and the contracts on offer. */
 export type Board = ContractBoard;
+import type { Muster, MusterAnswer } from "@gantt-quest/world";
 import type { Appearance, CarryState, FishSpot, GatherChoice, HarborXpStatus, GatherSpot, HarborWorks, HutSummary, ItemDef, Lodestone, Perk, ProjectAmounts, PublicHero, Resources, SalesEntry, SalesmanId, SalesmanVisit, ShopEntry, Throwable, TradeSide } from "@gantt-quest/world";
 import { devTools } from "./devTools";
 import { forcedSalesman } from "./salesmanClock";
@@ -266,6 +267,15 @@ export const api = {
   /** Set sail for a landfall: the map the crew is fighting through there, or a fresh one. */
   /** Set out for a place, with the lodestone put into its slot (what it carries, joined with "+"; "" for a plain one). It comes out of your pack. */
   openNode: (node: string, stone?: string) => request<{ code: string; fresh: boolean }>("/api/atlas/open", { node, stone }),
+  /**
+   * Set out for a place, asking the crew first. Gives the map's `code` where nobody needs asking (a map already
+   * begun there, or nobody else in town), and otherwise the `muster` that was called: the map is made when it starts.
+   */
+  callMuster: (node: string, stone?: string) => request<{ code?: string; muster?: Muster }>("/api/atlas/muster", { node, stone }),
+  /** The crew's muster, if one is on or ended a moment ago. */
+  muster: () => request<{ muster: Muster | null }>("/api/atlas/muster"),
+  /** Answer the crew's muster: "ready" or "no"; for whoever called it, "start" or "cancel". */
+  answerMuster: (answer: MusterAnswer) => request<{ muster: Muster }>("/api/atlas/muster/answer", { answer }),
   /** The dev toolbox: clear a landfall without fighting for it, or wipe the chart. Gives the chart as it now is. */
   /** The crew's town chest: its tabs and what is in each. Every call below gives the chest back as it now is. */
   chest: () => request<ChestView>("/api/chest"),
@@ -280,7 +290,9 @@ export const api = {
   chestRenameTab: (tab: number, name: string) => request<ChestView>("/api/chest/rename", { tab, name }),
   chestColorTab: (tab: number, color: string | null) => request<ChestView>("/api/chest/color", { tab, color }),
   chestMoveTab: (tab: number, to: number) => request<ChestView>("/api/chest/move", { tab, to }),
-  /** Work lodestones at the bench, out of your pack: fuse three (each as it is sent) into one, attune one to a modifier, or reroll one. */
+  /** Sell gems out of your pack to the lapidary. */
+  sellGems: (qty: number) => request<{ gold: number }>("/api/lapidary/gems/sell", { qty }),
+  /** Work lodestones at the lapidary's bench, out of your pack: fuse three (each as it is sent) into one, attune one to a modifier, or reroll one. */
   benchFuse: (stones: string[]) => request<{ made: Lodestone; lodestones: HeldStone[] }>("/api/atlas/bench", { op: "fuse", stones }),
   benchAttune: (stone: string, mod: string) => request<{ made: Lodestone; lodestones: HeldStone[] }>("/api/atlas/bench", { op: "attune", stone, mod }),
   benchTemper: (stone: string, mod: string) => request<{ made: Lodestone; lodestones: HeldStone[] }>("/api/atlas/bench", { op: "temper", stone, mod }),

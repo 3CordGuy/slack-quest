@@ -20,7 +20,7 @@
   --f-action: #7fd88c; --f-bonus: #f59a4e; --f-move: #f2c552; --f-course: #ff5a5a; --f-warn: #ff6a55;
   --f-good: #9be08a; --f-bad: #ff8571;
   --f-bar-w: var(--fight-bar-w, 732px);
-  --f-turn-h: var(--fight-turn-h, 98px);
+  --f-turn-h: var(--fight-turn-h, 102px);
   --f-hud: calc(var(--hud-h, 0px) / var(--ui-z, 1));
   /* The room either side of the rack. */
   --f-side: calc((100vw / var(--ui-z, 1) - var(--f-bar-w)) / 2);
@@ -29,19 +29,20 @@
 
 /* ==========================================================================
    The turn bar: one board, directly over the rack. From the left: whose turn
-   it is on a pennant; the Action (a round token) and the Bonus action (a
-   three-cornered one); the movement left, as a run of chevrons with its
-   number; and End Turn, with the turn's clock in a ring.
+   it is on a pennant; the Action Points, as a number and a row of brass
+   sockets with a lit orb in each one left, and under them what they mean for
+   walking; and End Turn, with the turn's clock in a ring.
    ========================================================================== */
 .fight-turn {
   position: absolute; left: 50%; bottom: calc(var(--f-hud) + 4px); translate: -50% 0; z-index: 14;
   width: min(var(--f-bar-w), calc(100% - 24px)); display: flex; flex-direction: column; gap: 8px; pointer-events: none;
 }
+.fight-turn { container: fight-turn / inline-size; }
 .fight-turn > * { pointer-events: auto; }
 .fight-turn-extra { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px; pointer-events: none; }
 .fight-turn-extra > * { pointer-events: auto; }
 .fight-turn-bar {
-  position: relative; display: flex; align-items: stretch; gap: 8px; height: 80px; padding: 0 9px 0 0;
+  position: relative; display: flex; align-items: stretch; gap: 8px; height: 84px; padding: 0 9px 0 0;
   background:
     linear-gradient(180deg, rgba(255, 214, 170, 0.1), rgba(0, 0, 0, 0) 32%, rgba(0, 0, 0, 0.42)),
     linear-gradient(rgba(96, 30, 24, 0.34), rgba(96, 30, 24, 0.34)),
@@ -116,71 +117,100 @@
 .ft-dots i:nth-child(3) { animation-delay: 0.4s; }
 @keyframes ft-dot { 0%, 100% { opacity: 0.2; } 40% { opacity: 1; } }
 
-/* What the turn has to spend. */
-.ft-res { flex: 1; min-width: 0; display: flex; align-items: center; gap: 6px; transition: opacity 0.3s, filter 0.3s; }
-.fight-turn.waiting .ft-res { opacity: 0.42; filter: grayscale(0.85) brightness(0.8); }
+/* What the turn has to spend: the Action Points over, and what they mean for walking under. */
+.ft-res { flex: 1; min-width: 0; display: flex; flex-direction: column; justify-content: center; gap: 5px; transition: opacity 0.3s, filter 0.3s; }
+.fight-turn.waiting .ft-res { opacity: 0.45; filter: grayscale(0.85) brightness(0.8); }
 
-/* A token: its picture, its name under it, and (pointed at) a card over it. */
-.ft-token { position: relative; flex: none; width: 64px; display: flex; flex-direction: column; align-items: center; gap: 1px; cursor: help; --c: var(--f-action); }
-.ft-token.bonus { --c: var(--f-bonus); }
-.ft-token-art { position: relative; width: 56px; height: 56px; display: grid; place-items: center; }
-.ft-token-art svg { display: block; width: 56px; height: 56px; overflow: visible; }
-.ft-token.on .ft-token-art { filter: drop-shadow(0 0 7px color-mix(in srgb, var(--c) 75%, transparent)); }
-.fight-turn.mine .ft-token.on .ft-token-art { animation: ft-token-idle 2.2s ease-in-out infinite; }
-@keyframes ft-token-idle { 50% { filter: drop-shadow(0 0 12px var(--c)); } }
-.ft-token .ft-face, .ft-token .ft-glyph, .ft-token .ft-rim, .ft-token .ft-shine, .ft-token .ft-strike { transition: fill 0.2s, opacity 0.2s, stroke 0.2s; }
-.ft-token .ft-strike { stroke: #c2523f; stroke-width: 4.5; stroke-linecap: round; opacity: 0; }
-.ft-token .ft-glyph { fill: #0f2a16; }
-.ft-token.bonus .ft-glyph { fill: #3a1606; }
-.ft-token.spent .ft-face { fill: #1a100e; }
-.ft-token.spent .ft-rim { fill: #4a3526; }
-.ft-token.spent .ft-glyph { fill: #3c2a22; }
-.ft-token.spent .ft-shine { opacity: 0; }
-.ft-token.spent .ft-strike { opacity: 0.95; }
-.ft-token-label { font-family: var(--font-head); font-size: 13px; line-height: 1; letter-spacing: 0.07em; color: color-mix(in srgb, var(--c) 70%, #fff); text-shadow: 0 1px 0 #000; white-space: nowrap; }
-.ft-token.spent .ft-token-label { color: #8d7462; text-decoration: line-through; text-decoration-color: rgba(194, 82, 63, 0.9); }
-/* Spent: it flares white-hot, turns on its edge and comes back dark, and a ring of its colour blows off it.
-   Given back (a new turn): it pops up lit. Both play when the token changes, not while waiting. */
-.fight-turn.mine .ft-token.spent .ft-token-art svg { animation: ft-burn 0.6s cubic-bezier(0.3, 0, 0.3, 1) both; }
-.fight-turn.mine .ft-token.on .ft-token-art svg { animation: ft-gain 0.5s cubic-bezier(0.2, 1.5, 0.4, 1) both; }
-@keyframes ft-burn {
-  0% { transform: rotateY(0) scale(1.2); filter: brightness(3.2) saturate(2) drop-shadow(0 0 14px var(--c)); }
-  45% { transform: rotateY(88deg) scale(1.1); filter: brightness(1.6); }
-  100% { transform: rotateY(0) scale(1); filter: none; }
+/* The points: their number, and a brass socket for each that can be held. A socket holds a lit orb while its point
+   is there to spend, and stands dark once it is spent. */
+.ft-ap { position: relative; display: flex; align-items: center; gap: 9px; cursor: help; }
+.ft-ap-num { position: relative; flex: none; width: 50px; display: flex; flex-direction: column; align-items: center; gap: 1px; }
+.ft-ap-num > span { display: inline-flex; align-items: baseline; gap: 1px; font-family: var(--font-title); color: #ecffe0; text-shadow: 0 2px 0 #000; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.ft-ap-num b { display: inline-block; font-size: 38px; line-height: 30px; font-weight: normal; animation: ft-num 0.3s ease-out; }
+.ft-ap-num i { font-style: normal; font-size: 20px; color: #b5c4a2; }
+.ft-ap-num small { font-family: var(--font-head); font-size: 12px; line-height: 1; letter-spacing: 0.16em; color: color-mix(in srgb, var(--f-action) 75%, #fff); text-shadow: 0 1px 0 #000; }
+@keyframes ft-num { from { scale: 1.45; color: #fff; } to { scale: 1; } }
+.ft-ap.none .ft-ap-num b { color: #8d7462; }
+.ft-ap.over .ft-ap-num b { color: var(--f-warn); }
+.ft-ap-cost, .ft-walk-cost { flex: none; min-width: 26px; padding: 0 4px; text-align: center; font: bold 13px/17px ui-monospace, Consolas, monospace; font-style: normal; color: #2a1608; background: var(--f-move); border: 2px solid var(--f-out); animation: ft-cost 0.16s ease-out; }
+/* What the thing aimed would take, in the label's place under the number. */
+.ft-ap-cost { margin-top: -3px; line-height: 14px; color: #0f2a16; background: var(--f-action); }
+@keyframes ft-cost { from { scale: 0.6; opacity: 0; } to { scale: 1; opacity: 1; } }
+.ft-ap.over .ft-ap-cost, .ft-walk.over .ft-walk-cost { color: #fff; background: #c8321f; }
+
+.ft-sockets { flex: 1; min-width: 0; display: flex; align-items: center; justify-content: space-between; padding: 0 5px 0 0; }
+.ft-sockets i {
+  --c: var(--f-action); --c-hi: #ecffe0; --c-lo: #1f6b3a;
+  position: relative; flex: none; width: 40px; height: 40px; border-radius: 50%;
+  background: linear-gradient(135deg, #f6e2a1 0, #c9a24a 40%, #6f5222 68%, #c9a24a 100%);
+  box-shadow: 0 0 0 2px var(--f-out), 0 3px 0 2px rgba(0, 0, 0, 0.4);
 }
-@keyframes ft-gain { from { transform: scale(0.4) rotate(-40deg); opacity: 0; filter: brightness(2.6); } to { transform: none; opacity: 1; filter: none; } }
-.fight-turn.mine .ft-token.spent .ft-token-art::after {
-  content: ""; position: absolute; inset: 2px; border-radius: 50%; border: 3px solid var(--c); pointer-events: none; opacity: 0;
-  animation: ft-ring 0.6s ease-out both;
+/* The well the orb sits in. */
+.ft-sockets i::before { content: ""; position: absolute; inset: 4px; border-radius: 50%; background: radial-gradient(circle at 50% 30%, #2f1d18, #0d0706 78%); box-shadow: inset 0 3px 5px rgba(0, 0, 0, 0.95), 0 0 0 1px rgba(0, 0, 0, 0.65); }
+/* The orb. */
+.ft-sockets i::after {
+  content: ""; position: absolute; inset: 6px; border-radius: 50%; opacity: 0; scale: 0.3;
+  background: radial-gradient(circle at 36% 28%, var(--c-hi) 0, var(--c) 42%, var(--c-lo) 100%);
+  box-shadow: inset 0 -3px 5px rgba(0, 0, 0, 0.35), inset 0 0 0 1px rgba(0, 0, 0, 0.35), 0 0 10px 1px color-mix(in srgb, var(--c) 75%, transparent);
+  transition: scale 0.15s, opacity 0.15s;
 }
-@keyframes ft-ring { from { scale: 0.6; opacity: 0.95; } to { scale: 2; opacity: 0; } }
+.ft-sockets i.on::after { opacity: 1; scale: 1; }
+/* The sockets only saved points fill: bound in rope, and their orbs are gold. */
+.ft-sockets i.bank { --c: var(--f-gold); --c-hi: #fffbe0; --c-lo: #9a6a18; outline: 2px dashed #c9a877; outline-offset: 3px; }
+.ft-sockets i.bank.off { outline-color: rgba(201, 168, 119, 0.5); }
+.ft-sockets i.first-bank { margin-left: 7px; }
+.fight-turn.mine .ft-sockets i.on::after { animation: ft-orb-in 0.42s cubic-bezier(0.2, 1.6, 0.4, 1) backwards; animation-delay: calc(var(--i, 0) * 55ms); }
+.fight-turn.mine .ft-sockets i.on { filter: drop-shadow(0 0 5px color-mix(in srgb, var(--c) 55%, transparent)); }
+@keyframes ft-orb-in { from { scale: 0.2; opacity: 0; filter: brightness(3); } to { scale: 1; opacity: 1; filter: none; } }
+/* Spent: the orb flares white-hot and goes out, and a ring of its colour blows off the socket. */
+.fight-turn.mine .ft-sockets i.off::after { animation: ft-orb-out 0.5s ease-out backwards; }
+.fight-turn.mine .ft-sockets i.off { animation: ft-socket-out 0.55s ease-out; }
+@keyframes ft-orb-out { 0% { scale: 1.35; opacity: 1; filter: brightness(3.5) saturate(1.5); } 55% { scale: 0.9; opacity: 0.9; filter: brightness(1.4); } 100% { scale: 0.3; opacity: 0; filter: none; } }
+@keyframes ft-socket-out {
+  from { box-shadow: 0 0 0 2px var(--f-out), 0 3px 0 2px rgba(0, 0, 0, 0.4), 0 0 0 3px var(--c), 0 0 16px 6px var(--c); }
+  to { box-shadow: 0 0 0 2px var(--f-out), 0 3px 0 2px rgba(0, 0, 0, 0.4), 0 0 0 18px transparent, 0 0 16px 6px transparent; }
+}
+/* What the thing aimed, or the walk under the pointer, would spend: those orbs shrink in their sockets and blink.
+   More than there is: every one left, in red. */
+.fight-turn.mine .ft-sockets i.cost { animation: ft-socket-cost 0.7s steps(2, jump-none) infinite; }
+.fight-turn.mine .ft-sockets i.cost::after { scale: 0.7; }
+@keyframes ft-socket-cost { from { opacity: 1; } to { opacity: 0.5; } }
+.fight-turn.mine .ft-ap.over .ft-sockets i.cost { --c: #ff6046; --c-hi: #ffd6cc; --c-lo: #8a1c10; }
 
 /* The card over a part of the bar. */
 .ft-tip {
-  position: absolute; left: 50%; bottom: calc(100% + 12px); translate: -50% 4px; z-index: 5; width: max-content; max-width: 250px; padding: 6px 10px 7px;
-  display: flex; flex-direction: column; gap: 2px; font-size: 12px; line-height: 1.35; text-align: left; color: var(--text, #fbe6c8); white-space: normal;
+  position: absolute; left: 50%; bottom: calc(100% + 16px); translate: -50% 4px; z-index: 5; width: max-content; max-width: 270px; padding: 6px 10px 7px;
+  display: flex; flex-direction: column; gap: 3px; font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 12px; line-height: 1.35; letter-spacing: 0; text-align: left; color: var(--text, #fbe6c8); white-space: normal;
   background: rgba(30, 15, 13, 0.97); border: 2px solid var(--f-out); box-shadow: 0 0 0 1px var(--f-brass-lo), 0 6px 14px rgba(0, 0, 0, 0.55);
   opacity: 0; visibility: hidden; pointer-events: none; transition: opacity 0.12s, translate 0.12s, visibility 0s 0.12s;
 }
-.ft-tip b { font-family: var(--font-head); font-size: 15px; font-weight: normal; letter-spacing: 0.04em; color: var(--f-brass-hi); }
+.ft-tip b { font-family: var(--font-head); font-size: 15px; line-height: 1.3; font-weight: normal; letter-spacing: 0.04em; color: var(--f-brass-hi); }
 .ft-tip span { color: var(--muted, #d2a585); }
 :hover > .ft-tip, :focus-visible > .ft-tip { opacity: 1; visibility: visible; translate: -50% 0; transition-delay: 0.25s, 0.25s, 0.25s; }
 
-/* Movement: its number, and a run of chevrons, lit for what is left. */
-.ft-move { position: relative; flex: 1; min-width: 0; align-self: stretch; display: flex; flex-direction: column; justify-content: center; gap: 4px; margin: 8px 0; padding: 0 6px 0 12px; cursor: help; border-left: 2px solid rgba(0, 0, 0, 0.45); box-shadow: inset 1px 0 0 rgba(214, 150, 96, 0.16); }
-.ft-move-head { display: flex; align-items: baseline; gap: 8px; height: 26px; }
-.ft-move-label { font-family: var(--font-head); font-size: 13px; letter-spacing: 0.07em; color: color-mix(in srgb, var(--f-move) 70%, #fff); text-shadow: 0 1px 0 #000; }
-.ft-move-num { margin-left: auto; display: inline-flex; align-items: baseline; gap: 5px; font-family: var(--font-title); color: #ffe9a8; text-shadow: 0 2px 0 #000; font-variant-numeric: tabular-nums; white-space: nowrap; }
-.ft-move-num b { display: inline-block; font-size: 30px; line-height: 26px; font-weight: normal; animation: ft-num 0.3s ease-out; }
-.ft-move-num i { font-style: normal; font-size: 20px; color: #c9a877; letter-spacing: 0.06em; }
-@keyframes ft-num { from { scale: 1.45; color: #fff; } to { scale: 1; } }
-.ft-move.none .ft-move-num b { color: #8d7462; }
-.ft-move-cost { order: 3; min-width: 34px; padding: 0 5px; text-align: center; font: bold 15px/20px ui-monospace, Consolas, monospace; color: #2a1608; background: var(--f-move); border: 2px solid var(--f-out); animation: ft-cost 0.16s ease-out; }
-@keyframes ft-cost { from { scale: 0.6; opacity: 0; } to { scale: 1; opacity: 1; } }
-.ft-move.over .ft-move-cost { color: #fff; background: #c8321f; }
-.ft-move.over .ft-move-num b { color: var(--f-warn); }
+/* Walking, under the points and paid for with them: the steps bought and not yet walked, what one more point
+   buys, and how far it would all carry you. */
+.ft-walk {
+  position: relative; display: flex; align-items: center; gap: 7px; height: 22px; padding: 3px 5px 0 2px; cursor: help; white-space: nowrap;
+  font-family: var(--font-head); font-size: 13px; line-height: 1; letter-spacing: 0.04em; color: #d9c7ab; text-shadow: 0 1px 0 #000;
+  border-top: 1px solid rgba(0, 0, 0, 0.5); box-shadow: inset 0 1px 0 rgba(214, 150, 96, 0.16);
+}
+.ft-boot { flex: none; width: 16px; height: 16px; fill: var(--f-move); filter: drop-shadow(0 1px 0 #000); }
+.ft-walk > span > b { display: inline-block; font: bold 16px/16px ui-monospace, Consolas, monospace; letter-spacing: 0; color: #ffe9a8; font-variant-numeric: tabular-nums; }
+.ft-walk-left b { animation: ft-num 0.3s ease-out; }
+.ft-walk-rate { color: color-mix(in srgb, var(--f-action) 60%, #e9d8ab); }
+.ft-walk-rate::before { content: "·"; margin-right: 7px; color: #8d7462; }
+.ft-walk-reach { margin-left: auto; }
+.ft-walk.over .ft-walk-reach, .ft-walk.over .ft-walk-reach b { color: var(--f-warn); }
+.ft-walk-none { color: #ff9c8c; }
+.ft-walk.stuck .ft-boot { fill: #8d7462; }
+.ft-short { display: none; }
+.ft-walk.has-course .ft-long { display: none; }
+.ft-walk.has-course .ft-short { display: inline; }
+.ft-walk.has-course { gap: 6px; }
 .ft-track { display: flex; height: 17px; padding: 2px 3px; background: #130a09; border: 2px solid var(--f-out); box-shadow: 0 0 0 1px rgba(107, 53, 36, 0.8), inset 0 2px 3px rgba(0, 0, 0, 0.7); }
-.ft-track i { flex: 1; min-width: 0; margin-right: -3px; background: #2a1915; clip-path: polygon(0 0, calc(100% - 5px) 0, 100% 50%, calc(100% - 5px) 100%, 0 100%, 5px 50%); transition: background 0.25s; }
+.ft-walk .ft-track { flex: none; width: 58px; height: 13px; padding: 1px 2px; }
+.ft-track i { position: relative; flex: 1; min-width: 0; margin-right: -3px; background: #2a1915; clip-path: polygon(0 0, calc(100% - 5px) 0, 100% 50%, calc(100% - 5px) 100%, 0 100%, 5px 50%); transition: background 0.25s; }
 .ft-track i:first-child { clip-path: polygon(0 0, calc(100% - 5px) 0, 100% 50%, calc(100% - 5px) 100%, 0 100%); }
 .ft-track i:last-child { margin-right: 0; }
 .ft-track i.on { background: linear-gradient(180deg, #fff0b8 0, #f2c552 42%, #b9822a 100%); }
@@ -188,28 +218,26 @@
 .fight-turn.mine .ft-track i.off { animation: ft-pip-out 0.45s ease-out both; }
 @keyframes ft-pip-in { from { scale: 1 0; opacity: 0; filter: brightness(2.5); } to { scale: 1; opacity: 1; filter: none; } }
 @keyframes ft-pip-out { 0% { background: #fff; filter: brightness(2); } 100% { background: #2a1915; filter: none; } }
-/* What the move under the pointer would spend: those chevrons go hollow and blink. Too far: all that is left, in red.
-   The hatching is laid over the chevron, so its own lighting-up is not played again each time the pointer moves. */
-.ft-track i { position: relative; }
+/* The steps the walk under the pointer would use: those chevrons go hollow and blink. The hatching is laid over the
+   chevron, so its own lighting-up is not played again each time the pointer moves. */
 .fight-turn.mine .ft-track i.cost::after { content: ""; position: absolute; inset: 0; background: repeating-linear-gradient(115deg, rgba(19, 10, 9, 0) 0 3px, rgba(19, 10, 9, 0.88) 3px 6px), rgba(19, 10, 9, 0.25); animation: ft-pip-cost 0.7s steps(2, jump-none) infinite; }
-.fight-turn.mine .ft-move.over .ft-track i.cost { background: linear-gradient(180deg, #ffc0b0 0, #ff6046 45%, #a02a1a 100%); }
+.fight-turn.mine .ft-walk.over .ft-track i.cost { background: linear-gradient(180deg, #ffc0b0 0, #ff6046 45%, #a02a1a 100%); }
 @keyframes ft-pip-cost { from { opacity: 1; } to { opacity: 0.35; } }
 /* More than can be drawn as chevrons: one bar. */
 .ft-track.plain { padding: 2px; }
 .ft-track.plain span { display: block; height: 100%; background: linear-gradient(180deg, #fff0b8 0, #f2c552 42%, #b9822a 100%); transition: width 0.25s; }
 /* A course charted: a second, slighter run in the mark's red. */
-.ft-course { display: flex; align-items: center; gap: 6px; margin-top: -1px; font-family: var(--font-head); font-size: 11px; line-height: 1; letter-spacing: 0.07em; color: #ff9c8c; white-space: nowrap; }
-.ft-course .ft-track { flex: 1; height: 10px; padding: 1px 2px; }
+.ft-course { display: inline-flex; align-items: center; gap: 5px; color: #ff7a6a; }
+.ft-course-x { font: bold 13px/1 ui-monospace, Consolas, monospace; }
+/* With a course charted the line is full: the run of bought steps gives up its place (their number still says them). */
+.ft-walk.has-course > .ft-track { display: none; }
+.ft-walk .ft-course .ft-track { width: 46px; height: 11px; }
 .ft-course .ft-track i.on { background: linear-gradient(180deg, #ffb0a0 0, #ff5a5a 45%, #a02626 100%); }
-.ft-course b { font: bold 11px/1 ui-monospace, Consolas, monospace; color: #ffb0a0; }
-.ft-move.has-course { gap: 2px; }
-.ft-move.has-course .ft-move-head { height: 22px; }
-.ft-move.has-course .ft-move-num b { font-size: 25px; line-height: 22px; }
-.ft-move.has-course .ft-track:not(.ft-course .ft-track) { height: 15px; }
+.ft-walk .ft-course > b { font: bold 14px/14px ui-monospace, Consolas, monospace; color: #ffb0a0; }
 
 /* End Turn: a brass-bound block at the bar's right end, the clock in a ring on its left. */
 .fight-ui button.ft-end {
-  position: relative; align-self: center; flex: none; width: 176px; height: 60px; display: flex; align-items: center; gap: 9px; padding: 0 10px 0 7px;
+  position: relative; align-self: center; flex: none; width: 172px; height: 62px; display: flex; align-items: center; gap: 9px; padding: 0 10px 0 7px;
   color: #8d7462; background: linear-gradient(180deg, #3d2a24, #261714); border: 3px solid var(--f-out); border-radius: 0;
   box-shadow: inset 0 2px 0 rgba(255, 226, 190, 0.12), inset 0 -3px 0 rgba(0, 0, 0, 0.4), 0 0 0 1px var(--f-rim); text-shadow: none; opacity: 1; cursor: default;
 }
@@ -588,6 +616,9 @@
 .fight-loot .win-plate { max-width: calc(100% + 30px); overflow: hidden; text-overflow: ellipsis; }
 /* The bag's own close button, held to its corner here whatever order the stylesheets load in. */
 .fight-loot .bag-close { position: absolute; top: -6px; right: -6px; width: 30px; height: 30px; padding: 0; font-size: 20px; line-height: 1; z-index: 5; }
+/* Whose it is: a body or a chest is everyone's, first come first served (gold, as the ring round it on the map); the spoils are your own share. */
+.loot-share { margin: 0; text-align: center; font-size: 11px; line-height: 1.25; letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted, #d2a585); }
+.loot-share.shared { color: var(--gold, #f4c64e); }
 .loot-sub { margin: 0; text-align: center; font-family: var(--font-book); font-size: 14px; line-height: 1.25; color: var(--muted, #d2a585); }
 .loot-blocked { margin: 0; padding: 4px 8px; font-size: 12px; line-height: 1.35; color: #ffb3a8; background: rgba(74, 26, 24, 0.6); border: 2px solid var(--bad, #ff8a7a); }
 .loot-wrap { align-self: center; border: 3px solid var(--out, #3a1d20); background: #1b110f; }
@@ -617,6 +648,34 @@
 .loot-card .loot-how { color: var(--f-brass-hi); font-size: 12px; }
 /* The sea bag while loot is dragged over it: it is where the loot goes. */
 .bag.panel.loot-over { outline: 3px solid var(--good, #86d86c); outline-offset: 4px; box-shadow: 0 0 0 9px rgba(134, 216, 108, 0.16), 0 9px 0 16px rgba(0, 0, 0, 0.45); }
+
+/* ==========================================================================
+   A phone held upright: the turn bar is two rows (whose turn and End Turn
+   over, the points and the walking under), so the points are never squeezed
+   out, and what stands above it stands clear of the taller bar.
+   ========================================================================== */
+@container fight-turn (max-width: 600px) {
+  .fight-turn-bar { flex-wrap: wrap; height: auto; gap: 5px 8px; padding: 0 7px 6px 0; }
+  .ft-plate { flex: 1 1 0; width: auto; min-width: 0; height: 54px; margin: -7px 0 0 -7px; }
+  .ft-plate-in { padding: 0 24px 2px 12px; }
+  .ft-plate strong, .fight-turn.waiting .ft-plate strong { font-size: 21px; }
+  .fight-turn.mine .ft-plate strong { font-size: 27px; }
+  .fight-ui button.ft-end { align-self: flex-start; width: 150px; height: 46px; margin-top: 3px; gap: 7px; padding: 0 8px 0 5px; }
+  .ft-end-text strong { font-size: 22px; }
+  .ft-ring { width: 36px; height: 36px; }
+  .ft-ring b { font-size: 14px; }
+  .ft-res { order: 3; flex: 1 0 100%; padding-left: 9px; }
+  .ft-sockets { justify-content: flex-start; gap: 7px; }
+  .ft-sockets i { width: 36px; height: 36px; }
+  .ft-walk { gap: 6px; font-size: 12px; }
+  .ft-tip { left: 0; translate: 0 4px; max-width: min(270px, 100cqw); }
+  :hover > .ft-tip, :focus-visible > .ft-tip { translate: 0 0; }
+}
+@media (max-width: 640px) {
+  .fight-ui { --f-turn-h: var(--fight-turn-h, 180px); }
+  /* The log keeps to the left, clear of the camera's buttons down the right edge. */
+  .fight-log { right: auto; left: 12px; }
+}
 
 @media (prefers-reduced-motion: reduce) {
   .fight-turn *, .fight-turn *::before, .fight-turn *::after, .fight-turn-bar, .fight-turn-bar::before { animation: none !important; }

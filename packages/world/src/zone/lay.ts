@@ -34,6 +34,7 @@ import { ENEMIES } from "../content";
 import type { Biome, Clime, Poi, Tile } from "../map";
 import { makeRng, seedFromString, type Rng } from "../rng";
 import { HEX_DIRS, MAX_ELEV } from "./geometry";
+import { layInside } from "./indoors";
 import { threatExtras } from "./kit";
 import { modsOf } from "./mods";
 import { propOf } from "./props";
@@ -148,7 +149,11 @@ export function layZone(seed: string, asked: ZoneOptions): Laid {
   const clime: Clime | undefined = options.clime;
   const siteId: SiteId = options.site && options.site in SITES ? (options.site as SiteId) : siteFor(options.biome, clime, "landfall", makeRng(seedFromString(`site|${seed}`)).next());
   const site: SiteDef = SITES[siteId];
-  const sea = backdropOf(siteId, clime) === "sea";
+  // Under a roof or under ground there is no land to lay: rooms and passages are (indoors.ts).
+  if (site.inside) return layInside(seed, options, siteId, grid);
+  // What lies round the land: on a shore, the sea, whatever the place is.
+  const backdrop = backdropOf(siteId, clime, options.biome);
+  const sea = backdrop === "sea";
   const wavy = noiseOf(seedFromString(`shape|${seed}`));
   const { cols, rows } = grid;
   const col = (p: HexPos) => p.q + Math.floor(p.r / 2);
@@ -342,7 +347,9 @@ export function layZone(seed: string, asked: ZoneOptions): Laid {
       const [q, r] = key.split(",").map(Number);
       tiles.set(key, { q, r, biome: "water", h: 0, elev: 0 });
     }
-    for (const t of tiles.values()) if (t.biome === "plains" && (t.elev ?? 0) === 0 && around(t).some((n) => at(n)?.biome === "water")) t.biome = "sand";
+    // A beach, not a lawn with a sandy edge: the low ground is sand for a couple of hexes in from the water.
+    const beach = (t: Tile) => disk(t, 2).some((n) => at(n)?.biome === "water" && (hexDistance(n, t) === 1 || wavy(page(t).x * 0.45 + 17, page(t).y * 0.45) > 0.38));
+    for (const t of [...tiles.values()]) if (t.biome === "plains" && (t.elev ?? 0) === 0 && beach(t)) t.biome = "sand";
   }
   // Pools on the low ground (lava, in the ashlands): never where the party arrives.
   const lowland = (p: HexPos) => open(p) && elev(p) === 0 && at(p)!.biome === "plains" && far(p) > clear + 1 && around(p).every((n) => elev(n) <= 1);
@@ -716,7 +723,9 @@ export function layZone(seed: string, asked: ZoneOptions): Laid {
     for (const p of piece.chests) chestKeys.add(posKey(p));
   }
   const standable = (p: HexPos) => !solidAt(p) && !chestKeys.has(posKey(p)) && !taken.has(posKey(p)) && far(p) > clear + ALERT + 1;
-  const size = Math.max(2, Math.min(8, options.party + 1 + threatExtras(options.threat) + mods.extras));
+  // How many stand in a band: about one to a hero (one more for a big party), more as the threat rises, never
+  // fewer than two. What makes a map a long fight is how many bands there are, and that they come to each other's aid.
+  const size = Math.max(2, Math.min(8, options.party + threatExtras(options.threat) + mods.extras + (options.party >= 3 ? 1 : 0)));
   const factions = factionsOf(siteId, clime);
   const groups: (LaidGroup & { centre: HexPos })[] = [];
   /** Post a band of `kinds` (each with its part) at a place: its own posts by part first, then whatever open ground is nearest. */
@@ -848,8 +857,18 @@ export function layZone(seed: string, asked: ZoneOptions): Laid {
 
   // ---------- the finish ----------
 
+  // The mire's low ground is bog: mud along the water's edge, and in the hollows between.
+  if (clime === "mire") {
+    for (const t of tiles.values()) {
+      if (t.biome !== "plains" || (t.elev ?? 0) !== 0) continue;
+      const { x, y } = page(t);
+      if (around(t).some((n) => at(n)?.biome === "water") || wavy(x * 0.4 + 31, y * 0.4 + 7) > 0.6) t.biome = "mud";
+    }
+  }
   for (const t of tiles.values()) {
     t.elev = Math.max(0, Math.min(MAX_ELEV, t.elev ?? 0));
+    // The ground underfoot is the climate's own. In the dunes all open ground is sand.
+    if (clime === "dunes" && t.biome === "plains") t.biome = "sand";
     t.h = t.biome === "water" ? 0.05 : (GROUND_H[t.biome] ?? 0.3) + t.elev * 0.42 + rng.next() * 0.04;
     if (clime) t.clime = clime;
     if (!t.ladder) delete t.ladder;
@@ -878,6 +897,6 @@ export function layZone(seed: string, asked: ZoneOptions): Laid {
     start,
     groups: groups.filter((g) => g.kinds.length > 0).map(({ id, kinds, posts }) => ({ id, kinds, posts })),
     ...(surfaces && Object.keys(surfaces).length > 0 ? { surfaces } : {}),
-    scene: { site: siteId, backdrop: backdropOf(siteId, clime) },
+    scene: { site: siteId, backdrop },
   };
 }

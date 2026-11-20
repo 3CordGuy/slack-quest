@@ -21,7 +21,8 @@
 //
 // RollToast is the one newest roll shown large for a moment over the turn
 // bar: the d20 tumbles in and lands on its number, then the sum, then how it
-// came out.
+// came out. It is the roll's card: it takes the same `Roll` the view already
+// shows as a blow lands (ZoneView's `roll`), so it stands in that card's place.
 
 import { memo, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import type { Roll, Rolled } from "@gantt-quest/world";
@@ -46,6 +47,8 @@ export interface CombatLogProps {
   entries: LogEntry[];
   open: boolean;
   onToggle: () => void;
+  /** More classes for the log's own box: "above" holds it over the rack and the turn bar whatever room there is beside them. */
+  className?: string;
 }
 
 /** How a roll came out, in a word, and how it is coloured: "ok", "no", "crit" (a critical hit) or "flat" (nothing to beat). */
@@ -168,7 +171,7 @@ const Row = memo(function Row({ e, fresh }: { e: LogEntry; fresh: boolean }) {
   }
 });
 
-export function CombatLog({ entries, open, onToggle }: CombatLogProps) {
+export function CombatLog({ entries, open, onToggle, className }: CombatLogProps) {
   const body = useRef<HTMLDivElement>(null);
   /** At the newest line: new ones are followed. Off once the player scrolls up to read. */
   const stuck = useRef(true);
@@ -203,7 +206,7 @@ export function CombatLog({ entries, open, onToggle }: CombatLogProps) {
   };
 
   return (
-    <section className={`fight-ui fight-log ${open ? "open" : "shut"}`} aria-label="Combat log">
+    <section className={`fight-ui fight-log ${open ? "open" : "shut"} ${className ?? ""}`} aria-label="Combat log">
       <button type="button" className="fl-head" aria-expanded={open} onClick={onToggle} title={open ? "Fold the log away" : "Open the combat log"}>
         <span className="fl-title">Combat Log</span>
         {open ? <span className="fl-count">{entries.length ? `${entries.length} line${entries.length === 1 ? "" : "s"}` : ""}</span> : <span className="fl-last">{last ? logLine(last) : "Nothing yet"}</span>}
@@ -240,7 +243,10 @@ export interface RollToastProps {
   who?: string;
   /** The damage or healing dice that followed it, shown under the outcome. */
   dice?: Rolled | null;
-  /** How long it stays before it fades by itself, in milliseconds (the view may take it away sooner by passing null). */
+  /**
+   * How long it stays before it fades by itself, in milliseconds (the view may take it away sooner by passing null).
+   * The default has it faded out just inside the 2.6 seconds the view keeps a roll's card up for.
+   */
   hold?: number;
 }
 
@@ -260,7 +266,7 @@ function BigD20({ n, cls }: { n: number; cls: string }) {
   );
 }
 
-export function RollToast({ roll, who, dice, hold = 2800 }: RollToastProps) {
+export function RollToast({ roll, who, dice, hold = 2200 }: RollToastProps) {
   /** The faces the dice show while they tumble, then what they rolled. */
   const [faces, setFaces] = useState<number[]>(roll?.d20 ?? []);
   const [phase, setPhase] = useState<"roll" | "landed" | "out" | "gone">("roll");

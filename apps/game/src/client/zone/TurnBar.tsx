@@ -1,25 +1,34 @@
 // The turn bar: what a turn has to spend, on one board directly over the
-// bottom rack while a fight is on.
+// bottom rack while a fight is on. Everything in a fight is paid for in
+// Action Points, so they are what the board is about.
 //
-//   [ YOUR TURN  ]   (Action)  /Bonus\   Movement  4 / 6  [-3]   [ (42) End Turn ]
-//   [ Mira       >                        >>>>>>......           [      Round 2 ]
+//   [ YOUR TURN  ]   4/6   (o)(o)(o)(o) :(o)(o)             [ (42) End Turn ]
+//   [ Mira       >   AP    boot 3 steps left >>>  +2 per AP  11 in reach    [  Round 2 ]
 //
-// From the left: a pennant saying whose turn it is; the Action as a round
-// token and the Bonus action as a three-cornered one (lit while it is there
-// to spend, dark and struck through once spent); the movement left as a run
-// of chevrons with its number; and End Turn, with the turn's clock in a ring.
+// From the left: a pennant saying whose turn it is; the Action Points, as a
+// number and a row of brass sockets, each holding a lit orb while its point
+// is there to spend and standing dark once it is spent; under them, what
+// those points mean for walking; and End Turn, with the turn's clock in a ring.
+//
+// A fresh turn gives `apTurn` points, and what was not spent last turn is kept
+// on top of them, up to `apMax`. The sockets past `apTurn` are the ones only
+// saved points can fill: they are bound in rope, and their orbs are gold.
+//
+// Movement is bought with the same points, a stride at a time: the line under
+// the sockets says how many steps are bought and not yet walked, how many one
+// more point buys, and how far all of it would carry you.
 //
 // When the turn is yours the board is rimmed in gold and the pennant is gold
 // parchment reading "Your turn". When it is not, the pennant is a dull board
-// reading "Waiting for <name>", the tokens are greyed and End Turn is dead.
+// reading "Waiting for <name>", the sockets are greyed and End Turn is dead.
 //
-// Spending is shown as it happens: a token flares, turns on its edge and
-// comes back dark; a chevron flashes out. `moveCost` (the move under the
-// pointer) hollows the chevrons it would spend and shows the number, in red
-// when it is more than is left. Nothing here knows the rules: it draws what
-// it is handed.
+// Spending is shown as it happens: an orb flares and goes out, and a ring of
+// its colour blows off the socket. `apCost` (what the thing aimed, or the walk
+// under the pointer, would take) sets the orbs it would spend blinking, in red
+// when it is more than is left; `moveCost` does the same for the steps bought.
+// Nothing here knows the rules: it draws what it is handed.
 
-import { useId, useRef, type CSSProperties, type ReactNode } from "react";
+import { useRef, type CSSProperties, type ReactNode } from "react";
 import "./fight.css";
 
 export interface TurnBarProps {
@@ -30,13 +39,16 @@ export interface TurnBarProps {
   /** Who everyone is waiting on, when it is not `myTurn`. */
   waitingFor?: string;
   round: number;
-  /** The Action and the Bonus action: there to spend, or spent. */
-  action: boolean;
-  bonus: boolean;
-  /** Movement left, and what a turn starts with. */
+  /** Action Points left, the most that can be held, and how many a fresh turn gives. */
+  ap: number;
+  apMax: number;
+  apTurn: number;
+  /** AP the thing being aimed or hovered would take (an ability picked, or the walk under the pointer): those points pulse; more than `ap` shows in the warning colour. */
+  apCost?: number | null;
+  /** Steps of movement already bought and not yet walked, and how many steps 1 AP buys (0: cannot move this turn). */
   move: number;
-  moveMax: number;
-  /** What the move under the pointer would cost, to preview; null or absent with none. */
+  stride: number;
+  /** Steps the walk under the pointer would take. */
   moveCost?: number | null;
   /** A charted course: movement good only for steps toward its mark. */
   course?: { now: number; max: number };
@@ -48,77 +60,10 @@ export interface TurnBarProps {
   extra?: ReactNode;
 }
 
-/** More chevrons than this and the movement is drawn as one bar. */
-const MAX_PIPS = 24;
+/** More chevrons than this and a run of steps is drawn as one bar. */
+const MAX_PIPS = 12;
 const URGENT = 15;
 const RING = 2 * Math.PI * 18;
-
-/** The Action: a round brass-rimmed token with a sword on green enamel. */
-function ActionArt() {
-  const id = useId();
-  return (
-    <svg viewBox="0 0 56 56" aria-hidden>
-      <defs>
-        <radialGradient id={`${id}f`} cx="0.36" cy="0.28" r="0.85">
-          <stop offset="0" stopColor="#e2ffd8" />
-          <stop offset="0.38" stopColor="#7fd88c" />
-          <stop offset="1" stopColor="#1f6b3a" />
-        </radialGradient>
-        <linearGradient id={`${id}r`} x1="0" y1="0" x2="1" y2="1">
-          <stop offset="0" stopColor="#f6e2a1" />
-          <stop offset="0.45" stopColor="#c9a24a" />
-          <stop offset="0.7" stopColor="#6f5222" />
-          <stop offset="1" stopColor="#c9a24a" />
-        </linearGradient>
-      </defs>
-      <circle className="ft-rim" cx="28" cy="28" r="26" fill={`url(#${id}r)`} stroke="#1c0d0e" strokeWidth="2" />
-      <circle className="ft-face" cx="28" cy="28" r="20" fill={`url(#${id}f)`} stroke="#1c0d0e" strokeWidth="1.5" />
-      <path className="ft-glyph" d="M28 10.5 31.6 16V30H36.5V33.6H30.2V40.2A2.9 2.9 0 1 1 25.8 40.2V33.6H19.5V30H24.4V16Z" />
-      <ellipse className="ft-shine" cx="21" cy="17" rx="10" ry="4.6" fill="#fff" opacity="0.3" transform="rotate(-28 21 17)" />
-      <line className="ft-strike" x1="11" y1="45" x2="45" y2="11" />
-    </svg>
-  );
-}
-
-/** The Bonus action: three-cornered, a spark on orange enamel. */
-function BonusArt() {
-  const id = useId();
-  return (
-    <svg viewBox="0 0 56 56" aria-hidden>
-      <defs>
-        <radialGradient id={`${id}f`} cx="0.42" cy="0.4" r="0.8">
-          <stop offset="0" stopColor="#ffe9c4" />
-          <stop offset="0.4" stopColor="#f59a4e" />
-          <stop offset="1" stopColor="#8a3a12" />
-        </radialGradient>
-        <linearGradient id={`${id}r`} x1="0" y1="0" x2="1" y2="1">
-          <stop offset="0" stopColor="#f6e2a1" />
-          <stop offset="0.45" stopColor="#c9a24a" />
-          <stop offset="0.7" stopColor="#6f5222" />
-          <stop offset="1" stopColor="#c9a24a" />
-        </linearGradient>
-      </defs>
-      <path className="ft-rim" d="M28 4 53 49H3Z" fill={`url(#${id}r)`} stroke="#1c0d0e" strokeWidth="2" strokeLinejoin="round" />
-      <path className="ft-face" d="M28 14.5 44.5 44H11.5Z" fill={`url(#${id}f)`} stroke="#1c0d0e" strokeWidth="1.5" strokeLinejoin="round" />
-      <path className="ft-glyph" d="M28 23.5 30.1 31.4 37 33.5 30.1 35.6 28 42.5 25.9 35.6 19 33.5 25.9 31.4Z" />
-      <path className="ft-shine" d="M28 17.5 33 26.5H23Z" fill="#fff" opacity="0.28" />
-      <line className="ft-strike" x1="12" y1="50" x2="44" y2="14" />
-    </svg>
-  );
-}
-
-function Token({ kind, on, label, tip }: { kind: "action" | "bonus"; on: boolean; label: string; tip: string }) {
-  return (
-    <div className={`ft-token ${kind} ${on ? "on" : "spent"}`} role="img" aria-label={`${label}: ${on ? "available" : "spent"}`} tabIndex={0}>
-      <span className="ft-token-art">{kind === "action" ? <ActionArt /> : <BonusArt />}</span>
-      <span className="ft-token-label">{label}</span>
-      <span className="ft-tip" role="tooltip">
-        <b>{label} · {on ? "ready" : "spent"}</b>
-        <span>{tip}</span>
-      </span>
-    </div>
-  );
-}
 
 /** A run of chevrons: `now` lit of `max`, the last `cost` of the lit ones marked as about to go. */
 function Track({ now, max, cost = 0 }: { now: number; max: number; cost?: number }) {
@@ -133,7 +78,9 @@ function Track({ now, max, cost = 0 }: { now: number; max: number; cost?: number
   );
 }
 
-export function TurnBar({ myTurn, actor, waitingFor, round, action, bonus, move, moveMax, moveCost, course, seconds, onEnd, extra }: TurnBarProps) {
+const steps = (n: number) => `${n} step${n === 1 ? "" : "s"}`;
+
+export function TurnBar({ myTurn, actor, waitingFor, round, ap, apMax, apTurn, apCost, move, stride, moveCost, course, seconds, onEnd, extra }: TurnBarProps) {
   // How long this turn's clock was when it was first seen, for how much of the ring is left.
   const clock = useRef({ key: "", full: 0 });
   const key = `${myTurn}|${actor}|${waitingFor ?? ""}|${round}`;
@@ -141,8 +88,16 @@ export function TurnBar({ myTurn, actor, waitingFor, round, action, bonus, move,
   const left = seconds === null || clock.current.full <= 0 ? 1 : Math.max(0, Math.min(1, seconds / clock.current.full));
   const urgent = seconds !== null && seconds <= URGENT;
 
-  const cost = myTurn && moveCost != null && moveCost > 0 ? moveCost : null;
-  const over = cost !== null && cost > move;
+  const sockets = Math.max(apMax, ap, 0);
+  const cost = myTurn && apCost != null && apCost > 0 ? apCost : null;
+  const over = cost !== null && cost > ap;
+  /** How far everything left would carry them: what is bought, and what every point still held would buy. */
+  const reach = move + Math.max(0, ap) * stride;
+  const walk = myTurn && moveCost != null && moveCost > 0 ? moveCost : null;
+  const far = walk !== null && walk > reach;
+  const stuck = stride <= 0 && move <= 0;
+  /** What ending the turn now would carry into the next: a fresh turn's points fill up to `apMax` and no further. */
+  const kept = Math.max(0, Math.min(ap, apMax - apTurn));
 
   return (
     <div className={`fight-ui fight-turn ${myTurn ? "mine" : "waiting"} ${urgent ? "urgent" : ""}`} role="group" aria-label={myTurn ? `Your turn: ${actor}, round ${round}` : `Round ${round}: waiting for ${waitingFor ?? "the others"}`}>
@@ -164,25 +119,54 @@ export function TurnBar({ myTurn, actor, waitingFor, round, action, bonus, move,
         </div>
 
         <div className="ft-res">
-          <Token kind="action" on={action} label="Action" tip={action ? "One a turn: an attack, most abilities, a dash, a shove." : "Used for this turn. It comes back when your next turn starts."} />
-          <Token kind="bonus" on={bonus} label="Bonus" tip={bonus ? "A Bonus action: one a turn, for the quick things marked with it." : "Used for this turn. It comes back when your next turn starts."} />
-          <div className={`ft-move ${cost !== null ? "preview" : ""} ${over ? "over" : ""} ${move <= 0 ? "none" : ""} ${course ? "has-course" : ""}`} tabIndex={0} aria-label={`Movement: ${move} of ${moveMax} left${course ? `, and ${course.now} of ${course.max} toward the charted course` : ""}`}>
-            <div className="ft-move-head">
-              <span className="ft-move-label">Movement</span>
-              {cost !== null && <span className="ft-move-cost" title={over ? `${cost - move} more than you have left` : `${move - cost} left after this move`}>−{cost}</span>}
-              <span className="ft-move-num"><b key={move}>{move}</b><i>/ {moveMax}</i></span>
+          {/* The points: the number, and a socket for each that can be held. */}
+          <div className={`ft-ap ${cost !== null ? "preview" : ""} ${over ? "over" : ""} ${ap <= 0 ? "none" : ""}`} tabIndex={0} role="img" aria-label={`Action Points: ${ap} of ${apMax}${cost !== null ? `; this would take ${cost}` : ""}`}>
+            <div className="ft-ap-num">
+              <span><b key={ap}>{ap}</b><i>/{apMax}</i></span>
+              {cost !== null ? <em className="ft-ap-cost" title={over ? `${cost - ap} more than you have` : `${ap - cost} left after`}>−{cost}</em> : <small>AP</small>}
             </div>
-            <Track now={move} max={moveMax} cost={cost === null ? 0 : Math.min(cost, move)} />
-            {course && (
-              <div className="ft-course">
-                <span>Course</span>
-                <Track now={course.now} max={course.max} />
-                <b>{course.now} / {course.max}</b>
-              </div>
+            <div className="ft-sockets">
+              {Array.from({ length: sockets }, (_, i) => (
+                <i
+                  key={i}
+                  className={`${i < ap ? "on" : "off"} ${i >= apTurn ? "bank" : ""} ${i === apTurn ? "first-bank" : ""} ${cost !== null && i < ap && i >= ap - cost ? "cost" : ""}`}
+                  style={{ "--i": i } as CSSProperties}
+                />
+              ))}
+            </div>
+            <span className="ft-tip" role="tooltip">
+              <b>Action Points · {ap} of {apMax}</b>
+              <span>Everything is paid for in them: abilities, items, and every stride you walk.</span>
+              <span>You get {apTurn} at the start of each turn. What you do not spend is kept for the next, up to {apMax}: the roped sockets hold only points saved that way.</span>
+            </span>
+          </div>
+
+          {/* What the points mean for walking. */}
+          <div className={`ft-walk ${walk !== null ? "preview" : ""} ${far ? "over" : ""} ${stuck ? "stuck" : ""} ${course ? "has-course" : ""}`} tabIndex={0} aria-label={stuck ? "Cannot move this turn" : `Movement: ${steps(move)} bought and left; 1 AP buys ${steps(stride)}; ${steps(reach)} in reach${course ? `; ${course.now} of ${course.max} toward the charted course` : ""}`}>
+            <svg className="ft-boot" viewBox="0 0 16 16" aria-hidden><path d="M5 1h5v7.2l3.6 1.5c.9.4 1.4 1.2 1.4 2.1V13H2v-2.3c0-.6.3-1.1.8-1.5L5 7.6z" /><path d="M2 14h13v2H2z" opacity="0.7" /></svg>
+            {stuck ? (
+              <span className="ft-walk-none">Cannot move this turn</span>
+            ) : (
+              <>
+                <span className="ft-walk-left"><b key={move}>{move}</b> {move === 1 ? "step" : "steps"}<span className="ft-long"> left</span></span>
+                {walk !== null && <em className="ft-walk-cost" title={far ? `${walk - reach} further than you can go` : `${reach - walk} in reach after`}>−{walk}</em>}
+                <Track now={move} max={Math.max(move, stride)} cost={walk === null ? 0 : Math.min(walk, move)} />
+                <span className="ft-walk-rate">{stride > 0 ? <>+{stride}<span className="ft-long"> per</span><span className="ft-short">/</span> AP</> : "no more"}</span>
+                <span className="ft-walk-reach"><b>{reach}</b><span className="ft-long"> in</span> reach</span>
+                {course && (
+                  <span className="ft-course">
+                    <span className="ft-course-x" title="Charted course: steps toward the red X">✕</span>
+                    <Track now={course.now} max={course.max} />
+                    <b>{course.now}</b>
+                  </span>
+                )}
+              </>
             )}
             <span className="ft-tip" role="tooltip">
-              <b>Movement · {move} of {moveMax} left</b>
-              <span>Each hex costs one; rough ground costs more. Spend it in pieces, before and after you act.</span>
+              <b>Movement · {stuck ? "none this turn" : `${steps(reach)} in reach`}</b>
+              {stuck
+                ? <span>You cannot move this turn.</span>
+                : <span>{steps(move)} bought and not yet walked: they go first, and are lost when the turn ends.{stride > 0 ? ` Each Action Point buys ${steps(stride)} more.` : " Nothing buys more this turn."} Rough ground costs more than one.</span>}
               {course && <span>Course: {course.now} of {course.max} more, good only for steps that bring you nearer the red X. It is spent first.</span>}
             </span>
           </div>
@@ -200,7 +184,7 @@ export function TurnBar({ myTurn, actor, waitingFor, round, action, bonus, move,
           </span>
           <span className="ft-end-text">
             <strong>End Turn</strong>
-            <small>{!onEnd ? "not your turn" : urgent ? "Hurry!" : `Round ${round}`}</small>
+            <small>{!onEnd ? "not your turn" : urgent ? "Hurry!" : kept > 0 ? (kept < ap ? `saves ${kept} of ${ap} AP` : `saves ${kept} AP`) : `Round ${round}`}</small>
           </span>
         </button>
       </div>

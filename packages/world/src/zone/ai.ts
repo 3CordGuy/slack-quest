@@ -1,11 +1,16 @@
 // The enemy's turn. An enemy plays by the heroes' rules: it has Action
 // Points to spend on moving and striking, it is struck at if it walks out
-// of someone's reach, and fire burns it. It looks at every hex it could
-// end on and asks what it could do from there: how hard it could hit and
-// whom, whether getting there crosses fire or poison or draws a blow, and
-// (for those that shoot) whether it is high ground with nobody breathing
-// down its neck. Then it goes to the best one and attacks, again and again
-// as its AP allow.
+// of someone's reach, fire burns it, and it cannot walk through a hero: a
+// hex one of them holds is closed to it, as theirs are to them. (It shares
+// a hex with one of its own, as heroes do, and so brings two to a gap.) It
+// looks at every hex it could end on and asks what it could do from there:
+// how hard it could hit and whom, whether getting there crosses fire or
+// poison or draws a blow, and (for those that shoot) whether it is high
+// ground with nobody breathing down its neck. Then it goes to the best one
+// and attacks, again and again as its AP allow.
+//
+// It does not go far in a turn: ENEMY_MOVE_AP of its AP at the most go on
+// movement, whatever else it does, and the rest are kept if not struck with.
 //
 // It knows the lie of the land. A ladder is a way up like any other, and
 // a blow struck down one is better than a blow struck up it. One that can
@@ -14,14 +19,20 @@
 // or a pit behind them, will try to shove them over it before it does
 // anything else.
 //
-// If nothing it can reach lets it attack, it spends all it has getting
-// closer. Taunted, it looks only at the one who taunted it first, and at
-// the rest only if it can get no blow in on them this turn.
+// If nothing it can reach lets it attack, it heads for the nearest place
+// from which it could, by the walking of it, round whoever holds the ground
+// against it. Where the heroes hold the only way (a doorway, a bridge) and
+// there is no room left before them, it comes up behind its own as near as
+// it can get and waits its chance; and if what holds the way is someone it
+// has no quarrel with just now (a hero lying there down, or one not in the
+// fight), it leaps over them, where there is ground beyond to land on.
+// Taunted, it looks only at the one who taunted it first, and at the rest
+// only if it can get no blow in on them this turn.
 
 import { hexDistance, posKey, type HexPos } from "@gantt-quest/core";
-import { checkCommon, doCommon, enemyAct, leavesReach, shiftInto, shoveDest, walk } from "./combat";
+import { apForMove, checkCommon, doCommon, enemyAct, leavesReach, shiftInto, shoveDest, walk, walkAp } from "./combat";
 import { attackContext, defenceOf, has, saveBonus, unseen, type Ctx } from "./engine";
-import { blast, close, elevOf, flies, inFight, pathIn, reachFrom, seesFor, strikes, zoneReach } from "./geometry";
+import { blast, close, elevOf, flies, heldAgainst, inFight, pathIn, reachFrom, sameHex, seesFor, stepCost, strikes, zoneReach, type Reached } from "./geometry";
 import { AP_MAX, COMMON_ACTIONS, ENEMY_BURST, ENEMY_KIT, ITEM_AP, enemyShove, enemyStrikes, jumpRange, type EnemyStrike } from "./kit";
 import { modsOf } from "./mods";
 import { diceAverage, hitChance } from "./rules";
@@ -84,7 +95,7 @@ function taunter(enemy: Unit, heroes: Unit[]): Unit | undefined {
  */
 function shoveWorth(state: ZoneState, enemy: Unit, hero: Unit): number {
   if (!strikes(state.map, enemy.pos, hero.pos) || has(hero, "prone")) return 0;
-  const into = shiftInto(state, hero.pos, shoveDest(state, enemy.pos, hero.pos, hero), hero);
+  const into = shiftInto(state, hero.pos, shoveDest(enemy.pos, hero.pos), hero);
   if (!into || into.how === "open") return 0;
   // It has to win the shove, and then they have to fail to catch the edge (about an even chance).
   const win = hitChance(enemyShove(enemy.kind), 10 + Math.max(saveBonus(hero, "str"), saveBonus(hero, "agi")), 0);
@@ -92,18 +103,25 @@ function shoveWorth(state: ZoneState, enemy: Unit, hero: Unit): number {
   return win * 0.5 * prize;
 }
 
-/** Shove whoever is best shoved over an edge from where the enemy stands, if anyone is worth the AP. */
-function tryShove(ctx: Ctx, enemy: Unit, budget: Budget, heroes: Unit[]): void {
+/** Shove whoever is best shoved over an edge from where the enemy stands, if anyone is worth the AP. Says whether it did. */
+function tryShove(ctx: Ctx, enemy: Unit, budget: Budget, heroes: Unit[]): boolean {
   const cost = COMMON_ACTIONS.shove.cost;
-  if (budget.ap < cost || !ENEMY_KIT[enemy.kind]?.shoves || enemy.down || has(enemy, "prone")) return;
+  if (budget.ap < cost || !ENEMY_KIT[enemy.kind]?.shoves || enemy.down || has(enemy, "prone")) return false;
   const best = heroes
     .filter((h) => !h.down && !unseen(h))
     .map((h) => ({ h, worth: shoveWorth(ctx.state, enemy, h) }))
     .sort((a, b) => b.worth - a.worth || a.h.id.localeCompare(b.h.id))[0];
-  if (!best || best.worth < 1.5) return;
+  if (!best || best.worth < 1.5) return false;
   budget.ap -= cost;
   doCommon(ctx, enemy, "shove", { target: best.h.id }, budget);
+  return true;
 }
+
+/**
+ * How far ahead an enemy with nothing to strike this turn looks for a way to somewhere it could, in movement: near
+ * at hand first, and then as far as any map goes.
+ */
+const APPROACH_LOOKS = [24, 400];
 
 interface Plan {
   path: HexPos[];
@@ -117,7 +135,8 @@ interface Plan {
  * Play one enemy's turn. Anyone beside it with their back to a drop is shoved first, if it is the shoving kind.
  * Then, while it has the AP for an attack: move to the best hex it can reach with the AP an attack leaves (leaping
  * a ledge, if that is the only way to a blow), and attack from it, again and again as its AP allow. With nothing
- * in reach, it spends all it has getting closer. What AP it has left over it keeps for its next turn.
+ * in reach, it goes toward where there would be (approach). Either way no more than ENEMY_MOVE_AP of its AP go on
+ * movement in the turn (Budget.walk, which walkAp reckons with). What AP it has left over it keeps for its next turn.
  */
 export function enemyTurn(ctx: Ctx, enemy: Unit, budget: Budget): void {
   const { state } = ctx;
@@ -141,7 +160,7 @@ export function enemyTurn(ctx: Ctx, enemy: Unit, budget: Budget): void {
    */
   const chooseAmong = (targets: Unit[], strike: boolean): Plan | null => {
     const nearest = (pos: HexPos) => Math.min(...targets.map((h) => hexDistance(pos, h.pos)));
-    const movement = budget.move + Math.max(0, budget.ap - (strike ? ITEM_AP.attack : 0)) * budget.stride;
+    const movement = budget.move + walkAp(budget, strike ? ITEM_AP.attack : 0) * budget.stride;
     // Two looks at the ground: one that will not set foot in fire or poison, and one that will.
     const clean = zoneReach(state, enemy, movement, air || harmful.size === 0 ? undefined : harmful);
     const any = air || harmful.size === 0 ? clean : zoneReach(state, enemy, movement);
@@ -185,7 +204,7 @@ export function enemyTurn(ctx: Ctx, enemy: Unit, budget: Budget): void {
     }
     // No blow to be had on foot: is there a ledge to leap that would give one? (A Jump, and the AP it takes.)
     if (best && !best.attacks && strike && !air && budget.ap >= ITEM_AP.attack + jumpAp) {
-      const afoot = budget.move + (budget.ap - ITEM_AP.attack - jumpAp) * budget.stride;
+      const afoot = budget.move + walkAp(budget, ITEM_AP.attack + jumpAp) * budget.stride;
       const range = jumpRange(0);
       for (const reached of clean.values()) {
         if (!reached.stop || reached.cost > afoot) continue;
@@ -206,8 +225,72 @@ export function enemyTurn(ctx: Ctx, enemy: Unit, budget: Budget): void {
     return forced?.attacks ? forced : chooseAmong(heroes, strike);
   };
 
+  /**
+   * As much of `path` as `movement` covers over the ground as it is, ending where there is room to stand (out of fire and
+   * poison, if any of it is), and what that much of it costs.
+   */
+  const along = (path: HexPos[], movement: number): { path: HexPos[]; cost: number } => {
+    let [from, spent] = [enemy.pos, 0];
+    let [keep, safe] = [{ n: 0, cost: 0 }, { n: 0, cost: 0 }];
+    for (let i = 0; i < path.length; i++) {
+      const step = stepCost(state, enemy, from, path[i]);
+      if (!Number.isFinite(step.cost) || spent + step.cost > movement) break;
+      spent += step.cost;
+      from = path[i];
+      if (!step.stop) continue;
+      keep = { n: i + 1, cost: spent };
+      if (air || !harmful.has(posKey(path[i]))) safe = keep;
+    }
+    const end = safe.n > 0 ? safe : keep;
+    return { path: path.slice(0, end.n), cost: end.cost };
+  };
+  /**
+   * Held up on `whole`, the way it would go, after walking `walked` of it: if the very next hex of it is one the other side
+   * holds, the hex to leap to beyond them (a Jump: as far along the way as a leap from there lands), if it will have the AP
+   * for one after the walk. Nothing, for what flies (it is barred like the rest) or with nowhere to land.
+   */
+  const leapOver = (whole: HexPos[], walked: { path: HexPos[]; cost: number }): HexPos | undefined => {
+    const next = whole[walked.path.length];
+    if (air || !next || !heldAgainst(state, next, enemy.side) || budget.ap - apForMove(budget, walked.cost) < jumpAp) return undefined;
+    const from = { ...enemy, pos: walked.path[walked.path.length - 1] ?? enemy.pos };
+    for (let i = whole.length - 1; i > walked.path.length; i--) {
+      if (!harmful.has(posKey(whole[i])) && !checkCommon(state, from, "jump", { at: whole[i] }, budget)) return whole[i];
+    }
+    return undefined;
+  };
+  /**
+   * Nothing to strike this turn: the way toward where there would be. It finds the hex nearest it, by the walking
+   * (round whoever holds the ground against it, and through its own), that it could stand on and that any blow of its
+   * would reach one of `targets` from, and goes along the way there as far as this turn's movement takes it. If the
+   * heroes leave it no such hex (a doorway or a bridge held, and the ground before it full of its own), it takes the
+   * way it would go were nobody standing anywhere, as far as that is open: up behind its friends, to wait its chance, or
+   * up to whoever lies or stands in the way and is none of `targets`, and over them (`leap`, see leapOver).
+   * It keeps out of fire and poison where there is another way. Null: the ground itself gives it no way to a blow.
+   */
+  const approach = (targets: Unit[]): { path: HexPos[]; leap?: HexPos } | null => {
+    const movement = budget.move + walkAp(budget) * budget.stride;
+    const blowFrom = (pos: HexPos) =>
+      blows.some((a) => targets.some((h) => (a.burst ? hexDistance(pos, h.pos) <= ENEMY_BURST && seesFor(state, enemy.side, pos, h.pos) : strikeReaches(state, enemy, pos, a, h))));
+    const shuts = air || harmful.size === 0 ? [undefined] : [harmful, undefined];
+    for (const ground of [state, { ...state, units: [enemy] }]) {
+      for (const far of APPROACH_LOOKS) {
+        for (const shut of shuts) {
+          const reach = zoneReach(ground, enemy, far, shut);
+          let goal: Reached | undefined;
+          for (const r of reach.values()) if (r.stop && (!goal || r.cost < goal.cost) && blowFrom(r.pos)) goal = r;
+          if (!goal) continue;
+          const whole = pathIn(reach, goal.pos) ?? [];
+          const walked = along(whole, movement);
+          return { path: walked.path, leap: ground === state ? undefined : leapOver(whole, walked) };
+        }
+      }
+    }
+    return null;
+  };
+
   // Someone with their back to a drop, right where it stands: over they go, before anything else.
-  tryShove(ctx, enemy, budget, heroes);
+  // One shove a turn: a hero who catches the edge is not shoved at it again and again.
+  let shoved = tryShove(ctx, enemy, budget, heroes);
 
   for (let attacks = 0; attacks <= AP_MAX; attacks++) {
     if (enemy.down || has(enemy, "prone")) return;
@@ -216,10 +299,18 @@ export function enemyTurn(ctx: Ctx, enemy: Unit, budget: Budget): void {
     goaded = taunter(enemy, heroes);
     const plan = budget.ap >= ITEM_AP.attack ? choose(true) : null;
     if (!plan?.attacks) {
-      // Nothing it can reach and still strike: before any blow, it spends all it has getting closer; after one, it waits.
+      // Nothing it can reach and still strike: before any blow, it goes toward where it could (at the one who taunted it, if
+      // there is a way to them); after one, it waits. With no way over the ground to anyone, it at least gets as near as it can.
       if (attacks === 0) {
-        const run = choose(false);
-        if (run && run.path.length > 0) walk(ctx, enemy, run.path, budget);
+        const way = (goaded ? approach([goaded]) : null) ?? approach(heroes) ?? { path: choose(false)?.path ?? [], leap: undefined };
+        const stand = way.path[way.path.length - 1] ?? enemy.pos;
+        if (way.path.length > 0) walk(ctx, enemy, way.path, budget);
+        // Over whoever holds the way and is not to be struck, if it got to where it meant to leap from. Then it may have a blow.
+        if (way.leap && !enemy.down && !has(enemy, "prone") && sameHex(enemy.pos, stand) && budget.ap >= jumpAp && !checkCommon(state, enemy, "jump", { at: way.leap }, budget)) {
+          budget.ap -= jumpAp;
+          doCommon(ctx, enemy, "jump", { at: way.leap }, budget);
+          continue;
+        }
       }
       return;
     }
@@ -234,7 +325,7 @@ export function enemyTurn(ctx: Ctx, enemy: Unit, budget: Budget): void {
       if (enemy.down || has(enemy, "prone")) return;
     }
     // Someone it has come up beside may have their back to a drop.
-    tryShove(ctx, enemy, budget, standing());
+    if (!shoved) shoved = tryShove(ctx, enemy, budget, standing());
     if (enemy.down || has(enemy, "prone") || budget.ap < ITEM_AP.attack) return;
     // It may not have got where it meant to: look again from where it stands.
     const still = standing();

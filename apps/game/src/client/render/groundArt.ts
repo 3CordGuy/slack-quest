@@ -811,3 +811,120 @@ export function galleyWallTexture(): THREE.CanvasTexture {
     timberBand(ctx, W, 0, beam, "#2e2117");
   });
 }
+
+/**
+ * The Lapidary's walls inside: upright boards painted a deep slate blue to waist height on a dark skirting, under
+ * a rail with a strip of brass along it; above, warm cream plaster, with a frieze of cut stones stencilled under
+ * the beam in faded blue and gold, and a pale haze of stone dust settled toward the rail; and a dark timber beam
+ * along the top. One sheet is one unit of wall across (six boards, four stones of the frieze); it repeats along
+ * the wall.
+ */
+export function lapidaryWallTexture(): THREE.CanvasTexture {
+  return wallSheet((ctx, W, H, at) => {
+    const beam = at(0.93);
+    const railTop = at(0.535);
+    const rail = at(0.5);
+    const skirt = at(0.05);
+    // The plaster: cream, softly mottled, shaded under the beam and dusted pale above the rail.
+    ctx.fillStyle = "#dccfae";
+    ctx.fillRect(0, beam, W, railTop - beam);
+    for (let i = 0; i < 20; i++) {
+      const x = hash(i, 1, 960) * W;
+      const y = beam + hash(i, 2, 960) * (railTop - beam);
+      const r = 14 + hash(i, 3, 960) * 30;
+      const g = ctx.createRadialGradient(x, y, 0, x, y, r);
+      const tone = hash(i, 4, 960) < 0.5 ? "110,90,60" : "255,250,235";
+      g.addColorStop(0, `rgba(${tone},0.08)`);
+      g.addColorStop(1, `rgba(${tone},0)`);
+      ctx.fillStyle = g;
+      for (const shift of [-W, 0, W]) ctx.fillRect(x - r + shift, y - r, r * 2, r * 2);
+    }
+    const shade = ctx.createLinearGradient(0, beam, 0, beam + 22);
+    shade.addColorStop(0, "rgba(60,45,25,0.3)");
+    shade.addColorStop(1, "rgba(60,45,25,0)");
+    ctx.fillStyle = shade;
+    ctx.fillRect(0, beam, W, 22);
+    const dust = ctx.createLinearGradient(0, railTop - 46, 0, railTop);
+    dust.addColorStop(0, "rgba(236,238,240,0)");
+    dust.addColorStop(1, "rgba(236,238,240,0.3)");
+    ctx.fillStyle = dust;
+    ctx.fillRect(0, railTop - 46, W, 46);
+
+    // The frieze: a line above and below, and between them four cut stones to the sheet, blue and gold by turns,
+    // each a diamond with its facets drawn in.
+    const fy = beam + 34;
+    ctx.fillStyle = "rgba(62,84,112,0.55)";
+    ctx.fillRect(0, fy - 19, W, 2);
+    ctx.fillRect(0, fy + 17, W, 2);
+    for (let i = 0; i < 4; i++) {
+      const cx = (i + 0.5) * (W / 4);
+      const blue = i % 2 === 0;
+      ctx.fillStyle = blue ? "rgba(62,92,130,0.6)" : "rgba(190,150,60,0.62)";
+      ctx.beginPath();
+      ctx.moveTo(cx, fy - 13);
+      ctx.lineTo(cx + 11, fy - 3);
+      ctx.lineTo(cx, fy + 13);
+      ctx.lineTo(cx - 11, fy - 3);
+      ctx.closePath();
+      ctx.fill();
+      ctx.strokeStyle = "rgba(248,242,224,0.6)";
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(cx - 11, fy - 3);
+      ctx.lineTo(cx + 11, fy - 3);
+      ctx.moveTo(cx - 4, fy - 3);
+      ctx.lineTo(cx, fy + 13);
+      ctx.lineTo(cx + 4, fy - 3);
+      ctx.lineTo(cx, fy - 13);
+      ctx.lineTo(cx - 4, fy - 3);
+      ctx.stroke();
+      // A dot between each stone and the next.
+      ctx.fillStyle = "rgba(62,84,112,0.5)";
+      ctx.beginPath();
+      ctx.arc((i + 1) * (W / 4), fy, 2.4, 0, Math.PI * 2);
+      ctx.fill();
+      if (i === 0) {
+        ctx.beginPath();
+        ctx.arc(0, fy, 2.4, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+
+    // The boards: slate blue, each its own shade, a dark groove between, and dust lying pale along the foot.
+    const bw = W / 6;
+    for (let i = 0; i < 6; i++) {
+      const tone = hash(i, 2, 962);
+      ctx.fillStyle = tone < 0.33 ? "#2c4058" : tone < 0.66 ? "#31475f" : "#283a50";
+      ctx.fillRect(i * bw, rail, bw, skirt - rail);
+      ctx.fillStyle = "rgba(6,10,18,0.45)";
+      ctx.fillRect(i * bw, rail, 2, skirt - rail);
+      ctx.fillStyle = "rgba(210,230,255,0.09)";
+      ctx.fillRect(i * bw + 2, rail, 2, skirt - rail);
+      if (hash(i, 3, 962) < 0.35) {
+        ctx.fillStyle = "rgba(8,12,20,0.4)";
+        ctx.beginPath();
+        ctx.ellipse(i * bw + bw / 2, rail + 30 + hash(i, 4, 962) * (skirt - rail - 60), 3.5, 5, 0, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+    const lip = ctx.createLinearGradient(0, rail, 0, rail + 10);
+    lip.addColorStop(0, "rgba(4,8,14,0.4)");
+    lip.addColorStop(1, "rgba(4,8,14,0)");
+    ctx.fillStyle = lip;
+    ctx.fillRect(0, rail, W, 10);
+    const settled = ctx.createLinearGradient(0, skirt - 44, 0, skirt);
+    settled.addColorStop(0, "rgba(206,212,220,0)");
+    settled.addColorStop(1, "rgba(206,212,220,0.26)");
+    ctx.fillStyle = settled;
+    ctx.fillRect(0, skirt - 44, W, 44);
+
+    // The rail with its strip of brass, the skirting and the beam.
+    timberBand(ctx, W, railTop, rail, "#3a2a1c");
+    ctx.fillStyle = "#c79a3e";
+    ctx.fillRect(0, railTop + 4, W, 3);
+    ctx.fillStyle = "rgba(255,240,190,0.5)";
+    ctx.fillRect(0, railTop + 4, W, 1);
+    timberBand(ctx, W, skirt, H, "#2e2117");
+    timberBand(ctx, W, 0, beam, "#2e2117");
+  });
+}

@@ -161,7 +161,7 @@ export class TacticsLayer {
   /** Streaks of wind over the hexes Trade Winds blows across (see streaks). */
   private winds: THREE.InstancedMesh[] = [];
   /** Each rain cloud over the ground, its drops, and when it was first drawn (it grows in from nothing). */
-  private clouds: { cloud: THREE.Group; drops: THREE.InstancedMesh; base: Float32Array; floor: Float32Array; born: number }[] = [];
+  private clouds: { cloud: THREE.Group; drops: THREE.InstancedMesh; base: Float32Array; floor: Float32Array; born: number; veil: { material: THREE.Material; full: number }[] }[] = [];
 
   constructor(private renderer: WorldRenderer) {
     this.group.add(this.ground, this.sky, this.overlays, this.charts, this.path);
@@ -622,7 +622,8 @@ export class TacticsLayer {
     }
     drops.frustumCulled = false;
     this.sky.add(drops);
-    this.clouds.push({ cloud, drops, base, floor, born: -1 });
+    // (How see-through each part is at its fullest: the combat view thins the cloud further, see tickSky.)
+    this.clouds.push({ cloud, drops, base, floor, born: -1, veil: [top, belly, ink, drops.material as THREE.Material].map((material) => ({ material, full: material.opacity })) });
   }
 
   /**
@@ -718,6 +719,8 @@ export class TacticsLayer {
       const grow = Math.min(1, (clock - c.born) / 0.7);
       const s = 1 - (1 - grow) ** 3;
       c.cloud.scale.set(s, s, s);
+      // While the combat view is on the cloud is thinner still: it is there to be read, and whoever stands under it is seen.
+      for (const v of c.veil) v.material.opacity = v.full * (1 - 0.6 * this.renderer.cutaway);
       c.cloud.position.y = Math.sin(clock * 0.8) * 0.05;
       for (const puff of c.cloud.children) puff.rotation.y = Math.sin(clock * 0.5 + (puff.userData.breath as number)) * 0.15;
       // The cloud grows from its own middle, not the map's.

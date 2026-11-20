@@ -16,7 +16,7 @@
 // The more the stone that opened a place carried, the more stones its
 // spoils hold, most of them a little poorer than it, some its equal, a few
 // finer. So a crew that keeps clearing places never runs out of stones, and
-// the best of them are worked up at the bench in town (stonecraft.ts).
+// the best of them are worked up at the Lapidary in town (stonecraft.ts).
 // Should anyone ever be left with none all the same, a plain one can always
 // be cut from stone and iron (`PLAIN_STONE_COST`).
 //

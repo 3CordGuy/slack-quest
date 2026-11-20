@@ -1,7 +1,8 @@
-// Inside the smithy, the apothecary or the galley: a small room drawn by the
-// same renderer as the pub and the huts, with the keeper at their work (Greta
-// hammering at her anvil, Ansel stirring his cauldron, Gorm chopping at his
-// block), and still at it while they deal with you. Walk up to them (or click them) to see what they
+// Inside the smithy, the apothecary, the galley or the Lapidary: a small room
+// drawn by the same renderer as the pub and the huts, with the keeper at their
+// work (Greta hammering at her anvil, Ansel stirring his cauldron, Gorm
+// chopping at his block, Tilda holding a stone to her wheel), and still at it
+// while they deal with you. Walk up to them (or click them) to see what they
 // sell and do, and to haggle. The door at the front leads back to the Harbor.
 //
 // Unlike the pub, nobody else is in here: the room is this player's own copy
@@ -13,7 +14,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 import { hexNeighbors, type HexPos } from "@gantt-quest/core";
 import { useOwnLook } from "./ownLook";
-import { KEEPER_GRID, KEEPER_PLACES, keeperPath, keeperRoom, keeperWallPieces, outfitOf, type KeeperShop } from "@gantt-quest/world";
+import { KEEPER_GRID, KEEPER_PLACES, keeperPath, keeperRoom, keeperWallPieces, outfitOf, type KeeperHouse } from "@gantt-quest/world";
 import { api, type ApothecaryView, type GalleyKeeperView, type Me, type SmithyView } from "./api";
 import { useAudioScene } from "./audio/useAudioScene";
 import { InventoryScreen } from "./InventoryScreen";
@@ -27,12 +28,13 @@ import { withLook } from "./render/sprites";
 import { TileAction } from "./TileAction";
 import { HudBar } from "./ui/Hud";
 import { ApothecaryKeeperPanel, GalleyKeeperPanel, SmithyKeeperPanel } from "./works/KeeperPanels";
+import { LapidaryKeeperPanel } from "./works/LapidaryPanel";
 import "./hut.css";
 import "./pub.css";
 
 const same = (a: HexPos, b: HexPos) => a.q === b.q && a.r === b.r;
 
-export function KeeperView({ shop, me, refresh, onLeave }: { shop: KeeperShop; me: Me; refresh(): Promise<unknown>; onLeave(): void }) {
+export function KeeperView({ shop, me, refresh, onLeave }: { shop: KeeperHouse; me: Me; refresh(): Promise<unknown>; onLeave(): void }) {
   useAudioScene("hut");
   const place = KEEPER_PLACES[shop];
   const { keeper } = place;
@@ -49,11 +51,14 @@ export function KeeperView({ shop, me, refresh, onLeave }: { shop: KeeperShop; m
   const posRef = useRef(pos);
   posRef.current = pos;
 
-  /** The shop as the server has it: what is for sale, what your gear would cost to work, and what you hold. */
+  /**
+   * The shop as the server has it: what is for sale, what your gear would cost to work, and what you hold. The
+   * Lapidary has none: it sells from no stock, nobody had to build it, and what you carry is in `me`.
+   */
   const [view, setView] = useState<ApothecaryView | SmithyView | GalleyKeeperView | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const reload = useCallback(
-    () => (shop === "apothecary" ? api.apothecary() : shop === "smithy" ? api.smithy() : api.galley()).then(setView, (e: Error) => setLoadError(e.message)),
+    () => (shop === "lapidary" ? Promise.resolve() : (shop === "apothecary" ? api.apothecary() : shop === "smithy" ? api.smithy() : api.galley()).then(setView, (e: Error) => setLoadError(e.message))),
     [shop],
   );
   useEffect(() => {
@@ -84,11 +89,12 @@ export function KeeperView({ shop, me, refresh, onLeave }: { shop: KeeperShop; m
       indoors: true,
       // Every keeper keeps the lamp out and the shop dim, lit in pools with dark between: the apothecary by candles,
       // the cauldron's fire and the green glow of the brew; the smithy by the forge, a lantern and a candle; the
-      // galley by the range's fire, and candles and a lantern round the walls.
+      // galley by the range's fire, and candles and a lantern round the walls; the Lapidary by the work lamp on the
+      // wheel's bench, candles, and the blue of the lodestones in their case.
       lampOff: true,
       gloom: true,
       // Each shop's walls dressed to its trade: rough stone and sooted timber; green wainscot and old printed paper;
-      // oxblood boards, a row of tiles and limewash.
+      // oxblood boards, a row of tiles and limewash; slate-blue boards under plaster stencilled with cut stones.
       walls: shop,
       // A forge stands on stone: the smithy is flagged; the apothecary and the galley keep their boards.
       floor: shop === "smithy" ? "flags" : "planks",
@@ -136,11 +142,13 @@ export function KeeperView({ shop, me, refresh, onLeave }: { shop: KeeperShop; m
       }, ms);
       timers.add(t);
     };
-    // A blow about once a second; a stir runs half a minute, asked again just before it ends.
-    const beat = how === "stir" ? 29_000 : how === "chop" ? 1300 : 1150;
+    // A blow about once a second; a stir runs half a minute, asked again just before it ends. Holding a stone to
+    // the wheel is the same going round and round as a stir, with a dop in the hand for a paddle.
+    const round = how === "stir" || how === "grind";
+    const beat = round ? 29_000 : how === "chop" ? 1300 : 1150;
     const go = () => {
-      const wait = r.work(keeper.id, how === "stir" ? "stir" : "hammer", at);
-      if (how !== "stir" && wait > 0) {
+      const wait = r.work(keeper.id, round ? "stir" : "hammer", at);
+      if (!round && wait > 0) {
         later(() => {
           // Off the work on the anvil's face, which stands on the floor (its top, not 0). A cleaver strikes no sparks.
           if (how === "hammer") sparks.burst(new THREE.Vector3(at.x, r.floorTop() + 0.47, at.z), "#ffb84a", 7);
@@ -149,7 +157,7 @@ export function KeeperView({ shop, me, refresh, onLeave }: { shop: KeeperShop; m
       }
       // Now and then a breath between blows, so it is not a metronome (the cook stops to line up the next fish
       // more often than the smith stops at all). A stir just goes round and round.
-      later(go, how === "stir" ? beat : beat + (Math.random() < (how === "chop" ? 0.35 : 0.2) ? 900 : Math.random() * 200));
+      later(go, round ? beat : beat + (Math.random() < (how === "chop" ? 0.35 : 0.2) ? 900 : Math.random() * 200));
     };
     later(go, 600);
     return () => {
@@ -171,7 +179,7 @@ export function KeeperView({ shop, me, refresh, onLeave }: { shop: KeeperShop; m
   }, [atKeeper, keeper]);
   const say = useCallback((text: string) => renderer.current?.say(keeper.id, text), [keeper]);
   /** Dealing with the keeper: their panel is up, and the hotbar is put away so the list has the screen. */
-  const dealing = !!view?.built && atKeeper;
+  const dealing = (shop === "lapidary" || !!view?.built) && atKeeper;
   const panel = { reload, refresh, onSay: say, onDone: () => stepAway() };
   // While dealing, the camera brings the keeper clear of the panel so you can watch them work: to the right of it
   // on a wide screen (the panel is on the left), above it on a phone (it is docked along the bottom). Stepping
@@ -209,8 +217,9 @@ export function KeeperView({ shop, me, refresh, onLeave }: { shop: KeeperShop; m
     <div className={`run hut-view keeper-view keeper-view-${shop}`}>
       <div className="stage" ref={mount} />
 
-      {dealing && (shop === "apothecary"
-        ? <ApothecaryKeeperPanel view={view as ApothecaryView} setView={setView} {...panel} />
+      {dealing && (shop === "lapidary"
+        ? <LapidaryKeeperPanel me={me} refresh={refresh} onSay={say} onDone={() => stepAway()} />
+        : shop === "apothecary" ? <ApothecaryKeeperPanel view={view as ApothecaryView} setView={setView} {...panel} />
         : shop === "smithy" ? <SmithyKeeperPanel me={me} view={view as SmithyView} setView={setView} {...panel} />
         : <GalleyKeeperPanel view={view as GalleyKeeperView} setView={setView} {...panel} />)}
 
@@ -221,7 +230,7 @@ export function KeeperView({ shop, me, refresh, onLeave }: { shop: KeeperShop; m
         place={
           atDoor ? <span>The door back to the Harbor.</span>
             : atKeeper ? <span>With {keeper.name}, {keeper.trade}.</span>
-            : <span className="muted">{place.title}. Click {keeper.short} to walk up: {shop === "galley" ? "cook for the ship, buy from the pot" : "buy, have work done"}, or haggle.</span>
+            : <span className="muted">{place.title}. Click {keeper.short} to walk up: {shop === "lapidary" ? "cut and work lodestones, or sell gems." : `${shop === "galley" ? "cook for the ship, buy from the pot" : "buy, have work done"}, or haggle.`}</span>
         }
         onBag={() => (bag ? closeBag() : setBag(true))}
         onBook={() => setBook(true)}

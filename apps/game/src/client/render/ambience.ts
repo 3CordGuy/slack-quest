@@ -13,6 +13,7 @@ import { cobbleTexture, flagstoneTexture, floorTexture, pierTexture } from "./gr
 import { devTools } from "../devTools";
 import { fancy, fancyGrass } from "./fancy";
 import { WIND_DIR, addFieldSway, gustAt, setFieldCalm, windPower } from "./wind";
+import { addCutaway } from "./cutaway";
 import type { Tile } from "@gantt-quest/world";
 import type { LightKind } from "./props";
 import type { LampLight } from "./tableLamps";
@@ -712,6 +713,7 @@ const GLOW: Record<LightKind, { color: string; power: number; range: number; fli
   lamp: { color: "#ffd08a", power: 1.5, range: 4.5, flicker: false },
   fire: { color: "#ff9548", power: 2.2, range: 5, flicker: true },
   brew: { color: "#6fe07e", power: 1.7, range: 3.8, flicker: true },
+  lode: { color: "#7fc4ff", power: 1.3, range: 3.4, flicker: false },
 };
 
 /** What a table lantern's light warms toward as it flares. */
@@ -827,6 +829,8 @@ export class Ambience {
   /** How cloudy and how rainy it is right now, 0 to 1 each. */
   private cloud = 0;
   private rainfall = 0;
+  /** How far on the view's combat view is, 0 to 1 (cutaway.ts): the wisps and the rain thin out as it comes on. */
+  cutaway = 0;
   private rain: THREE.Points | null = null;
   /** Where the sea breaks on rock: a point on the shared edge, the way out to sea, and its own rhythm. */
   private splashes: { x: number; y: number; z: number; nx: number; nz: number; phase: number; period: number }[] = [];
@@ -953,7 +957,8 @@ export class Ambience {
       const n = (salt: number) => hash(t.q, t.r, salt);
 
       if (t.biome === "water") {
-        crests.push({ x: p.x, y: p.y - 0.13, z: p.z, phase: p.x * 0.35 + n(21) * 1.5 });
+        // (A pool in the ashlands is lava: no wave breaks on it.)
+        if (t.clime !== "ash") crests.push({ x: p.x, y: p.y - 0.13, z: p.z, phase: p.x * 0.35 + n(21) * 1.5 });
         continue;
       }
       if (skip(t)) continue;
@@ -996,6 +1001,10 @@ export class Ambience {
           });
         }
         if (n(70) < 0.35) tufts.push({ x: p.x + (n(71) - 0.5) * 1.1, y: p.y, z: p.z + 0.45, size: 0.3, phase: n(72) * 6 });
+      } else if (t.clime === "frost" || t.clime === "dunes" || t.clime === "ash") {
+        // No green grows on snow, sand or cinders. Here and there on open ground something dead still stands:
+        // straw through the snow, burnt stubble in the sand and the ash.
+        if (t.biome === "plains" && !t.path && n(98) < (t.clime === "frost" ? 0.07 : 0.1)) drys.push({ x: p.x, y: p.y, z: p.z, turn: Math.floor(n(95) * 6), kind: t.clime === "frost" ? Math.floor(n(96) * 1.99) : DRY_GROUND, tone: n(97) });
       } else if (dryPatch(t, p.x, p.z) >= 0) {
         // A dry patch: dead grass, or bare earth, over the whole hex.
         drys.push({ x: p.x, y: p.y, z: p.z, turn: Math.floor(n(95) * 6), kind: dryPatch(t, p.x, p.z), tone: n(97) });
@@ -1285,6 +1294,8 @@ export class Ambience {
         if (list.length === 0) continue;
         const material = new THREE.MeshLambertMaterial({ vertexColors: true });
         addFieldSway(material, height);
+        // In the combat view (cutaway.ts) tall grass lies low: all of it a good way, and flat round whoever is fighting.
+        if (height > 0.5) addCutaway(material, { how: "sink", loose: true, keep: 0.14, left: 0.4, tall: height, everywhere: 0.5 });
         const mesh = new THREE.InstancedMesh(geometry(kind), material, list.length);
         const at = new THREE.Matrix4();
         const up = new THREE.Vector3(0, 1, 0);
@@ -1770,7 +1781,7 @@ export class Ambience {
             const k = (n * TRAIL + i) * 2 + side;
             pos.setXYZ(k, this.wispAt.x, this.wispAt.y, this.wispAt.z);
             dir.setXYZ(k, this.wispAhead.x, this.wispAhead.y, this.wispAhead.z);
-            col.setXYZW(k, 1, 0.95 + 0.05 * this.daylight, glow, fade * (0.55 + 0.35 * this.daylight));
+            col.setXYZW(k, 1, 0.95 + 0.05 * this.daylight, glow, fade * (0.55 + 0.35 * this.daylight) * (1 - 0.8 * this.cutaway));
           }
         }
       });
@@ -1785,8 +1796,9 @@ export class Ambience {
     if (!this.rain) return;
     const pos = this.rain.geometry.getAttribute("position") as THREE.BufferAttribute;
     // Only as many drops fall as the weather calls for; the rest wait out of sight.
-    const falling = Math.round(DROPS * this.rainfall);
-    (this.rain.material as THREE.PointsMaterial).opacity = 0.2 + 0.25 * this.rainfall;
+    // (Fewer and fainter while the combat view is on: the rain goes on, and veils the fight less.)
+    const falling = Math.round(DROPS * this.rainfall * (1 - 0.5 * this.cutaway));
+    (this.rain.material as THREE.PointsMaterial).opacity = (0.2 + 0.25 * this.rainfall) * (1 - 0.45 * this.cutaway);
     this.rain.visible = falling > 0;
     for (let i = 0; i < DROPS; i++) {
       if (i >= falling) {

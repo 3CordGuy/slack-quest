@@ -9,7 +9,7 @@
 // onto it), and a block the same size and place where they have none.
 
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
-import { FURNISHINGS, HERO_CLASSES, weaponItem, type LootItem, type Roll, type Rolled } from "@gantt-quest/world";
+import { ACTION_AP, AP_MAX, AP_TURN, BONUS_AP, FURNISHINGS, HERO_CLASSES, apForMove, moveLeft, weaponItem, type Budget, type LootItem, type Roll, type Rolled } from "@gantt-quest/world";
 import type { Me } from "../api";
 import { InventoryScreen } from "../InventoryScreen";
 import { spriteDataUrl } from "../render/sprites";
@@ -88,10 +88,12 @@ export default function FightUiLab({ me, refresh }: { me?: Me; refresh?: () => P
   const [at, setAt] = useState(0);
   const [round, setRound] = useState(2);
   const [forceWait, setForceWait] = useState(false);
-  const [action, setAction] = useState(true);
-  const [bonus, setBonus] = useState(true);
-  const [move, setMove] = useState(6);
-  const [cost, setCost] = useState<number | null>(null);
+  // The turn's budget, as the rules keep it: Action Points, the steps bought and not yet walked, and what a point buys.
+  const [ap, setAp] = useState(AP_TURN);
+  const [move, setMove] = useState(0);
+  const [stride, setStride] = useState(2);
+  /** What the pointer is over: something that costs Action Points, or a walk of so many steps. */
+  const [aim, setAim] = useState<{ ap: number } | { steps: number } | null>(null);
   const [course, setCourse] = useState<{ now: number; max: number } | undefined>();
   const [seconds, setSeconds] = useState<number | null>(42);
   const [ticking, setTicking] = useState(false);
@@ -99,6 +101,7 @@ export default function FightUiLab({ me, refresh }: { me?: Me; refresh?: () => P
   const [banner, setBanner] = useState<TurnBannerShow | null>(null);
   const [entries, setEntries] = useState<LogEntry[]>([]);
   const [logOpen, setLogOpen] = useState(true);
+  const [logAbove, setLogAbove] = useState(false);
   const [toast, setToast] = useState<{ roll: Roll; dice?: Rolled } | null>(null);
   const [loot, setLoot] = useState<{ kind: "body" | "chest" | "spoils"; items: LootItem[] } | null>(null);
   const [blocked, setBlocked] = useState(false);
@@ -137,11 +140,35 @@ export default function FightUiLab({ me, refresh }: { me?: Me; refresh?: () => P
     }
     add({ k: "turn", id: nid(), name: who.name, side: who.side });
     fire(who.mine ? "yours" : who.side === "hero" ? "ally" : "enemy", who.mine ? { title: "Your turn", sub: `${who.name} · Round ${r}` } : { title: `${who.name}'s turn` });
-    setAction(true);
-    setBonus(true);
-    setMove(6);
-    setCost(null);
+    // Steps bought and not walked are lost with the turn; points not spent are kept, and a fresh turn's are added to them.
+    setMove(0);
+    if (who.mine) setAp((a) => Math.min(AP_MAX, a + AP_TURN));
+    setAim(null);
     setSeconds(who.mine ? 60 : 20);
+  };
+
+  const budget: Budget = { ap, move, stride, disengaged: false };
+  const reach = moveLeft(budget);
+  // As the view works them out: a walk out of reach buys nothing (the steps alone show red).
+  const apCost = !aim ? null : "ap" in aim ? aim.ap : aim.steps <= reach ? apForMove(budget, aim.steps) : null;
+  const spend = (n: number, what: string) => {
+    if (n > ap) return setSaid(`${what}: ${n} AP, and only ${ap} left`);
+    setAp(ap - n);
+    setSaid(`${what}: ${n} AP`);
+  };
+  const buyStride = () => {
+    if (ap <= 0 || stride <= 0) return setSaid("Nothing to buy a stride with");
+    setAp(ap - 1);
+    setMove(move + stride);
+    setSaid(`Bought a stride: ${stride} steps for 1 AP`);
+  };
+  /** Walk so many steps: what is bought goes first, and strides are bought as they are needed. */
+  const walk = (n: number) => {
+    if (n > reach) return setSaid(`${n} steps is out of reach (${reach})`);
+    const bought = apForMove(budget, n);
+    setAp(ap - bought);
+    setMove(move + bought * stride - n);
+    setSaid(`Walked ${n}${bought ? `, buying ${bought} stride${bought === 1 ? "" : "s"}` : " on steps already bought"}`);
   };
 
   const attack = (how: "hit" | "miss" | "crit" | "adv" | "dis") => {
@@ -155,7 +182,7 @@ export default function FightUiLab({ me, refresh }: { me?: Me; refresh?: () => P
     } else out.push({ k: "miss", id: nid(), actor: "Mira Tidewright", side: "hero", target: "Dire Wolf", what: "Cleave" });
     add(...out);
     setToast({ roll: r, dice: dmg });
-    setAction(false);
+    setAp((a) => Math.max(0, a - ACTION_AP));
   };
   const enemyAttack = () => {
     const r = roll({ kind: "attack", label: "Bite · attack", d20: [d20()], bonus: 4, vs: 15, adv: 0, id: "e1", target: "h1" });
@@ -260,12 +287,13 @@ export default function FightUiLab({ me, refresh }: { me?: Me; refresh?: () => P
       <InitiativeStrip round={round} units={units} onPick={(id) => setSaid(`Picked ${id}`)} />
       <TurnBanner show={banner} />
       <RollToast roll={toast?.roll ?? null} who={toast ? (toast.roll.id === "h1" ? "Mira Tidewright" : toast.roll.id === "e1" ? "Dire Wolf" : "Bandit Cutter") : undefined} dice={toast?.dice} />
-      <CombatLog entries={entries} open={logOpen} onToggle={() => setLogOpen((o) => !o)} />
+      <CombatLog entries={entries} open={logOpen} onToggle={() => setLogOpen((o) => !o)} className={logAbove ? "above" : undefined} />
       {loot && (
         <LootPanel
           title={loot.kind === "body" ? "Dire Wolf" : loot.kind === "chest" ? "Iron-bound Chest" : "Spoils of Gull Rock"}
           subtitle={loot.kind === "body" ? "Fallen · level 3" : loot.kind === "chest" ? "Thrown open" : "Shared out to each of you"}
           kind={loot.kind}
+          share={loot.kind === "spoils" ? "own" : "shared"}
           items={loot.items}
           blocked={blocked ? "Not in the middle of a fight." : undefined}
           onTake={(i) => take(i, "Took")}
@@ -279,11 +307,13 @@ export default function FightUiLab({ me, refresh }: { me?: Me; refresh?: () => P
         actor={myTurn ? actor.name : "Mira Tidewright"}
         waitingFor={myTurn ? undefined : actor.mine ? "Brann" : actor.name}
         round={round}
-        action={action}
-        bonus={bonus}
+        ap={ap}
+        apMax={AP_MAX}
+        apTurn={AP_TURN}
+        apCost={apCost}
         move={move}
-        moveMax={6}
-        moveCost={cost}
+        stride={stride}
+        moveCost={aim && "steps" in aim ? aim.steps : null}
         course={course}
         seconds={seconds}
         onEnd={myTurn ? nextTurn : undefined}
@@ -324,20 +354,33 @@ export default function FightUiLab({ me, refresh }: { me?: Me; refresh?: () => P
           <div style={lab.row}>
             <B press={nextTurn}>Next turn</B>
             <B on={forceWait} press={() => setForceWait((w) => !w)}>Waiting</B>
-            <B press={() => { setAt(0); setForceWait(false); setAction(true); setBonus(true); setMove(6); fire("yours"); }}>My turn</B>
+            <B press={() => { setAt(0); setForceWait(false); setAp((a) => Math.min(AP_MAX, a + AP_TURN)); setMove(0); fire("yours"); }}>My turn</B>
             <B on={crowd} press={() => { setCrowd((c) => !c); setAt(0); }}>24 fighters</B>
           </div>
+          <div style={lab.head}>Action Points · {ap} of {AP_MAX}, {move} steps bought, {reach} in reach</div>
           <div style={lab.row}>
-            <B on={!action} press={() => setAction((a) => !a)}>Action</B>
-            <B on={!bonus} press={() => setBonus((b) => !b)}>Bonus</B>
-            <B press={() => setMove((m) => Math.max(0, m - 1))}>Move −1</B>
-            <B press={() => setMove((m) => Math.max(0, m - 3))}>−3</B>
-            <B press={() => setMove(6)}>Refill</B>
-            <B press={() => setMove(12)}>12 (dash)</B>
+            <B press={() => spend(ACTION_AP, "An ability")}>Ability (2 AP)</B>
+            <B press={() => spend(BONUS_AP, "A quick thing")}>Quick thing (1 AP)</B>
+            <B press={buyStride}>Buy a stride</B>
+            <B press={() => walk(1)}>Walk 1</B>
+            <B press={() => walk(3)}>Walk 3</B>
           </div>
           <div style={lab.row}>
-            <span className="muted">Hover cost</span>
-            {[null, 1, 3, 9].map((c) => <B key={String(c)} on={cost === c} press={() => setCost(c)}>{c === null ? "none" : String(c)}</B>)}
+            <span className="muted">Set</span>
+            <B press={() => { setAp(AP_TURN); setMove(0); }}>Fresh 4</B>
+            <B press={() => { setAp(AP_MAX); setMove(0); }}>Full 6</B>
+            <B press={() => { setAp(0); setMove(0); }}>0 AP</B>
+            <B press={nextTurn}>End turn (bank)</B>
+            <B on={stride === 0} press={() => { setStride((s) => (s === 0 ? 2 : 0)); setMove(0); }}>Cannot move</B>
+            <B on={stride === 3} press={() => setStride((s) => (s === 3 ? 2 : 3))}>Stride 3</B>
+          </div>
+          <div style={lab.row}>
+            <span className="muted">Hover</span>
+            <B on={aim === null} press={() => setAim(null)}>No hover</B>
+            {[1, 2, 5].map((n) => <B key={n} on={!!aim && "ap" in aim && aim.ap === n} press={() => setAim({ ap: n })}>{`Aim ${n} AP`}</B>)}
+            {[1, 3, 20].map((n) => <B key={n} on={!!aim && "steps" in aim && aim.steps === n} press={() => setAim({ steps: n })}>{`Hover walk ${n}`}</B>)}
+          </div>
+          <div style={lab.row}>
             <B on={!!course} press={() => setCourse((c) => (c ? undefined : { now: 2, max: 3 }))}>Course</B>
             <B on={extra} press={() => setExtra((x) => !x)}>Extras</B>
           </div>
@@ -368,6 +411,7 @@ export default function FightUiLab({ me, refresh }: { me?: Me; refresh?: () => P
             <B press={() => add({ k: "head", id: nid(), text: `Round ${round + 1}` })}>Head</B>
             <B press={fill}>Fill 60</B>
             <B press={() => setEntries([])}>Clear</B>
+            <B on={logAbove} press={() => setLogAbove((a) => !a)}>Log above the bar</B>
           </div>
           <div style={lab.head}>Loot</div>
           <div style={lab.row}>

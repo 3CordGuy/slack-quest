@@ -67,7 +67,7 @@ describe("a walk shown ahead of the server", () => {
   });
 
   it("stops at the first hex where the ground may stop it", () => {
-    let state = meadow("ground", { groups: 0, obstacles: 0, elevation: 0 });
+    let state = meadow("ground", { groups: 0, obstacles: 0, elevation: 0, site: "wilds" });
     const me = ann(state);
     const far = state.map.tiles.filter((t) => t.biome === "plains" && hexDistance(t, me.pos) === 4)[0];
     const whole = foreseeWalk(zoneView(state, "ann"), "ann", far)!;
@@ -85,6 +85,48 @@ describe("a walk shown ahead of the server", () => {
       if (burning >= 0) expect(burning).toBe(seen.path.length - 1);
       expect(walkedBy(step.events).slice(0, seen.path.length)).toEqual(seen.path);
     }
+  });
+
+  it("is never shown onto a hex an enemy holds, goes round one in the way as the server does, and ends on a friend's hex where there is room", () => {
+    // An enemy's own hex: the server refuses it, and nothing is shown.
+    for (const seed of ["a", "b", "c", "d"]) {
+      const state = meadow(seed);
+      for (const wolf of state.units.filter((u) => u.side === "enemy")) {
+        expect(foreseeWalk(zoneView(state, "ann"), "ann", wolf.pos), seed).toBeNull();
+        expect(stepZone(state, { type: "move", by: "ann", unit: "ann", to: wolf.pos }).ok, seed).toBe(false);
+      }
+    }
+    // A wolf set down right on the straight way: the walk shown is the server's own, and neither goes over its hex.
+    let state = meadow("round", { groups: 0, obstacles: 0, elevation: 0, site: "wilds" });
+    const me = ann(state);
+    const far = state.map.tiles.filter((t) => t.biome === "plains" && hexDistance(t, me.pos) === 4)[0];
+    const straight = foreseeWalk(zoneView(state, "ann"), "ann", far)!;
+    expect(straight.path).toHaveLength(4);
+    const put = stepZone(state, { type: "dev", by: "ann", dev: { op: "spawn", kinds: ["wolf"], at: straight.path[1] } });
+    if (!put.ok) throw new Error(put.error);
+    const wolf = put.state.units.find((u) => u.side === "enemy")!;
+    expect(wolf.pos).toEqual(straight.path[1]);
+    const seen = foreseeWalk(zoneView(put.state, "ann"), "ann", far);
+    const step = stepZone(put.state, { type: "move", by: "ann", unit: "ann", to: far });
+    if (!step.ok) throw new Error(step.error);
+    const walked = walkedBy(step.events);
+    expect(walked.some((p) => p.q === wolf.pos.q && p.r === wolf.pos.r)).toBe(false);
+    if (seen) {
+      expect(seen.path.some((p) => p.q === wolf.pos.q && p.r === wolf.pos.r)).toBe(false);
+      expect(walked.slice(0, seen.path.length)).toEqual(seen.path);
+    }
+    // A friend standing there instead: the walk is shown onto their hex, and the server makes it.
+    const joined = stepZone(state, { type: "join", hero: standInHero("devops_mage", "bo", 1)! });
+    if (!joined.ok) throw new Error(joined.error);
+    state = joined.state;
+    const bo = state.units.find((u) => u.id === "bo")!;
+    expect(hexDistance(bo.pos, ann(state).pos)).toBeGreaterThan(0);
+    const onto = foreseeWalk(zoneView(state, "ann"), "ann", bo.pos)!;
+    expect(onto.path[onto.path.length - 1]).toEqual(bo.pos);
+    const together = stepZone(state, { type: "move", by: "ann", unit: "ann", to: bo.pos });
+    if (!together.ok) throw new Error(together.error);
+    expect(walkedBy(together.events)).toEqual(onto.path);
+    expect(ann(together.state).pos).toEqual(bo.pos);
   });
 
   it("is not shown for someone else's hero, or one that is down", () => {

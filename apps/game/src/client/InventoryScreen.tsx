@@ -74,6 +74,7 @@ import {
   SLOT_LABEL,
   STACK_MAX,
   STALL_BUYS,
+  GEM_PRICE,
   THROWABLES,
   addedSlots,
   armorBlock,
@@ -277,9 +278,10 @@ interface Props {
   torch?: { hand: "main" | "off"; rounds: number; stow?(): void; why?: string };
   /**
    * On a map: something dragged out of a loot window (zone/LootPanel.tsx, a "text/gq-loot" drag carrying its index
-   * there) was dropped anywhere on the bag. The server decides where in the pack it lands.
+   * there, and "text/gq-loot-uid" its own number where it has one) was dropped anywhere on the bag. The server
+   * decides where in the pack it lands.
    */
-  onLootDrop?: (index: number) => void;
+  onLootDrop?: (index: number, uid?: number) => void;
 }
 
 /**
@@ -423,7 +425,10 @@ export function InventoryScreen({ me, refresh, onClose, onIsland = false, chest 
       if (raw === "") return;
       e.preventDefault();
       const index = Number(raw);
-      if (Number.isInteger(index) && index >= 0) onLootDrop(index);
+      // The thing's own number, as it was when the drag began: the list may have moved under it since.
+      const own = e.dataTransfer.getData("text/gq-loot-uid");
+      const uid = own === "" ? undefined : Number(own);
+      if (Number.isInteger(index) && index >= 0) onLootDrop(index, uid !== undefined && Number.isInteger(uid) ? uid : undefined);
     },
   };
   /** The atlas's slot as it is now, for the handlers that outlive a render. */
@@ -1414,7 +1419,7 @@ function LodestoneDetail({ stone, total, how, inChest = false }: { stone: Lodest
           ))}
         </ul>
       )}
-      <p>{inChest ? "The crew keeps" : "You carry"} <strong>{total}</strong>{inChest ? " here" : ""}. Put one into a place's slot on the atlas, at the lighthouse, to set out for it: it is spent, and what it carries is added to the place. Stones are cut and worked at the stonecutter's bench, beside the smithy at the west end of the High Street.</p>
+      <p>{inChest ? "The crew keeps" : "You carry"} <strong>{total}</strong>{inChest ? " here" : ""}. Put one into a place's slot on the atlas, opened at the waygate, to set out for it: it is spent, and what it carries is added to the place. Stones are cut and worked at the Lapidary in the Harbor.</p>
       {how && <p className="muted">{how}</p>}
     </div>
   );
@@ -1460,6 +1465,7 @@ function MaterialDetail({ kind, total, where = "pack" }: { kind: ResourceKind; t
         : where === "at-town" ? <p className="muted">Drag it into the town chest, or shift-click it; right-click to put in part of it.</p>
         : where === "pack" && <p className="muted">Stow it in a chest in your hut to free the square, or hand it to a crewmate in a trade.</p>}
       {price && <p className="muted">The market stall buys it for {price}g each.</p>}
+      {kind === "gem" && <p className="muted">The Lapidary buys them for {GEM_PRICE}g each. Tempering a lodestone there takes gems, and so does attuning one to a boon.</p>}
     </div>
   );
 }

@@ -5,7 +5,7 @@ import { layZone } from "./lay";
 import { zoneOptions } from "./gen";
 import { propOf } from "./props";
 
-const GLYPH: Record<string, string> = { wall: "#", wall_broken: "%", tower: "O", arch: "A", pillar: "I", pillar_broken: "i", statue: "S", obelisk: "!", altar: "a", well: "w", stairs: "=", brazier: "*", campfire: "*", tent: "^", palisade: "|", cart: "c", banner: "f", barrels: "b", standing_stone: "T", boulder: "o", ribs: ")", skull: "@", crystal: "+", ice_spire: "+", dead_tree: "t", great_tree: "Y", mushrooms: "m", stilt_hut: "H", basalt: "B", waygate: "G" };
+const GLYPH: Record<string, string> = { wall: "#", wall_broken: "%", tower: "O", arch: "A", pillar: "I", pillar_broken: "i", statue: "S", obelisk: "!", altar: "a", well: "w", stairs: "=", brazier: "*", campfire: "*", tent: "^", palisade: "|", cart: "c", banner: "f", barrels: "b", standing_stone: "T", boulder: "o", ribs: ")", skull: "@", crystal: "+", ice_spire: "+", dead_tree: "t", great_tree: "Y", mushrooms: "m", stilt_hut: "H", basalt: "B", waygate: "G", wall_torch: "&", throne: "Q", bookshelf: "B", table: "n", weapon_rack: "r", cage: "c", sarcophagus: "s", rug: "-", stalagmite: "^", bones: "," };
 
 it("dumps", () => {
   const which = (process.env.DUMP ?? "keep:greenwood:medium:1").split(",");
@@ -25,7 +25,7 @@ it("dumps", () => {
         let ch = " ";
         if (t) {
           const e = t.elev ?? 0;
-          ch = t.biome === "water" ? "~" : t.biome === "forest" ? "\"" : t.biome === "dock" ? "=" : e === 0 ? "." : String(e);
+          ch = t.biome === "rock" ? "#" : t.biome === "water" ? "~" : t.biome === "forest" ? "\"" : t.biome === "dock" ? "=" : e === 0 ? "." : String(e);
           if (t.prop) ch = GLYPH[t.prop] ?? "?";
           if (t.ladder) ch = "L";
         }

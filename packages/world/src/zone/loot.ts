@@ -17,11 +17,23 @@
 //               the node lies, more again for each of its perils, and its
 //               lodestones with them (lodestone.ts).
 //
-// What is in any of these is each hero's own: rolled for them the first
-// time they look (`look`), and nobody else's to take. Looking is free and
-// can be done from beside it at any time out of a fight; so is taking
-// (`take`), a thing at a time or all at once. Everything taken is an effect
-// the server carries out (ZoneRoom), and a `took` event the client tells.
+// Whose it is depends on which it is:
+//
+//   a body, a chest   everyone's, first come first served. One lot of
+//                     things, rolled once, the first time anyone looks
+//                     (and a piece of gear in it for one of the party as
+//                     the dice have it, not for whoever looked). Everyone
+//                     who looks sees the same things, and what one hero
+//                     takes is gone for all of them.
+//   the spoils        each hero's own share, rolled for them the first
+//                     time they look, and nobody else's to take.
+//
+// Looking (`look`) is free and can be done from beside it at any time out
+// of a fight; so is taking (`take`), a thing at a time or all at once. A
+// thing is named by its `uid`, never by where it lay in the list, so two
+// heroes reaching into the same body at once each get what they reached
+// for or are told it has gone. Everything taken is an effect the server
+// carries out (ZoneRoom), and a `took` event the client tells.
 
 import { hexDistance } from "@gantt-quest/core";
 import { ENEMIES } from "../content";
@@ -99,7 +111,7 @@ export function leaveBody(state: ZoneState, unit: Unit): void {
 /**
  * A map the atlas made has just been cleared (nobody left to fight and nothing left to open): every player's hero
  * on it is paid its XP, and its spoils are heaped on open ground beside `by` (whoever finished it), each hero's
- * share their own to take. Once only. Called wherever either of those can become true.
+ * share their own to take (unlike a body or a chest, which is first come first served). Once only. Called wherever either of those can become true.
  */
 export function payBounty(ctx: Ctx, by?: Unit): void {
   const { state } = ctx;
@@ -126,29 +138,60 @@ export function checkLoot(state: ZoneState, unit: Unit, spot: LootSpot | undefin
   return null;
 }
 
-/** What is in a spot for `hero`: rolled now if they have not looked before. */
+/**
+ * Whether what is in a spot is everyone's, first come first served: a body or a chest. The spoils are each hero's
+ * own. (So is a body or a chest on a map saved when those were too, if someone had looked into it by then: it has
+ * shares in `loot` and nothing in `shared`, and is finished as it was begun. One nobody had looked into is shared.)
+ */
+export const sharedLoot = (spot: LootSpot): boolean => spot.kind !== "spoils" && (!!spot.shared || Object.keys(spot.loot).length === 0);
+
+/** What `hero` would find in a spot now: what is left in a body or a chest, or of their own share of the spoils. Undefined: it has not been looked into yet. */
+export const lootIn = (spot: LootSpot, hero: string): LootItem[] | undefined => (sharedLoot(spot) ? spot.shared : spot.loot[hero]);
+
+/** What is in a spot, as `hero` finds it: rolled now if nobody has looked into a body or a chest before, or they have not looked at their share of the spoils. */
 export function look(ctx: Ctx, hero: Unit, spot: LootSpot): LootItem[] {
-  const had = spot.loot[hero.id];
+  const shared = sharedLoot(spot);
+  const had = shared ? spot.shared : spot.loot[hero.id];
   if (had) return had;
-  const who = { classId: hero.kind, level: hero.level };
   const { options } = ctx.state;
-  const found =
+  // Whose a piece of gear in it would be: the looker's, in a share of their own. In what is everyone's, one of the
+  // players' heroes on the map as the dice have it, so that what is found is nothing to do with who looked first.
+  const owner = shared ? (ctx.rng.pick(players(ctx.state)) ?? hero) : hero;
+  const who = { classId: owner.kind, level: owner.level };
+  const rolled =
     spot.kind === "body" ? rollBody(ctx.rng, spot.unit ?? "", spot.level ?? 1, who, options)
     : spot.kind === "chest" ? rollChest(ctx.rng, CHEST_PAY[spot.chest ?? "chest"], who)
     : rollSpoils(ctx.rng, who, options);
-  spot.loot[hero.id] = found;
+  const found = rolled.map((item, i) => ({ ...item, uid: i + 1 }));
+  if (shared) spot.shared = found;
+  else spot.loot[hero.id] = found;
   return found;
 }
 
 /**
- * Take from a spot what is `hero`'s: the `index`th thing, or all of it. Gold, materials and what there is to drink
- * or throw go as one grant; each piece of gear, lodestone, blueprint or furnishing past the first is a grant of its own.
+ * Take from a spot: the thing with this `uid` (or, in a share of `hero`'s own, the `index`th), or with neither all
+ * that is there. Out of a body or a chest it is gone for everyone, and whoever reaches for it next is told so. Gold,
+ * materials and what there is to drink or throw go as one grant; each piece of gear, lodestone, blueprint or
+ * furnishing past the first is a grant of its own. All of them to `hero`, and each thing once.
  */
-export function take(ctx: Ctx, hero: Unit, spot: LootSpot, index?: number): string | null {
-  const mine = look(ctx, hero, spot);
-  const taken = index === undefined ? [...mine] : mine[index] ? [mine[index]] : [];
-  if (taken.length === 0) return index === undefined ? "There is nothing left in it for you." : "That is not there any more.";
-  spot.loot[hero.id] = index === undefined ? [] : mine.filter((_, i) => i !== index);
+export function take(ctx: Ctx, hero: Unit, spot: LootSpot, which: { index?: number; uid?: number } = {}): string | null {
+  const shared = sharedLoot(spot);
+  const there = look(ctx, hero, spot);
+  const all = which.uid === undefined && which.index === undefined;
+  // A place in the list names a thing only where nobody else can have changed the list.
+  const one = which.uid !== undefined ? there.find((item) => item.uid === which.uid) : shared || which.index === undefined ? undefined : there[which.index];
+  const taken = all ? [...there] : one ? [one] : [];
+  if (taken.length === 0) {
+    if (!shared) return all ? "There is nothing left in it for you." : "That is not there any more.";
+    if (all) return "There is nothing left in it.";
+    if (which.uid === undefined) return "That is not there any more.";
+    return spot.gone?.[which.uid] === hero.id ? "You have taken that already." : "Someone else took that.";
+  }
+  const left = there.filter((item) => !taken.includes(item));
+  if (shared) {
+    spot.shared = left;
+    for (const item of taken) if (item.uid !== undefined) (spot.gone ??= {})[item.uid] = hero.id;
+  } else spot.loot[hero.id] = left;
   const blank = (): Extract<ZoneEffect, { type: "grant" }> => ({ type: "grant", heroId: hero.id, xp: 0, resources: {} });
   const grants = [blank()];
   /** The first grant with nothing of this sort in it yet, or a fresh one. */
@@ -186,10 +229,13 @@ export const unopened = (state: Pick<ZoneState, "map">): number => state.map.poi
  */
 export const zoneCleared = (state: Pick<ZoneState, "map" | "units" | "options">): boolean => !state.units.some((u) => u.side === "enemy") && (!state.options.delve || unopened(state) === 0);
 
-/** What is left to take on the map for `hero`: the spots they have not emptied (ones they have not looked into count). */
-export const unlooted = (state: Pick<ZoneState, "loot">, hero: string): number => (state.loot ?? []).filter((s) => !s.loot[hero] || s.loot[hero].length > 0).length;
+/**
+ * What is left to take on the map for `hero`: the bodies and chests that still hold anything, and the spoils while
+ * their own share is untaken (what has not been looked into counts).
+ */
+export const unlooted = (state: Pick<ZoneState, "loot">, hero: string): number => (state.loot ?? []).filter((s) => (lootIn(s, hero)?.length ?? 1) > 0).length;
 
-/** What a client is sent of the loot: every spot, each holding only what is in it for `you`. */
+/** What a client is sent of the loot: every spot, with what is everyone's in it as it stands, and of the shares in it only `you`'s own. */
 export function lootFor(state: Pick<ZoneState, "loot">, you: string): LootSpot[] | undefined {
   return state.loot?.map((s) => ({ ...s, loot: s.loot[you] ? { [you]: s.loot[you] } : {} }));
 }

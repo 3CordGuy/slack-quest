@@ -28,7 +28,7 @@ export const FREE_WALK = 80;
 /** The highest a hex stands, in levels. */
 export const MAX_ELEV = 5;
 
-/** How many can stand on one hex at once, friend or foe. The fallen take up no room. */
+/** How many of one side can stand on one hex at once. The two sides never share one. The dead take up no room. */
 export const HEX_ROOM = 2;
 
 export const elevOf = (map: WorldMap, pos: HexPos): number => tileAt(map, pos)?.elev ?? 0;
@@ -51,8 +51,9 @@ export function ladderBetween(map: WorldMap, a: HexPos, b: HexPos): boolean {
 }
 
 /**
- * Whether a blow by hand reaches from one hex to another: the same hex or the one beside it, and no cliff
- * between (a level's difference at most), unless a ladder joins them: a fight goes on up and down a ladder.
+ * Whether a blow by hand (or a helping one) reaches from one hex to another: the hex beside it, or the same hex
+ * (which only an ally shares), and no cliff between (a level's difference at most), unless a ladder joins them: a
+ * fight goes on up and down a ladder.
  */
 export function strikes(map: WorldMap, a: HexPos, b: HexPos): boolean {
   if (hexDistance(a, b) > 1) return false;
@@ -151,9 +152,27 @@ export const unitAt = (state: Pick<ZoneState, "units">, pos: HexPos): Unit | und
   return there.find((u) => !u.down) ?? there[0];
 };
 
-/** Whether there is room on a hex for one more to stand (`but`: someone who does not count, being the one who would). The dead take up none. */
-export const roomAt = (state: Pick<ZoneState, "units">, pos: HexPos, but?: string): boolean =>
-  state.units.reduce((n, u) => n + (!isDead(u) && u.id !== but && sameHex(u.pos, pos) ? 1 : 0), 0) < HEX_ROOM;
+/**
+ * Whether a hex is held against `side`: someone of the other side is on it, on their feet or down but not dead.
+ * Nobody enters a hex held against them, by any means: on foot, by a leap, or shoved.
+ */
+export const heldAgainst = (state: Pick<ZoneState, "units">, pos: HexPos, side: Side): boolean =>
+  state.units.some((u) => u.side !== side && !isDead(u) && sameHex(u.pos, pos));
+
+/**
+ * Whether there is room on a hex for `who` to stand: nobody of the other side is on it, and fewer than `HEX_ROOM`
+ * of their own (not counting `who`, if they are there already). With nobody named: whether it is free of everyone.
+ * The dead take up no room.
+ */
+export const roomAt = (state: Pick<ZoneState, "units">, pos: HexPos, who?: Pick<Unit, "id" | "side">): boolean => {
+  let own = 0;
+  for (const u of state.units) {
+    if (isDead(u) || u.id === who?.id || !sameHex(u.pos, pos)) continue;
+    if (!who || u.side !== who.side) return false;
+    own += 1;
+  }
+  return own < HEX_ROOM;
+};
 
 export const unitById = (state: ZoneState, id: string): Unit | undefined => state.units.find((u) => u.id === id);
 
@@ -165,7 +184,7 @@ export interface Reached {
   cost: number;
   prev: string | null;
   pos: HexPos;
-  /** Whether the walker can end a move here: there is room on the hex for them. */
+  /** Whether the walker can end a move here: there is room on the hex for them (it is not full of their own side). */
   stop: boolean;
   /** Reckoned with a course charted: the way here, start excluded (the hexes before it may be best reached some other way). */
   way?: HexPos[];
@@ -196,16 +215,15 @@ export const wallAt = (state: { weather?: Weather[] }, pos: HexPos): Weather | u
 /** Something stands on this hex that nobody walks, lands or is shoved onto: a chest of any kind, a crate not yet broken, or a wall. */
 export const blockerAt = (state: Pick<ZoneState, "map"> & { weather?: Weather[] }, pos: HexPos): boolean => chestAt(state, pos) || !!crateAt(state, pos) || !!wallAt(state, pos);
 
-/** What squeezing past an enemy on their feet adds to a step onto their hex. */
-export const SCOOT_COST = 1;
-
 /**
  * What one step costs `unit`, or Infinity if it cannot be made. Open ground is 1; forest and hills 2;
  * climbing a level 1 more; oil or slime underfoot 1 more. A drop or a climb of two levels or more is a cliff:
  * it is crossed only where a ladder stands (a step more for each level climbed, one more to climb down).
- * Nobody bars the way: a hex is shared, friend or foe, up to `HEX_ROOM` on it (a hero who is down keeps their
- * place; a dead enemy takes up none), and a full one can still be passed through, though not stopped on.
- * Squeezing past an enemy on their feet costs a step more. Chests, crates and whatever else stands in the way bar it.
+ * The other side bars the way: a hex with any of them on it, on their feet or down (a hero who is down keeps
+ * their place; a dead enemy takes up no room and bars nobody), cannot be stepped onto, so it is neither stopped on
+ * nor passed through. A unit's own side does not: up to `HEX_ROOM` of them stand on one hex, and a full one can
+ * still be walked through, though not stopped on. What flies is barred the same way. Chests, crates and whatever
+ * else stands in the way bar it too.
  */
 export function stepCost(state: ZoneState, unit: Unit, from: HexPos, to: HexPos, shut?: ReadonlySet<string>): { cost: number; stop: boolean } {
   const tile = tileAt(state.map, to);
@@ -223,19 +241,19 @@ export function stepCost(state: ZoneState, unit: Unit, from: HexPos, to: HexPos,
     const underfoot = state.surfaces[posKey(to)]?.kind;
     if (underfoot === "oil" || underfoot === "slime") cost += 1;
   }
-  let standing = 0;
-  let foes = false;
+  // Who is there already (as roomAt counts them): any of the other side, and there is no going there at all.
+  let own = 0;
   for (const u of state.units) {
-    if (u.id === unit.id || u.down || !sameHex(u.pos, to)) continue;
-    standing += 1;
-    if (u.side !== unit.side) foes = true;
+    if (u.id === unit.id || isDead(u) || !sameHex(u.pos, to)) continue;
+    if (u.side !== unit.side) return none;
+    own += 1;
   }
-  if (foes) cost += SCOOT_COST;
-  return { cost, stop: standing < HEX_ROOM };
+  return { cost, stop: own < HEX_ROOM };
 }
 
 /**
- * Everywhere `unit` can get to within `budget`, cheapest way first (Dijkstra). `shut` closes hexes
+ * Everywhere `unit` can get to within `budget`, cheapest way first (Dijkstra): round whoever of the other
+ * side stands in the way, and through its own (stepCost). `shut` closes hexes
  * off altogether: the enemy uses it to look for a way round a burning or poisoned hex. With a `course`
  * (Chart a Course), steps nearer a mark spend its movement first, and `cost` is what is spent of `budget`.
  */
@@ -349,7 +367,7 @@ export const reachFrom = (map: WorldMap, from: HexPos, to: HexPos, range: number
 /** Whether two hexes lie side by side. */
 export const adjacent = (a: HexPos, b: HexPos): boolean => hexDistance(a, b) === 1;
 
-/** Whether two hexes are the same one or lie side by side: near enough to crowd each other, whatever the ground between does. */
+/** Whether two hexes are the same one (two of a side sharing it) or lie side by side: near enough to crowd each other, whatever the ground between does. */
 export const close = (a: HexPos, b: HexPos): boolean => hexDistance(a, b) <= 1;
 
 /** The direction, of the six, that points most nearly from one hex toward another. */

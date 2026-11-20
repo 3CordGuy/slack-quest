@@ -82,8 +82,9 @@ import { consumablesOf } from "./server/consumables";
 import { apothecaryView, brew, brewFlask, buyFromKeeper, galleyKeeperView, haggle, smithItem, smithyView } from "./server/workshops";
 import { cook } from "./server/galley";
 import { announceXp, harborXpFor } from "./server/harbor-xp";
-import { chartFor, devClearNode, devResetChart, enterProblem, openNode } from "./server/atlas";
+import { chartFor, devClearNode, devResetChart, enterProblem, openNode, scoutNode } from "./server/atlas";
 import { attuneStone, cutStone, fuseStones, gainStone, lodestonesOf, rerollStone, temperStone } from "./server/lodestones";
+import { sellGems } from "./server/lapidary";
 import { chestBuyTab, chestColorTab, chestFor, chestMoveTab, chestPutGear, chestPutStack, chestRenameTab, chestTakeGear, chestTakeStack } from "./server/townchest";
 import { createZoneRow, crewPlaces, getZoneRow, openCave, teleportTo } from "./server/zones";
 import {
@@ -1034,6 +1035,61 @@ app.post("/api/atlas/open", async (c) => {
   return c.json(went);
 });
 
+// ---------- the muster: setting out together ----------
+
+/** Ask the crew's Harbor room about its muster. */
+async function musterRoom(env: Env, crewId: string, path: "" | "/call" | "/answer", body?: unknown): Promise<{ status: number; json: Record<string, unknown> }> {
+  const res = await env.HARBOR_ROOM.get(env.HARBOR_ROOM.idFromName(crewId)).fetch(`https://harbor/muster${path}`, {
+    method: body === undefined ? "GET" : "POST",
+    headers: { "x-crew-id": crewId, ...(body === undefined ? {} : { "content-type": "application/json" }) },
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+  });
+  return { status: res.status, json: (await res.json().catch(() => ({ error: "The Harbor did not answer." }))) as Record<string, unknown> };
+}
+
+// The crew's muster, if one is on (or ended a moment ago): for whoever is looking at the atlas, which has no socket.
+app.get("/api/atlas/muster", async (c) => {
+  const crew = await crewFor(c.env.DB, c.get("player").id);
+  if (!crew) return c.json({ error: "You are not in a crew." }, 403);
+  const { json } = await musterRoom(c.env, crew.id, "");
+  return c.json({ muster: json.muster ?? null });
+});
+
+// Set out for a place, asking the crew first. Where a map is already being fought through there, that is its code
+// and nobody is asked. With nobody else in town the map is made at once. Otherwise a muster is called: everyone in
+// town is asked, and the map is made when it starts (the Harbor room does that, and spends the stone then).
+app.post("/api/atlas/muster", async (c) => {
+  const player = c.get("player");
+  const [crew, character] = await Promise.all([crewFor(c.env.DB, player.id), getCharacter(c.env.DB, player.id)]);
+  if (!crew) return c.json({ error: "You are not in a crew." }, 403);
+  if (character?.status !== "active") return c.json({ error: "Create a character first." }, 409);
+  const body = await c.req.json<{ node?: unknown; stone?: unknown }>().catch(() => ({}) as { node?: unknown; stone?: unknown });
+  const seen = await scoutNode(c.env.DB, crew.id, body.node, body.stone);
+  if ("error" in seen) return c.json({ error: seen.error }, seen.status);
+  if ("live" in seen) return c.json({ code: seen.live, fresh: false });
+  const called = await musterRoom(c.env, crew.id, "/call", { by: { id: player.id, name: character.name }, to: seen, stone: body.stone });
+  if (called.json.alone) {
+    const went = await openNode(c.env.DB, crew.id, player.id, body.node, 1, body.stone);
+    if ("error" in went) return c.json({ error: went.error }, went.status);
+    if (went.fresh) c.executionCtx.waitUntil(refreshHarbor(c.env, crew.id));
+    return c.json(went);
+  }
+  return c.json(called.json, called.status as 200 | 400 | 409);
+});
+
+// Answer the crew's muster: "ready" or "no" from anyone in the crew, "start" or "cancel" from whoever called it.
+app.post("/api/atlas/muster/answer", async (c) => {
+  const player = c.get("player");
+  const [crew, character] = await Promise.all([crewFor(c.env.DB, player.id), getCharacter(c.env.DB, player.id)]);
+  if (!crew) return c.json({ error: "You are not in a crew." }, 403);
+  if (character?.status !== "active") return c.json({ error: "Create a character first." }, 409);
+  const body = await c.req.json<{ answer?: unknown }>().catch(() => ({}) as { answer?: unknown });
+  const said = await musterRoom(c.env, crew.id, "/answer", { who: { id: player.id, name: character.name }, answer: body.answer });
+  return c.json(said.json, said.status as 200 | 400 | 409);
+});
+
+// ---------- the Lapidary: lodestones cut and worked, gems bought (the keeper inside does all three) ----------
+
 // Cut a plain lodestone from stone and iron, into the pack: the way out for someone with none. (One that
 // carries anything is only ever found.)
 app.post("/api/atlas/cut", async (c) => {
@@ -1044,7 +1100,7 @@ app.post("/api/atlas/cut", async (c) => {
   return problem ? c.json({ error: problem }, 409) : c.json({ lodestones: await lodestonesOf(c.env.DB, player.id) });
 });
 
-// The lodestone bench: fuse three stones into one that carries more, attune a stone to one more thing, temper
+// The lapidary's bench: fuse three stones into one that carries more, attune a stone to one more thing, temper
 // one thing a stone carries up a rank, or reroll what a stone carries. All out of the asker's own pack. Answers with the stone made and the pack's stones.
 app.post("/api/atlas/bench", async (c) => {
   const player = c.get("player");
@@ -1059,6 +1115,13 @@ app.post("/api/atlas/bench", async (c) => {
     : "There is no such work at the bench.";
   if (typeof done === "string") return c.json({ error: done }, 409);
   return c.json({ made: done.made, lodestones: await lodestonesOf(c.env.DB, player.id) });
+});
+
+// Sell gems out of the pack to the lapidary, at her price.
+app.post("/api/lapidary/gems/sell", async (c) => {
+  const body = await c.req.json<{ qty?: unknown }>().catch(() => ({}) as { qty?: unknown });
+  const result = await sellGems(c.env.DB, c.get("player").id, body.qty);
+  return typeof result === "string" ? c.json({ error: result }, 409) : c.json({ gold: result });
 });
 
 // ---------- the town chest: one store the crew shares, in tabs ----------

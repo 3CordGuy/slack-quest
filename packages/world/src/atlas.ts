@@ -20,6 +20,15 @@
 //              round the Harbor, and beyond it great tracts of frost, dunes,
 //              mire and ashlands, each many places across. The same kinds
 //              of ground are in each, and look nothing alike.
+//   the land   what a hex of the world is comes of those (`atlasLie`): sea,
+//              strand, open sand, open ground, forest or hills, in a
+//              climate. It is what the atlas draws there (atlasMap.ts), and
+//              a node is what it stands on: the land and climate under it
+//              are its own, and its map's ground, its kind of place and who
+//              lives there all follow from them. Nothing about a node's
+//              environment is decided anywhere else. Open sand is a desert
+//              wherever it lies: its climate is the dunes, even in a small
+//              stretch of it in the middle of the greenwood.
 //   sea caves  now and then a node is a cave: a delve (zone/delve.ts), with
 //              chests and a hoard, cleared when the last chest is open.
 //   lookouts   high ground, craggy to fight on. From one the crew has
@@ -39,7 +48,7 @@ import type { HexPos } from "@gantt-quest/core";
 import type { Clime } from "./map";
 import { makeRng, seedFromString, type Rng } from "./rng";
 import { zoneOptions } from "./zone/gen";
-import { siteFor } from "./zone/sites";
+import { placeName, siteFor, type SiteGround, type SiteId } from "./zone/sites";
 import { PERIL_IDS, ZONE_MODS, cleanMods, modOf, rollMod, type ZoneMod, type ZoneModId } from "./zone/mods";
 import type { ZoneBiome, ZoneOptions } from "./zone/types";
 
@@ -59,9 +68,14 @@ export interface AtlasNode {
   hex: HexPos;
   name: string;
   kind: AtlasNodeKind;
-  biome: ZoneBiome;
-  /** The climate it lies in. */
+  /**
+   * The land it stands on, and the climate of it: the hex of the world under it, as the atlas draws it
+   * (`atlasLie`). Its map's whole environment follows from these two and nothing else.
+   */
+  land: AtlasLand;
   clime: Clime;
+  /** The ground its map is made of, which follows from its land (a sea cave's is the caves'). */
+  biome: ZoneBiome;
   /** Cells out from the Harbor: 0 for the Harbor itself. */
   ring: number;
   /** The level of what stands on it. */
@@ -224,6 +238,74 @@ export function atlasClime(seed: string, hex: HexPos, memo?: Map<string, number>
   return wet > 0.7 ? "mire" : "greenwood";
 }
 
+/**
+ * What kind of ground a hex of the world is, whatever its climate: open water (in the ashlands, molten rock);
+ * the strand at the water's edge (a beach; a shelf of ice, in the frost; a crust of cooled rock, in the
+ * ashlands); a stretch of open sand; open ground (grass, snow, moss, cinders); forest; or hills.
+ */
+export type AtlasLand = "sea" | "strand" | "sand" | "grass" | "forest" | "hills";
+export const ATLAS_LANDS: AtlasLand[] = ["sea", "strand", "sand", "grass", "forest", "hills"];
+
+/**
+ * How each climate bends the lie of the land. `sea` is how much of it is under water (the greenwood's share
+ * is 0.34: the dunes are dry and the mire half drowned); `strand` how wide the shore beyond the water is;
+ * `ridge` how readily hills rise; `woods` how much of what would be forest is (the dunes have a tree here and there).
+ */
+const LIE: Record<Clime, { sea: number; strand: number; ridge: number; woods: number }> = {
+  greenwood: { sea: 0.34, strand: 0.05, ridge: 0.68, woods: 1 },
+  // Its shallows are frozen over: a wide shelf of ice where a strand would be.
+  frost: { sea: 0.3, strand: 0.09, ridge: 0.64, woods: 0.8 },
+  dunes: { sea: 0.22, strand: 0.03, ridge: 0.66, woods: 0.12 },
+  mire: { sea: 0.4, strand: 0.03, ridge: 0.78, woods: 0.9 },
+  // No sea: the low ground is molten, with a crust at its edge.
+  ash: { sea: 0.21, strand: 0.05, ridge: 0.6, woods: 0.45 },
+};
+
+/** The lie of the land at a hex of the world: what the atlas draws there (atlasMap.ts), and so what a place standing on it is. */
+export interface AtlasLie {
+  land: AtlasLand;
+  /**
+   * The climate its ground is: that of the tract it lies in (`atlasClime`), save that a stretch of open sand is
+   * the dunes' own wherever it lies. Sand is a desert, even a small one in the middle of the greenwood.
+   */
+  clime: Clime;
+  /** The climate of the tract round it. */
+  tract: Clime;
+  /** Fine noise, 0 to 1: what the map draws its small differences from. */
+  fine: number;
+  /** For hills: how far up the ridge they stand, from 0. */
+  up: number;
+  /** Open grass in the middle of a meadow: where the tall grass grows. */
+  lea: boolean;
+}
+
+/** The lie of the land at a hex of the world, before anything is put on it. `memo` saves working the same noise out twice. */
+export function atlasLie(seed: string, hex: HexPos, memo?: Map<string, number>): AtlasLie {
+  const at = (tag: string, scale: number) => atlasNoise(seed, tag, hex, scale, memo);
+  const tract = atlasClime(seed, hex, memo);
+  const lie = LIE[tract];
+  const sea = at("sea", 3.1);
+  const fine = at("fine", 0.34);
+  const is = (land: AtlasLand, more: Partial<AtlasLie> = {}): AtlasLie => ({ land, clime: land === "sand" ? "dunes" : tract, tract, fine, up: 0, lea: false, ...more });
+  if (sea < lie.sea) return is("sea");
+  // Ridges: hills that climb into mountains along their spine.
+  const ridge = at("ridge", 1.25);
+  if (ridge > lie.ridge && sea > lie.sea + 0.08) return is("hills", { up: ridge - lie.ridge });
+  // The strand: wherever the sea is near.
+  if (sea < lie.sea + lie.strand) return is("strand");
+  // The mire is pocked with pools.
+  if (tract === "mire" && fine < 0.2) return is("sea");
+  const region = atlasRegion(seed, hex, memo);
+  const wooded = (share: number) => fine < share * lie.woods;
+  // A run of shore country is open sand in the greenwood and the dunes, with a green patch here and there.
+  if (region === "shore") return tract === "greenwood" || tract === "dunes" ? is(fine > 0.8 ? "grass" : "sand") : is(wooded(0.25) ? "forest" : "grass");
+  if (region === "woods") return is(wooded(0.7) ? "forest" : "grass");
+  return fine > 1 - 0.26 * lie.woods ? is("forest") : is("grass", { lea: true });
+}
+
+/** The ground a place's map is laid on (zone/sites.ts), by the land it stands on: the shore for the sea and its strand, high ground for the hills. */
+export const LAND_GROUND: Record<AtlasLand, SiteGround> = { sea: "shore", strand: "shore", sand: "meadow", grass: "meadow", forest: "woods", hills: "heights" };
+
 const FIRST = [
   "Gull", "Widow's", "Salt", "Drowned", "Lantern", "Brine", "Kelp", "Thistle", "Crooked", "Grey",
   "Amber", "Wrecker's", "Tinker's", "Mizzen", "Fathom", "Barnacle", "Squall", "Ember", "Moss", "Heron",
@@ -251,13 +333,6 @@ function firstWord(seed: string, cell: AtlasCell): string {
   const n = words.length;
   return words[(((cell.q * 7 + cell.r * 13) % n) + n) % n];
 }
-const LAST: Record<ZoneBiome, string[]> = {
-  meadow: ["Isle", "Holm", "Green", "Down", "Lea", "Rise"],
-  woods: ["Wood", "Thicket", "Grove", "Holt", "Tangle", "Copse"],
-  shore: ["Cove", "Strand", "Spit", "Shoals", "Bar", "Landing"],
-  caves: ["Grotto", "Sea Cave", "Sump", "Gullet", "Hole", "Cellars"],
-};
-
 /** What a place is called in a climate that is not the greenwood, whatever its ground. */
 const CLIME_LAST: Record<Exclude<Clime, "greenwood">, string[]> = {
   frost: ["Floe", "Drift", "Fell", "Rime", "Tarn", "Hollow", "Scarp", "Firth"],
@@ -265,6 +340,16 @@ const CLIME_LAST: Record<Exclude<Clime, "greenwood">, string[]> = {
   mire: ["Mire", "Fen", "Slough", "Carr", "Bog", "Reeds", "Wash", "Sedge"],
   ash: ["Cinders", "Scar", "Slag", "Crater", "Kiln", "Embers", "Vent", "Clinker"],
 };
+/** What a place in the greenwood is called, by the land it stands on. (Open sand is the dunes' wherever it lies, and is named as theirs.) */
+const LAST: Record<AtlasLand, string[]> = {
+  sea: ["Isle", "Holm", "Skerry", "Key", "Rock", "Ait"],
+  strand: ["Cove", "Strand", "Spit", "Shoals", "Bar", "Landing"],
+  sand: CLIME_LAST.dunes,
+  grass: ["Green", "Down", "Lea", "Rise", "Meadow", "Field"],
+  forest: ["Wood", "Thicket", "Grove", "Holt", "Tangle", "Copse"],
+  hills: ["Ridge", "Knoll", "Bluff", "Edge", "Pike", "Moor"],
+};
+const CAVE_LAST = ["Grotto", "Sea Cave", "Sump", "Gullet", "Hole", "Cellars"];
 
 /** What a lookout and a lair are called, whatever ground or climate they are in. */
 const KIND_LAST: Partial<Record<AtlasNodeKind, string[]>> = {
@@ -303,7 +388,8 @@ export function atlasNode(seed: string, cell: AtlasCell): AtlasNode {
   const ring = ringOf(cell);
   const hex = atlasHex(seed, cell);
   const links = around(cell).filter((n) => joined(seed, cell, n)).map(idOf);
-  if (ring === 0) return { id, cell, hex, name: "The Harbor", kind: "harbor", biome: "shore", clime: "greenwood", ring: 0, level: 1, mods: [], links };
+  // Home: a green by the water, whatever the lie of the land was before the town was built on it.
+  if (ring === 0) return { id, cell, hex, name: "The Harbor", kind: "harbor", land: "grass", clime: "greenwood", biome: "meadow", ring: 0, level: 1, mods: [], links };
   const rng = rngFor(seed, "node", id);
   // One throw decides what it is: a sea cave, a lookout, a lair, or (most of them) a landfall.
   const what = rng.next();
@@ -312,15 +398,19 @@ export function atlasNode(seed: string, cell: AtlasCell): AtlasNode {
     : ring >= 2 && what < SEACAVE_CHANCE + LOOKOUT_CHANCE ? "lookout"
     : ring >= 3 && what < SEACAVE_CHANCE + LOOKOUT_CHANCE + LAIR_CHANCE ? "lair"
     : "landfall";
-  const biome = kind === "seacave" ? "caves" : atlasRegion(seed, hex);
-  const clime = atlasClime(seed, hex);
+  // Where it is decides what it is like: the land under it and that land's climate, as the atlas draws them.
+  const { land, clime } = atlasLie(seed, hex);
+  const biome: ZoneBiome = kind === "seacave" ? "caves" : groundBiome(LAND_GROUND[land]);
   // A cave is a cave wherever it is, and a lookout or a lair is named for what it is; anywhere else out of the
-  // greenwood is named for its climate.
-  const last = rng.pick(LAST[biome]);
+  // greenwood is named for its climate, and in it for its land.
+  const last = rng.pick(kind === "seacave" ? CAVE_LAST : LAST[land]);
   const own = KIND_LAST[kind];
   const name = `${firstWord(seed, cell)} ${own ? rngFor(seed, "kind-name", id).pick(own) : clime === "greenwood" || kind === "seacave" ? last : rngFor(seed, "clime-name", id).pick(CLIME_LAST[clime])}`;
-  return { id, cell, hex, name, kind, biome, clime, ring, level: atlasLevel(ring + (kind === "lair" ? 1 : 0)), mods: rollMods(rng, ring, kind), links };
+  return { id, cell, hex, name, kind, land, clime, biome, ring, level: atlasLevel(ring + (kind === "lair" ? 1 : 0)), mods: rollMods(rng, ring, kind), links };
 }
+
+/** The ground a map is made of (its options' `biome`), for each ground a place may stand on: high ground is open ground, laid steep. */
+const groundBiome = (ground: SiteGround): ZoneBiome => (ground === "heights" ? "meadow" : ground);
 
 /** The node an id names on a chart, or null if the id is not a node's. */
 export function atlasNodeById(seed: string, id: unknown): AtlasNode | null {
@@ -378,8 +468,15 @@ export function atlasView(seed: string, cleared: ReadonlySet<string>): AtlasNode
 export const atlasTier = (node: Pick<AtlasNode, "ring" | "kind">): number => Math.max(1, node.ring + (node.kind === "lair" ? LAIR_RINGS : 0));
 
 /** The kind of place a node is (zone/sites.ts): what its map is laid out as. The same node is always the same kind of place. */
-export const nodeSite = (seed: string, node: Pick<AtlasNode, "id" | "kind" | "biome" | "clime">): string =>
-  siteFor(node.biome, node.clime, node.kind === "lookout" ? "lookout" : node.kind === "lair" ? "lair" : "landfall", roll(seed, "site", node.id));
+export const nodeSite = (seed: string, node: Pick<AtlasNode, "id" | "kind" | "land" | "clime">): string =>
+  siteFor(LAND_GROUND[node.land], node.clime, node.kind === "lookout" ? "lookout" : node.kind === "lair" ? "lair" : "landfall", roll(seed, "site", node.id));
+
+/**
+ * What a node's map is, said plainly, for the atlas: the kind of place in its climate and on its ground
+ * ("Desert ruins", "Frozen cove", "Woodland henge"). A sea cave is a sea cave wherever it is.
+ */
+export const nodePlace = (seed: string, node: Pick<AtlasNode, "id" | "kind" | "land" | "clime">): string =>
+  node.kind === "seacave" ? "Sea cave" : placeName(nodeSite(seed, node) as SiteId, node.clime, LAND_GROUND[node.land]);
 
 /**
  * What a node's map is made from, for a party of this many. The ring sets the level; the ground, the climate and
@@ -394,6 +491,7 @@ export function nodeOptions(seed: string, node: AtlasNode, party: number, more: 
   const base = { party, level: node.level, threat: near ? 1 : 2, mods: cleanMods([...node.mods, ...more]), tier: atlasTier(node), name: node.name, clime: node.clime, ...(stone !== undefined ? { stone } : {}) };
   if (node.kind === "seacave") return zoneOptions({ ...base, size: "medium", biome: "caves", delve: true });
   const site = nodeSite(seed, node);
+  const ground = LAND_GROUND[node.land];
   // High, broken ground: whoever holds the top has the best of it.
   if (node.kind === "lookout") return zoneOptions({ ...base, site, size: "medium", biome: node.biome, groups: rng.int(3, 4), elevation: 3, obstacles: 1, clear: 4 });
   // The beast itself in its den, with a band of whatever else lives there about it, and more bands out on the
@@ -401,14 +499,17 @@ export function nodeOptions(seed: string, node: AtlasNode, party: number, more: 
   if (node.kind === "lair") {
     return zoneOptions({ ...base, site, size: "medium", biome: node.biome, groups: 3, kinds: [CLIME_BEAST[node.clime] ?? LAIR_BEAST[node.biome]], elevation: rng.int(1, 2), obstacles: rng.int(1, 2), clear: 4 });
   }
+  const groups = near ? rng.int(2, 3) : rng.int(3, 5);
+  const rise = rng.int(1, ground === "shore" ? 2 : 3);
   return zoneOptions({
     ...base,
     site,
     size: near ? "small" : "medium",
     biome: node.biome,
-    groups: near ? rng.int(2, 3) : rng.int(3, 5),
-    elevation: rng.int(1, node.biome === "shore" ? 2 : 3),
-    obstacles: rng.int(0, 1) + (node.biome === "woods" ? 1 : 0),
+    groups,
+    // Up in the hills the ground is as steep as ground gets, whatever stands on it.
+    elevation: ground === "heights" ? 3 : rise,
+    obstacles: rng.int(0, 1) + (ground === "woods" ? 1 : 0),
     clear: 4,
   });
 }

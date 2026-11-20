@@ -54,6 +54,18 @@ export const PROPS = {
   mushrooms: { name: "Giant mushrooms", blocks: true, blurb: "Caps as wide as a table, on stalks as thick as a leg." },
   stilt_hut: { name: "Stilt hut", blocks: true, hides: true, blurb: "A hut on legs, up out of the wet." },
   basalt: { name: "Basalt column", blocks: true, hides: true, blurb: "Six-sided black rock, as if somebody had cast it." },
+  // ---- under a roof ----
+  wall_torch: { name: "Wall with a torch", blocks: true, hides: true, light: 3, blurb: "Dressed stone, and a torch in an iron bracket." },
+  throne: { name: "Throne", blocks: true, blurb: "A high seat of carved stone. Whoever sits in it gives the orders here." },
+  bookshelf: { name: "Bookshelf", blocks: true, hides: true, blurb: "Shelves to the ceiling, and nobody dusting them." },
+  table: { name: "Table", blocks: true, blurb: "A long table, with what was on it when they left." },
+  weapon_rack: { name: "Weapon rack", blocks: true, blurb: "Spears and bills, racked and oiled." },
+  cage: { name: "Cage", blocks: true, blurb: "Iron bars, a lock, and straw on the floor." },
+  sarcophagus: { name: "Sarcophagus", blocks: true, blurb: "A stone coffin with somebody carved on the lid." },
+  rug: { name: "Rug", blurb: "A long rug, worn down the middle by a great many boots." },
+  // ---- under ground ----
+  stalagmite: { name: "Stalagmite", blocks: true, hides: true, blurb: "A fang of wet stone, grown up from the floor a drip at a time." },
+  bones: { name: "Bones", blurb: "Gnawed, cracked, and not all of them from animals." },
   // ---- the way in ----
   waygate: { name: "Waygate", blocks: true, light: 2, blurb: "The ring the lodestone drew you through. It is the way back, too." },
 } satisfies Record<string, PropDef>;

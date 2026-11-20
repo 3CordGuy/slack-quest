@@ -293,16 +293,9 @@ export const HUT_TIERS: HutTier[] = [
 ];
 
 /**
- * A gem from the quarry. Rare (a good thirty seconds at the face finds one or
- * two, a poor one none), so it is worth a few herbs' worth more than a meal:
- * selling the gems from a lucky day's outings buys a pub meal or two.
- */
-export const STALL_GEM_PRICE = 12;
-
-/**
  * Materials the market stall buys, and what it pays for each piece: what
- * islanders forage, and gems from the quarry. The stall has no use for
- * timber or ore.
+ * islanders forage. The stall has no use for timber or ore, and gems go to
+ * the lapidary (lapidary.ts).
  *
  * 3 gold is pitched at what the Apothecary's brews are worth at pub prices:
  * a Focus Tonic's 4 pieces sell for 12 against Spiced Rum's 14 for the same
@@ -311,11 +304,12 @@ export const STALL_GEM_PRICE = 12;
  * and a Healing Draught (a potion, which nobody sells) is better. The herbalist
  * salesman pays 5 to 7 a piece, so the stall stays the everyday floor.
  */
-export const STALL_BUYS: Partial<Record<ResourceKind, number>> = { herbs: 3, mushrooms: 3, gem: STALL_GEM_PRICE };
+export const STALL_BUYS: Partial<Record<ResourceKind, number>> = { herbs: 3, mushrooms: 3 };
 
 /** Why `qty` of `kind` cannot be sold to the stall by someone holding `have`, or null if it can. */
 export function sellMaterialProblem(kind: unknown, qty: unknown, have: Resources): string | null {
   const k = RESOURCE_KINDS.find((r) => r === kind);
+  if (k === "gem") return "The stall does not buy gems. Take them to the Lapidary.";
   if (!k || STALL_BUYS[k] === undefined) return "The stall does not buy that.";
   if (typeof qty !== "number" || !Number.isSafeInteger(qty) || qty < 1) return "Sell at least one.";
   if ((have[k] ?? 0) < qty) return `You only have ${have[k] ?? 0} ${RESOURCE_LABEL[k].toLowerCase()}.`;

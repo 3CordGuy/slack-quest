@@ -4,7 +4,7 @@
 
 export const HATS = ["helm", "wizard", "hood", "horns", "leaves", "feather", "tricorn", "circlet", "brim", "turban", "kerchief", "greathelm", "diver", "coral", "lamphelm", "none"] as const;
 export type Hat = (typeof HATS)[number];
-export const LOOK_WEAPONS = ["sword", "staff", "daggers", "club", "bow", "lute", "orb", "lantern", "scroll", "pack", "basket", "axe_shield", "grimoire", "smith_hammer", "paddle", "cleaver", "cutlass", "pager_axe", "blunderbuss", "coral_staff", "mace", "maul", "root_staff", "none"] as const;
+export const LOOK_WEAPONS = ["sword", "staff", "daggers", "club", "bow", "lute", "orb", "lantern", "scroll", "pack", "basket", "axe_shield", "grimoire", "smith_hammer", "paddle", "cleaver", "dop", "cutlass", "pager_axe", "blunderbuss", "coral_staff", "mace", "maul", "root_staff", "none"] as const;
 export type Weapon = (typeof LOOK_WEAPONS)[number];
 
 export interface Look {
@@ -67,6 +67,8 @@ export interface Look {
   nose?: "button" | "broad" | "long" | "hooked" | "bulbous";
   /** The eyes on a stock figure, where they are not the usual round ones. */
   eyes?: "big" | "beady" | "narrow" | "sleepy" | "fierce";
+  /** A jeweller's loupe of this colour: a short tube with a glass in it over one eye, on a leather band round the brow. */
+  loupe?: string;
 }
 
 export const LOOKS: Record<string, Look> = {
@@ -119,6 +121,10 @@ export const LOOKS: Record<string, Look> = {
   // The galley's cook: a big, weathered man with small beady eyes, a great red nose and a heavy black mustache, in a slate shirt under a stained linen
   // apron, a cook's cloth cap wound round his head, and the cleaver he is never seen without.
   keeper_cook: { skin: "#c98f68", hair: "#2a1c14", body: "#5f6f7a", legs: "#4a3a2e", accent: "#7a3a22", hat: "turban", hatColor: "#ece7d8", weapon: "cleaver", mustache: "walrus", apron: "#e2d9c2", nose: "bulbous", eyes: "beady" },
+  // The lapidary: a spare, grey-haired woman with narrow eyes, a brass loupe over one of them on a leather band, in a
+  // blue-grey shirt with the sleeves off under a canvas apron pale with stone dust, and in her hand the dop she holds
+  // a stone to the wheel with.
+  keeper_lapidary: { skin: "#e3bd9c", hair: "#b9bcc4", body: "#4f6478", legs: "#3a3d48", accent: "#7fd0ff", hat: "none", weapon: "dop", sleeveless: true, apron: "#b9b3a4", loupe: "#c79a3e", eyes: "narrow", boots: "#2a2622" },
   npc: { skin: "#e8b891", hair: "#b9b9b9", body: "#e3dccb", legs: "#5a4632", accent: "#e8dcc0", hat: "none", weapon: "none", stripes: "#2d3a5a", boots: "#3a2c22" },
   // Fight enemies, made over for the sea. The Bandit is a deckhand raider: a red kerchief knotted at the side, a
   // shirt banded in navy, a leather vest, a sash, and a cutlass.
