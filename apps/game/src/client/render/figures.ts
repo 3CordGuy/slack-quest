@@ -1961,6 +1961,10 @@ const JUMP = {
 };
 /** Where a bell rung in the hand sounds from, in the hand's frame: its mouth, hanging below the fist. */
 const BELL_MOUTH = new THREE.Vector3(0, -2.2, 0);
+/** Up along a flute played like a recorder, toward the mouth from its foot (down and out ahead of the chest). */
+const RECORDER_UP = new THREE.Vector3(0, 0.74, -0.67).normalize();
+/** How long a flute is, played like a recorder, from its foot to the lips. */
+const RECORDER_LENGTH = 6.4;
 /**
  * Work at a trade, not a fight: a smith's blow on the anvil (`hammer`), and a stir of a cauldron (`stir`). Neither
  * steps in. The hammer is raised high on the near side of the head, brought straight down to the anvil before the
@@ -2366,12 +2370,14 @@ function biped(top: THREE.Group, parts: Part[], elbow = ELBOW) {
       footL.joint.rotation.x += toes;
       footR.joint.rotation.x += toes;
       // The arms: drawn back in the crouch, thrown forward and up with the spring, and brought down and out to
-      // the sides for balance on landing. An arm with something carried across the front keeps mostly to its work.
+      // the sides for balance on landing. An arm with something carried across the front keeps mostly to its work,
+      // and both keep to an instrument held in both hands (a lute, a flute, a squeeze box), so it goes up with them.
       const swing = t < JUMP.spring ? along(JUMP.wind, t) : along(JUMP.arms, u) * (1 - Math.min(1, Math.max(0, down / 0.22)));
       const lift = swing < 0 ? -0.9 * swing : -2.2 * swing;
       const wide = 0.55 * sink + 0.25 * Math.max(0, swing);
-      const left = levels.length > 0 ? 0.25 : 1;
-      const right = levelsR.length > 0 ? 0.25 : 0.7;
+      const twoHanded = !!music && music.kind !== "bell";
+      const left = twoHanded ? 0 : levels.length > 0 ? 0.25 : 1;
+      const right = twoHanded ? 0 : levelsR.length > 0 ? 0.25 : 0.7;
       armL.joint.rotation.x += lift * left;
       armL.joint.rotation.z += wide * left;
       foreL.joint.rotation.x -= 0.5 * foreL.joint.rotation.x * Math.max(0, -swing) * left;
@@ -2478,20 +2484,27 @@ function biped(top: THREE.Group, parts: Part[], elbow = ELBOW) {
         }
         bow(-0.08 * Math.abs(step) * w, 0);
       } else {
-        // The flute comes up level before the mouth, a hand toward each end (as near the middle as such short
-        // arms and so broad a chest allow), the fingers working.
+        // Played like a recorder, blown at its end: the mouthpiece at the lips and the flute angled down and out
+        // before the chest, so the face shows above it; the left hand high on it and the right lower down, the
+        // fingers working, the head bowed a little over it.
         const big = head.joint.scale.x;
-        music.mouth.set(0, head.joint.position.y + 1.45 * big - 0.55, 2.95 * big + 0.5);
-        layAlong(laid, music.from.copy(music.mouth).addScaledVector(music.axis, -music.span / 2), music.axis);
+        music.mouth.set(0, head.joint.position.y + 1.45 * big - 0.75, 2.95 * big + 0.35);
+        // Up the flute toward the mouth: from its foot, down and out ahead of the chest. Drawn out hand to hand
+        // across the body, it is drawn in to a recorder's length to be played.
+        music.axis.copy(RECORDER_UP);
+        const reach0 = music.span + 0.6;
+        const len = Math.min(reach0, RECORDER_LENGTH);
+        music.joint.scale.y = 1 + (len / reach0 - 1) * w;
+        layAlong(laid, music.from.copy(music.mouth).addScaledVector(music.axis, -len), music.axis);
         music.joint.position.lerp(laid.position, w);
         music.joint.quaternion.slerp(laid.quaternion, w);
-        sweep.grip.copy(music.mouth).addScaledVector(music.axis, -2.4);
+        sweep.grip.copy(music.mouth).addScaledVector(music.axis, -len * 0.4);
         sweep.grip.y += 0.06 * Math.sin(beat * 2);
-        reach(armR.joint, foreR.joint, -elbow, elbow - fist, sweep.grip, sweep.poleR, w);
-        sweep.grip.copy(music.mouth).addScaledVector(music.axis, 2.4);
-        sweep.grip.y += 0.06 * Math.sin(beat * 2 + 2);
         reach(armL.joint, foreL.joint, -elbow, elbow - fist, sweep.grip, sweep.poleL, w);
-        head.joint.rotation.x += 0.06 * w;
+        sweep.grip.copy(music.mouth).addScaledVector(music.axis, -len * 0.78);
+        sweep.grip.y += 0.06 * Math.sin(beat * 2 + 2);
+        reach(armR.joint, foreR.joint, -elbow, elbow - fist, sweep.grip, sweep.poleR, w);
+        head.joint.rotation.x += 0.12 * w;
         music.from.copy(music.mouth);
         music.from.y += 0.3;
       }
