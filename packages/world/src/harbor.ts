@@ -806,11 +806,11 @@ export function validLook(look: unknown): number | null {
 }
 
 /**
- * Emotes: a hero waves, cheers, bows, dances, does the running man or breakdances where they stand, for everyone in the same place to see. Only for
+ * Emotes: a hero waves, cheers, bows, dabs, dances, does the running man or breakdances where they stand, for everyone in the same place to see. Only for
  * show, like a look: relayed to everyone there (the one emoting too) and never kept, at most one per EMOTE_MIN_MS.
  * In the Harbor, a hut, the pub and on a map, in a fight too (free, taking no turn), though not while down.
  */
-export const EMOTES = ["wave", "cheer", "bow", "dance", "runningman", "breakdance"] as const;
+export const EMOTES = ["wave", "cheer", "bow", "dab", "dance", "runningman", "breakdance"] as const;
 export type Emote = (typeof EMOTES)[number];
 export const EMOTE_MIN_MS = 800;
 /** "I am waving" (or cheering, bowing, dancing). */
@@ -821,7 +821,7 @@ export type EmoteMessage = { type: "emoted"; id: string; emote: Emote };
 export function validEmote(emote: unknown): Emote | null {
   return (EMOTES as readonly unknown[]).includes(emote) ? (emote as Emote) : null;
 }
-/** The emote a line typed into chat asks for (`/wave`, `/cheer`, `/bow`, `/dance`, `/runningman`, `/breakdance`), or null for a line to say. */
+/** The emote a line typed into chat asks for (`/wave`, `/cheer`, `/bow`, `/dab`, `/dance`, `/runningman`, `/breakdance`), or null for a line to say. */
 export function emoteTyped(text: string): Emote | null {
   const m = /^\/(\w+)$/.exec(text.trim().toLowerCase());
   return m ? validEmote(m[1]) : null;

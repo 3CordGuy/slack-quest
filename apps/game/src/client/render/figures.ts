@@ -1972,7 +1972,12 @@ const RUNNING = {
 /** The point of the body a backspin turns about, in the figure's own frame (about the hips): where it lies when on its back. */
 const SPIN_AT = new THREE.Vector3(0, 6, 0);
 const spinning = { at: new THREE.Vector3(), q: new THREE.Quaternion(), up: new THREE.Vector3(0, 1, 0) };
-const EMOTE_OVER: Record<Emote, number> = { wave: WAVE.over, cheer: CHEER.over, bow: BOW.over, dance: DANCE.over, runningman: RUNNING.over, breakdance: BREAK.over };
+/**
+ * The dab: snapped into it and held a moment. The right arm flung straight up and out to the side, the left bent
+ * across below the chin with its elbow raised, and the head turned down toward the crook of it. `up` is how far into it.
+ */
+const DAB = { over: 1.6, up: [[0, 0], [0.16, 1], [1.3, 1], [1.6, 0]] as Keys };
+const EMOTE_OVER: Record<Emote, number> = { wave: WAVE.over, cheer: CHEER.over, bow: BOW.over, dab: DAB.over, dance: DANCE.over, runningman: RUNNING.over, breakdance: BREAK.over };
 /**
  * A jump from one tile to another. The figure only makes the shapes of it; whoever jumps it carries it through
  * the air (see WorldRenderer.leapUnit). A crouch with the arms drawn back (`coil`), and at `spring` the legs
@@ -2630,6 +2635,32 @@ function biped(top: THREE.Group, parts: Part[], elbow = ELBOW) {
       head.joint.rotation.x -= 0.25 * up;
       knees(0.18 * up * (1 - hop));
       top.position.y += 0.9 * hop;
+      return;
+    }
+    if (act.kind === "dab") {
+      const up = along(DAB.up, t);
+      bow(0.18 * up, 0.25 * up);
+      // The right arm straight up and out, reaching well past where it can go so it is held straight.
+      sweep.grip.copy(armR.joint.position).add(sweep.side.set(-8, 6, 2.5));
+      sweep.lead.set(0, -1, -0.3);
+      reach(armR.joint, foreR.joint, -elbow, elbow - fist, sweep.grip, sweep.lead, up);
+      // The left fist across before the chin to the far side, below the brim (the head is too big for an arm across
+      // the face), the elbow up and out.
+      sweep.grip.set(-2.6, 5.4, 4);
+      sweep.lead.set(1, 0.7, 0);
+      reach(armL.joint, foreL.joint, -elbow, elbow - fist, sweep.grip, sweep.lead, up);
+      // The head tipped a little down and turned toward the crook of the left arm, not into it.
+      head.joint.rotation.x += 0.15 * up;
+      head.joint.rotation.y += 0.35 * up;
+      head.joint.rotation.z -= 0.12 * up;
+      // What the flung hand holds points straight on out along the arm's line, past the fist (the line from the
+      // shoulder to where the arm reaches); what the other holds stays upright.
+      sweep.dir.set(-8, 6, 2.5).normalize();
+      sweep.want.setFromUnitVectors(scratch.up, sweep.dir);
+      sweep.hold.copy(armR.joint.quaternion).multiply(foreR.joint.quaternion).invert().multiply(sweep.want);
+      heldR.joint.quaternion.slerp(sweep.hold, up);
+      sweep.hold.copy(armL.joint.quaternion).multiply(foreL.joint.quaternion).invert();
+      heldL.joint.quaternion.slerp(sweep.hold, up);
       return;
     }
     if (act.kind === "bow") {
