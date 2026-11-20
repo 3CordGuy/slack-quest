@@ -2639,6 +2639,9 @@ describe("crates", () => {
     expect(hits(both, "crate4")).toHaveLength(1);
     expect(state.groups.g1.alerted).toBe(true);
     expect(state.encounter?.order).toContain(foe.id);
+    // The blast that started it goes into the fight waiting, as if cast on the Mage's first turn; their AP are not touched.
+    expect(unit(state, "cy").cooldowns).toEqual({ chorus: TACTICS.chorus.cooldown });
+    expect(state.encounter!.banked?.cy).toBeUndefined();
   });
 
   it("costs the Action in a fight", () => {

@@ -887,6 +887,8 @@ function act(ctx: Ctx, action: ZoneAction): string | null {
     resolveAbility(ctx, unit, action.ability, aim);
     engage(ctx, struck, unit);
     reachIn(ctx, unit, touched);
+    // Cast out of a fight, one with a wait on it that draws the caster into a fight goes in waiting, as if spent on their first turn (their AP are whole).
+    if (!budget && tactic.cooldown && state.encounter?.order.includes(unit.id)) unit.cooldowns[action.ability] = tactic.cooldown;
     return null;
   }
   if (action.type === "common") {
