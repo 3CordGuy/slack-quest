@@ -39,7 +39,7 @@ The game asks for sounds by name, most specific first, and plays the first one t
 | `table.shake`, `table.roll`, `table.settle`, `table.hold`, `table.reveal`, `table.coins`, `table.kraken`, `table.win` → `stinger.victory` | The pub's game tables: the dice cup shaken, dice thrown onto the felt, each die coming to rest, a ship or captain set aside, the Kraken taking a cargo, every die shown after a call, gold onto the pot (as a game starts, and to the winner), and your own win. Timed to the throw on screen. Each has a built-in take (`synth/table/…`) until a recording is added under `sfx/table/`. |
 | `weather.thunder` | Lightning strikes in a storm. A storm is its own weather: heavy rain with thunder, where a downpour is heavy rain without. The flash on screen follows the loudness of the take that plays, so bounce each strike, crack and rumble together, as one take: `sfx/weather/thunder_01.wav`, `thunder_02.wav`, and so on. |
 | `stinger.battle_start`, `stinger.victory`, `stinger.defeat`, `stinger.fled`, `stinger.ambush`, `stinger.voyage_won`, `stinger.voyage_lost` | Musical stings. |
-| `zone.roll`, `zone.roll.crit`, `zone.initiative`, `zone.turn.enemy`, `zone.reaction`, `zone.shove`, `zone.fall`, `zone.jump`, `zone.throw`, `zone.shatter`, `zone.burst` | A fight on the tiles (a zone). A d20 is rolled for an attack, a save or a shove (`roll.crit` on a natural 20); a fight breaks out and everyone rolls initiative; an enemy's turn starts; someone strikes at an enemy leaving their reach; a shove; somebody knocked to the ground; a jump; something thrown from the pack, and it breaking where it lands; poison going up in flame. Each has a built-in sound until you bounce a file to `sfx/zone/<name>_01.wav` (the paths are in the manifest). |
+| `zone.roll`, `zone.roll.crit`, `zone.initiative`, `zone.turn.yours`, `zone.turn.enemy`, `zone.reaction`, `zone.shove`, `zone.fall`, `zone.jump`, `zone.throw`, `zone.shatter`, `zone.burst` | A fight on the tiles (a zone). A d20 is rolled for an attack, a save or a shove (`roll.crit` on a natural 20); a fight breaks out and everyone rolls initiative; your turn starts, or an enemy's; someone strikes at an enemy leaving their reach; a shove; somebody knocked to the ground; a jump; something thrown from the pack, and it breaking where it lands; poison going up in flame. Each has a built-in sound until you bounce a file to `sfx/zone/<name>_01.wav` (the paths are in the manifest). |
 | `zone.chest_open`, `zone.crate_hit`, `zone.crate_break` | A delve. A chest, strongbox or the hoard is thrown open: the latch, the hinge creaking through the swing and the lid knocking back against its stop, all in about half a second, as the lid is drawn swinging (`sfx/zone/chest_open_01.wav`). A crate takes a blow, a blast or the fire under it (`crate_hit_01.wav`), and breaks apart into boards (`crate_break_01.wav`). Each is built in (`synth/combat/creak`, `knock`, `splinter`) until a recording is bounced there. |
 | `surface.<poison\|fire\|oil\|water\|ice\|slime>` → `surface` | A surface is laid on the ground in a zone. Also new there: `effect.poisoned`, `effect.prone`, `effect.wet`, and `tick.poison` and `tick.fire` for the ground hurting whoever stands in it. All built in until recorded. |
 
@@ -48,6 +48,12 @@ Ability, class, enemy and trait names are lower case with underscores (`Aimed Sh
 ## Loops
 
 A loop goes round between its loop markers if the WAV has them (the `smpl` chunk most DAWs can embed), else the region given in the manifest (`loop: { start, end }`), else the whole file. Anything before the loop start is an intro, heard once.
+
+An intro can also be a file of its own, heard once before the loop: give the loop `intro`. The loop starts on the sample the intro ends, so bounce the intro to end exactly where the loop comes back round to its start. The intro is let go from memory once it has been heard.
+
+```ts
+battle: { file: "music/combat_1_loop", intro: "music/combat_1_start" },
+```
 
 Compressed files carry a little padding at each end, so for a loop that must be seamless, bounce it with a second of its own tail before the start and a second of its head after the end, mark the inner region as the loop, and set `startAt: "loop"`.
 

@@ -109,6 +109,12 @@ export interface Layer {
 export interface Loop {
   /** The file: a path under apps/game/audio without the extension, such as "music/harbor". */
   file: string;
+  /**
+   * A file of its own heard once before the loop, such as "music/combat_1_start": the loop starts on the
+   * sample it ends, so bounce the intro to end exactly where the loop file comes back round to its start.
+   * Not used on a piece with a `gap`.
+   */
+  intro?: string;
   /** Level, in dB. Default 0. */
   gainDb?: number;
   /**

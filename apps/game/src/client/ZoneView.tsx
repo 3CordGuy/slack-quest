@@ -1359,7 +1359,6 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
         const mid = fighters.length > 0 ? { q: fighters.reduce((n, u) => n + u.pos.q, 0) / fighters.length, r: fighters.reduce((n, u) => n + u.pos.r, 0) / fighters.length } : null;
         const centre = mid ? fighters.reduce((best, u) => (Math.hypot(u.pos.q - mid.q, u.pos.r - mid.r) < Math.hypot(best.pos.q - mid.q, best.pos.r - mid.r) ? u : best)).pos : null;
         later(() => {
-          sounds.stinger("battle_start");
           sounds.zone("initiative");
           announce("fight", "Combat", "Roll for initiative");
           logAdd({ k: "head", text: "Combat begins" });
@@ -1373,7 +1372,7 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
         if (ev.ids.some(yours)) {
           const mine = next.units.find((u) => ev.ids.includes(u.id) && yours(u.id));
           later(() => {
-            sounds.yourTurn();
+            sounds.zone("turn.yours");
             announce("yours", "Your turn", mine && mine.id !== next.you ? mine.name : undefined);
             logAdd({ k: "turn", name: mine?.name ?? "You", side: "hero" });
             setSpot(null);
