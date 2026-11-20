@@ -7,6 +7,13 @@
 // release-notes.ts); this list is only for the past.
 
 export const OVERRIDES: Record<string, string[]> = {
+  // game-v2026.11.20.3 (#565). Its first line named the five emotes there were then; the dab, the floss and the
+  // running man came in the releases after it, so it names all eight.
+  "0dc40f5dfbcbea567cb8cb22341e778ef0fec229": [
+    "Emotes: wave, cheer, bow, dab, floss, dance, the running man or breakdance from the new emote wheel beside the chat, or hold G",
+    "Emotes: type /wave, /cheer, /bow, /dance or /breakdance into chat",
+    "Fights: emote from the button beside the hotbar, for free, without using your turn",
+  ],
   // The release after game-v2026.11.19.5 (#549). Its third line said heroes on the same initiative share a turn; #552,
   // in the same release, made every turn one fighter's alone (ties are rolled off), and says so in a line of its own.
   "0d5340a7130da6fdec451d59a7f96d9d239eb1ec": [
