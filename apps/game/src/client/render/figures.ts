@@ -1977,7 +1977,14 @@ const spinning = { at: new THREE.Vector3(), q: new THREE.Quaternion(), up: new T
  * across below the chin with its elbow raised, and the head turned down toward the crook of it. `up` is how far into it.
  */
 const DAB = { over: 1.6, up: [[0, 0], [0.16, 1], [1.3, 1], [1.6, 0]] as Keys };
-const EMOTE_OVER: Record<Emote, number> = { wave: WAVE.over, cheer: CHEER.over, bow: BOW.over, dab: DAB.over, dance: DANCE.over, runningman: RUNNING.over, breakdance: BREAK.over };
+/**
+ * The floss: on each beat both straight arms go to one side, one swung across in front of the body and the other out
+ * to its own side, and the hips thrust the other way; then they change over to the other side. `beat` is whole
+ * swings (there and back) a second. An arm's way from out at its side (`side`) to across the front (`across`) comes
+ * forward (`front`) before it reaches the body, so it never passes through it. All in the torso's frame.
+ */
+const FLOSS = { over: 4.5, beat: 1.3, side: 8.5, across: 2.6, front: 4.4, hips: 1.5, up: [[0, 0], [0.25, 1], [4.2, 1], [4.5, 0]] as Keys };
+const EMOTE_OVER: Record<Emote, number> = { wave: WAVE.over, cheer: CHEER.over, bow: BOW.over, dab: DAB.over, floss: FLOSS.over, dance: DANCE.over, runningman: RUNNING.over, breakdance: BREAK.over };
 /**
  * A jump from one tile to another. The figure only makes the shapes of it; whoever jumps it carries it through
  * the air (see WorldRenderer.leapUnit). A crouch with the arms drawn back (`coil`), and at `spring` the legs
@@ -2729,6 +2736,29 @@ function biped(top: THREE.Group, parts: Part[], elbow = ELBOW) {
         fore.joint.rotation.x -= (1.5 - 0.6 * push) * up;
       }
       // Whatever is held stays upright, not swung round with the pumping arms.
+      for (const [arm, fore, held] of [[armL, foreL, heldL], [armR, foreR, heldR]] as const) {
+        sweep.hold.copy(arm.joint.quaternion).multiply(fore.joint.quaternion).invert();
+        held.joint.quaternion.slerp(sweep.hold, up);
+      }
+      return;
+    }
+    if (act.kind === "floss") {
+      const up = along(FLOSS.up, t);
+      // Which side the arms are on, -1 (the right) to 1 (the left), snapped to each end rather than swung evenly.
+      const wave = Math.sin(t * FLOSS.beat * Math.PI * 2);
+      const to = Math.sign(wave) * Math.abs(wave) ** 0.55;
+      // Each arm: `u` 0 out at its own side, 1 across the front to the other side. The right arm crosses when the
+      // arms go left, the left arm when they go right.
+      for (const [arm, fore, own, u] of [[armR, foreR, -1, (1 + to) / 2], [armL, foreL, 1, (1 - to) / 2]] as const) {
+        const forward = Math.min(1, Math.max(0, u / 0.4));
+        sweep.grip.set(own * (FLOSS.side - (FLOSS.side + FLOSS.across) * u), -0.6 - 0.6 * u, -0.6 + (FLOSS.front + 0.6) * forward * forward * (3 - 2 * forward));
+        reach(arm.joint, fore.joint, -elbow, elbow - fist, sweep.grip, own < 0 ? sweep.poleR : sweep.poleL, up);
+      }
+      // The hips thrust out the other way on each beat, the body tipping over them.
+      top.position.x -= FLOSS.hips * to * up;
+      top.rotation.z += 0.08 * to * up;
+      torso.joint.rotation.z -= 0.14 * to * up;
+      head.joint.rotation.z += 0.08 * to * up;
       for (const [arm, fore, held] of [[armL, foreL, heldL], [armR, foreR, heldR]] as const) {
         sweep.hold.copy(arm.joint.quaternion).multiply(fore.joint.quaternion).invert();
         held.joint.quaternion.slerp(sweep.hold, up);
