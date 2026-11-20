@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { DISHES, HAGGLE_ASKS, HEX_DIRS, KEEPER_PLACES, KEEPER_SHOPS, POT_PRICES, keeperWallPieces, potDish, potKey, forgeStock, haggleChance, haggleLine, haggleOutcome, haggledPrice, keeperPath, keeperRoom, smithyCost } from "./index";
+import { DISHES, HAGGLE_ASKS, HEX_DIRS, KEEPER_HOUSES, KEEPER_PLACES, KEEPER_SHOPS, POT_PRICES, isKeeperHouse, isKeeperShop, keeperWallPieces, potDish, potKey, forgeStock, haggleChance, haggleLine, haggleOutcome, haggledPrice, keeperPath, keeperRoom, smithyCost } from "./index";
 
 describe("the keepers' rooms", () => {
-  it("lets a customer walk from the door to the keeper in both shops, around the fittings", () => {
-    for (const shop of KEEPER_SHOPS) {
+  it("lets a customer walk from the door to the keeper in every one, around the fittings", () => {
+    for (const shop of KEEPER_HOUSES) {
       const room = keeperRoom(shop);
       const door = room.pois.find((p) => p.kind === "door")!.pos;
       const place = KEEPER_PLACES[shop];
@@ -14,6 +14,41 @@ describe("the keepers' rooms", () => {
         expect(room.tiles.find((t) => t.q === f.q && t.r === f.r)?.biome).toBe("floor");
         expect(keeperPath(shop, room, door, f)).toBeNull();
       }
+    }
+  });
+});
+
+describe("the Lapidary", () => {
+  it("is a keeper's room like the others, with a keeper of its own, and is not one of the crew's shops", () => {
+    expect(KEEPER_HOUSES).toEqual([...KEEPER_SHOPS, "lapidary"]);
+    expect(isKeeperHouse("lapidary")).toBe(true);
+    // Nothing is haggled over there, and nobody had to build it.
+    expect(isKeeperShop("lapidary")).toBe(false);
+    const place = KEEPER_PLACES.lapidary;
+    expect(place.title).toBe("The Lapidary");
+    expect(place.keeper.id).toBe("keeper:lapidary");
+    // Nobody shares a name or a look with her.
+    for (const shop of KEEPER_SHOPS) {
+      expect(KEEPER_PLACES[shop].keeper.name).not.toBe(place.keeper.name);
+      expect(KEEPER_PLACES[shop].keeper.look).not.toBe(place.keeper.look);
+    }
+    // Her wheel is one of the fittings, and nothing stands on her spot or the customer's.
+    expect(place.fittings.find((f) => f.id === place.work.fitting)?.model).toBe("lap_wheel");
+    expect(new Set(place.fittings.map((f) => `${f.q},${f.r}`)).size).toBe(place.fittings.length);
+    for (const f of place.fittings) for (const p of [place.keeperPos, place.stand]) expect(`${f.q},${f.r}`).not.toBe(`${p.q},${p.r}`);
+  });
+
+  it("hangs its lights round the walls, clear of the case and the shelves", () => {
+    const room = keeperRoom("lapidary");
+    const pieces = keeperWallPieces("lapidary");
+    expect(pieces.map((p) => p.model)).toEqual(KEEPER_PLACES.lapidary.wall);
+    expect(new Set(pieces.map((p) => `${p.pos.q},${p.pos.r},${p.side}`)).size).toBe(pieces.length);
+    const tall = KEEPER_PLACES.lapidary.fittings.filter((f) => ["lodestone_case", "stone_shelf", "stone_shelf_lit"].includes(f.model)).map((f) => `${f.q},${f.r}`);
+    expect(tall).toHaveLength(3);
+    for (const p of pieces) {
+      const front = { q: p.pos.q + HEX_DIRS[p.side].q, r: p.pos.r + HEX_DIRS[p.side].r };
+      expect(room.tiles.find((t) => t.q === front.q && t.r === front.r)?.biome).toBe("floor");
+      expect(tall).not.toContain(`${front.q},${front.r}`);
     }
   });
 });

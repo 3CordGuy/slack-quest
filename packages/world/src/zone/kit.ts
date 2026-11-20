@@ -26,7 +26,7 @@ export type Shape = "single" | "adjacent" | "arc" | "cone" | "chain" | "blast" |
 /**
  * Action Points (AP): every unit gets AP_TURN at the start of its turn, on top of what it saved (AP_MAX at most), and spends
  * them on anything in any order. What was once an Action costs ACTION_AP, a Bonus action BONUS_AP; 1 AP buys a unit's
- * stride of movement (half its old speed).
+ * stride of movement (heroMove in rules.ts; enemyMove below, of which an enemy spends ENEMY_MOVE_AP a turn at most).
  */
 export const AP_TURN = 4;
 export const AP_MAX = 6;
@@ -554,8 +554,8 @@ export const CONDITION_INFO: Record<Condition, { name: string; blurb: string; co
 export const COMMON_ACTIONS: Record<CommonAction, { name: string; cost: number; blurb: string }> = {
   disengage: { name: "Disengage", cost: 2, blurb: "Moving away from enemies draws no opportunity attacks this turn." },
   help: { name: "Help", cost: 2, blurb: "Get a fallen ally beside you back on their feet with 1 HP." },
-  shove: { name: "Shove", cost: 1, blurb: "Push an enemy beside you one hex away: into fire, off a path, out of reach." },
-  jump: { name: "Jump", cost: 2, blurb: "Leap a few hexes, over whatever lies between." },
+  shove: { name: "Shove", cost: 1, blurb: "Push an enemy beside you one hex away: into fire, out of reach, off a height (they fall: a d4 for each level past the first, and land flat), or into deep water, lava or off the edge of the land, where they are lost. Toward a drop or a pit they roll to catch the edge." },
+  jump: { name: "Jump", cost: 2, blurb: "Leap a few hexes, over whatever lies between: up a ledge two levels high, or down one. Further down than two levels is a fall." },
   join: { name: "Join the Song", cost: 1, blurb: "Join an ally's shanty you are standing in, once a shanty: it reaches a hex further, and you get its joining lift (Lively: advantage on your next attack; Dour: Guarded; Wind-god's: Disengaged), and everyone in it gets a little more of what it gives until the Bard's next turn." },
   flee: { name: "Flee", cost: 2, blurb: "Get out of the fight, once no enemy in it is within 2 hexes of you. You walk free and it goes on without you; an enemy coming that close again brings you back into it." },
 };
@@ -568,6 +568,9 @@ export const commonCost = (what: CommonAction, classId: string): number => ((wha
 
 /** AP each of these takes in a fight (out of one they are free). */
 export const ITEM_AP = { drink: BONUS_AP, throw: ACTION_AP, light: BONUS_AP, stow: BONUS_AP, pickup: BONUS_AP, open: ACTION_AP, forage: ACTION_AP, unlock: ACTION_AP, attack: ACTION_AP };
+/** How many levels a jump can go up, and how many it can come down before it is a fall (a d4 a level past that, and landing flat). */
+export const JUMP_UP = 2;
+export const JUMP_DOWN = 2;
 /** What a healing potion heals: all of it when drunk or at the heart of where it lands, half of it on the hexes around. */
 export const POTION_DICE: Dice = { n: 2, d: 4, plus: 6 };
 export const POTION_EDGE = 0.5;
@@ -660,31 +663,40 @@ export interface EnemyKit {
   fly?: boolean;
   /** Advantage on an attack when one of its own is next to the target. */
   pack?: boolean;
+  /** It has the hands and the wit for it: it will shove someone beside it over a drop or into a pit (its bonus action). */
+  shoves?: boolean;
   /** Attacks that are not plain blows, by name. */
   attacks?: Record<string, EnemyAttackKit>;
 }
 
 export const ENEMY_KIT: Record<string, EnemyKit> = {
   dummy: {},
-  bandit: {},
+  bandit: { shoves: true },
   wolf: { pack: true },
-  bear: {},
+  bear: { shoves: true },
   // Its Stomp, like anything that strikes the whole crew, is a burst around it.
-  ogre: {},
+  ogre: { shoves: true },
   // It rakes up close, and will throw a rock at whoever keeps away. (Its wounds closing is in zone.ts, at the start of its turn.)
-  troll: { attacks: { "Hurl Rock": { range: 5 } } },
+  troll: { shoves: true, attacks: { "Hurl Rock": { range: 5 } } },
   cultist: { ranged: true, attacks: { "Dark Bolt": { range: 5 }, Immolate: { range: 5, surface: { kind: "fire", rounds: 2 } } } },
-  brute: { attacks: { Shove: { push: true } } },
+  brute: { shoves: true, attacks: { Shove: { push: true } } },
   archer: { ranged: true, attacks: { Volley: { range: 7 }, "Barbed Arrow": { range: 7 } } },
   alpha: { pack: true },
-  great_bear: {},
-  guardian: {},
+  great_bear: { shoves: true },
+  guardian: { shoves: true },
   shade: { attacks: { "Chill Touch": { chills: true } } },
   bat: { fly: true },
-  skeleton: {},
+  skeleton: { shoves: true },
   slime: { attacks: { "Acid Splash": { range: 3, surface: { kind: "poison", rounds: 2 } } } },
   haunt: {},
-  villain: {},
+  villain: { shoves: true },
+  spider: { pack: true, attacks: { "Venomous Bite": { surface: { kind: "poison", rounds: 2 } }, "Web Spit": { range: 4, surface: { kind: "slime", rounds: 2 } } } },
+  broodmother: { attacks: { "Web Spit": { range: 5, surface: { kind: "slime", rounds: 2 } } } },
+  frost_wolf: { pack: true, attacks: { "Rime Bite": { chills: true } } },
+  ember_hound: { pack: true },
+  snow_bear: { shoves: true },
+  wraith: { ranged: true, attacks: { "Frost Lance": { range: 5, chills: true } } },
+  witch: { ranged: true, attacks: { "Thorn Hex": { range: 5 }, "Evil Eye": { range: 5 } } },
 };
 
 /** How far an attack on every hero reaches out from the enemy making it. */
@@ -736,8 +748,24 @@ export function enemyStrikes(kind: string, level: number, threat?: number, more 
 /** The quick are hard to hit: 10, one more for every 30 of the old speed, one more for a boss. */
 export const enemyDefence = (kind: string): number => 10 + Math.floor((ENEMIES[kind]?.speed ?? 0) / 30) + (ENEMIES[kind]?.boss ? 1 : 0);
 
-/** Steps 1 AP buys (half its old speed, 1 to 4), and `more` for what the map's modifiers add. A training dummy stays put. */
-export const enemyMove = (kind: string, more = 0): number => (kind === "dummy" ? 0 : Math.max(1, Math.floor(Math.max(3, Math.min(8, 3 + Math.round((ENEMIES[kind]?.speed ?? 0) / 18))) / 2)) + more);
+/**
+ * Steps 1 AP buys an enemy, and `more` for what the map's modifiers add: 2 for most of what goes on foot, as for an
+ * ordinary hero (rules.ts heroMove), and 3 for the quick (a speed of 63 or more: wolves, hounds, spiders, archers,
+ * shades, bats). Never more than 3 before `more`. A training dummy stays put.
+ */
+export const enemyMove = (kind: string, more = 0): number => (kind === "dummy" ? 0 : Math.max(1, Math.floor(Math.max(3, Math.min(7, 3 + Math.round((ENEMIES[kind]?.speed ?? 0) / 25))) / 2)) + more);
+
+/**
+ * The most AP an enemy puts into movement in one turn, whether or not it also strikes: two strides, so 4 hexes of open
+ * ground for a bandit and 6 for a wolf, where an ordinary hero who does nothing but walk covers 8. What it does not
+ * spend it keeps for its next turn, as anyone does. A hero has no such limit. Being shoved or dragged is not its own
+ * movement, and what lengthens a stride (Hasted, a Swift map) still does. Held in each turn's budget (Budget.walk,
+ * set in zone.ts beginTurn), so the walk itself keeps to it and the enemy's planning (ai.ts) reckons with the same number.
+ */
+export const ENEMY_MOVE_AP = 2;
+
+/** What an enemy adds to its roll when it shoves someone: the big shove hard. */
+export const enemyShove = (kind: string): number => 1 + enemySave(kind);
 
 /** What an enemy adds to a saving throw: bosses and the big are harder to shake. */
 export const enemySave = (kind: string): number => (ENEMIES[kind]?.boss ? 3 : (ENEMIES[kind]?.hp ?? 0) >= 18 ? 2 : 0);

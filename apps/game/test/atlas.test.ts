@@ -5,9 +5,10 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { beforeEach, describe, expect, it } from "vitest";
-import { ATLAS_HOME, PLAIN_STONE_COST, STACK_MAX, TOWN_TABS_MAX, TOWN_TAB_CELLS, atlasNodeById, attuneCost, modsOf, townTabCost, needsStone, rerollCost, stoneItem, temperCost, type ZoneMod, type ZoneOptions } from "@gantt-quest/world";
-import { atlasSeed, chartFor, clearNode, devClearNode, devResetChart, enterProblem, openNode } from "../src/server/atlas";
-import { applyZoneGrant, carryState } from "../src/server/db";
+import { ATLAS_HOME, GEM_PRICE, PLAIN_STONE_COST, STACK_MAX, TOWN_TABS_MAX, TOWN_TAB_CELLS, atlasNodeById, attuneCost, modsOf, nodePlace, townTabCost, needsStone, rerollCost, stoneItem, temperCost, type ZoneMod, type ZoneOptions } from "@gantt-quest/world";
+import { atlasSeed, chartFor, clearNode, devClearNode, devResetChart, enterProblem, openNode, scoutNode } from "../src/server/atlas";
+import { applyZoneGrant, carryState, sellMaterial } from "../src/server/db";
+import { sellGems } from "../src/server/lapidary";
 import { attuneStone, cutStone, fuseStones, gainStone, lodestonesOf, rerollStone, temperStone } from "../src/server/lodestones";
 import { chestBuyTab, chestColorTab, chestFor, chestMoveTab, chestPutGear, chestPutStack, chestRenameTab, chestTakeGear, chestTakeStack } from "../src/server/townchest";
 import { CAVE_IDLE_MS, getZoneRow } from "../src/server/zones";
@@ -159,6 +160,107 @@ describe("a crew's chart", () => {
     expect((await states()).get(node)).toBe("cleared");
     await devResetChart(db, CREW);
     expect((await states()).get(node)).toBe("open");
+  });
+});
+
+describe("scouting a place before a muster is called for it", () => {
+  /** Everything in the database, table by table: scouting must leave it exactly as it was. */
+  const everything = () =>
+    JSON.stringify((sql.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name").all() as { name: string }[]).map(({ name }) => [name, sql.prepare(`SELECT * FROM "${name}"`).all()]));
+  /** What scouting says of a place nobody is on and anyone may set out for. */
+  const placeOf = (id: string, crew = CREW) => {
+    const node = atlasNodeById(atlasSeed(crew), id)!;
+    return { node: id, place: node.name, site: nodePlace(atlasSeed(crew), node), level: node.level };
+  };
+  /** Scout, and expect the refusal `openNode` gives for the same thing, with nothing written by either. */
+  const refused = async (id: unknown, stone?: unknown) => {
+    const before = everything();
+    const scouted = await scoutNode(db, CREW, id, stone);
+    expect(everything()).toBe(before);
+    expect(scouted).toHaveProperty("error");
+    expect(scouted).toEqual(await openNode(db, CREW, "ann", id, 2, stone));
+    expect(everything()).toBe(before);
+    return scouted;
+  };
+
+  it("says what the place is called, what kind of place it is and its level, and makes and spends nothing", async () => {
+    const node = first();
+    give("ann", ["hardy"]);
+    const before = everything();
+    expect(await scoutNode(db, CREW, node)).toEqual(placeOf(node));
+    expect(placeOf(node).site).toEqual(expect.stringMatching(/\S/));
+    // With a stone in the slot it says the same, and the stone stays in the pack.
+    expect(await scoutNode(db, CREW, node, "hardy")).toEqual(placeOf(node));
+    expect(await scoutNode(db, CREW, node, null)).toEqual(placeOf(node));
+    expect(everything()).toBe(before);
+    expect(sql.prepare("SELECT COUNT(*) AS n FROM zones").get()).toEqual({ n: 0 });
+    expect(sql.prepare("SELECT COUNT(*) AS n FROM atlas_nodes").get()).toEqual({ n: 0 });
+    expect(await lodestonesOf(db, "ann")).toEqual([{ stone: ["hardy"], qty: 1 }]);
+    // Every landfall beside the Harbor can be scouted, and each is its own place.
+    const all = await Promise.all(home().links.map((id) => scoutNode(db, CREW, id)));
+    expect(all).toEqual(home().links.map((id) => placeOf(id)));
+    expect(everything()).toBe(before);
+  });
+
+  it("refuses what setting out refuses, in the same words", async () => {
+    const node = first();
+    const far = beyond(node);
+    expect(await refused(far)).toMatchObject({ status: 409, error: expect.stringMatching(/No route/) });
+    // No route is said before anything about the stone, as it is on setting out.
+    expect(await refused(far, "")).toMatchObject({ status: 409, error: expect.stringMatching(/No route/) });
+    expect(await refused(ATLAS_HOME)).toMatchObject({ status: 400 });
+    expect(await refused("nowhere")).toMatchObject({ status: 400 });
+    expect(await refused({ q: 1, r: 0 })).toMatchObject({ status: 400 });
+    expect(await refused(undefined)).toMatchObject({ status: 400 });
+    expect(await refused(node, "rainy")).toMatchObject({ status: 400, error: "That is no lodestone." });
+
+    await clearNode(db, CREW, node);
+    expect(await refused(node)).toMatchObject({ status: 409, error: expect.stringMatching(/cleared already/) });
+    expect(await refused(node, "")).toMatchObject({ status: 409, error: expect.stringMatching(/cleared already/) });
+    // Beyond it a route now runs, and the place needs a lodestone in its slot.
+    expect(await refused(far)).toMatchObject({ status: 409, error: expect.stringMatching(/needs a lodestone/) });
+    expect(await refused(far, null)).toMatchObject({ status: 409, error: expect.stringMatching(/needs a lodestone/) });
+    expect(await refused(far, "rainy")).toMatchObject({ status: 400, error: "That is no lodestone." });
+  });
+
+  it("does not look in the pack: a stone that is not held is found out when the muster starts", async () => {
+    const node = first();
+    await clearNode(db, CREW, node);
+    const far = beyond(node);
+    const before = everything();
+    expect(await scoutNode(db, CREW, far, "")).toEqual(placeOf(far));
+    expect(await scoutNode(db, CREW, far, "hardy+numerous")).toEqual(placeOf(far));
+    expect(everything()).toBe(before);
+    // Setting out is where it is refused.
+    expect(await openNode(db, CREW, "ann", far, 2, "")).toMatchObject({ status: 409, error: expect.stringMatching(/You have no plain lodestone/) });
+  });
+
+  it("gives the map already being fought through there, whatever is held out, and the place again once that map is let go", async () => {
+    const node = first();
+    const a = await went(node);
+    const before = everything();
+    expect(await scoutNode(db, CREW, node)).toEqual({ live: a.code });
+    // Joining needs no stone and looks at none, as on setting out: not even at one that is no stone.
+    expect(await scoutNode(db, CREW, node, "hardy")).toEqual({ live: a.code });
+    expect(await scoutNode(db, CREW, node, "rainy")).toEqual({ live: a.code });
+    expect(await openNode(db, CREW, "bo", node, 2, "rainy")).toEqual({ code: a.code, fresh: false });
+    expect(everything()).toBe(before);
+    // The other landfalls are no nearer to having a map, and another crew's chart is not this one's.
+    expect(await scoutNode(db, CREW, home().links[1])).toEqual(placeOf(home().links[1]));
+    expect(await scoutNode(db, OTHER, first(OTHER))).toEqual(placeOf(first(OTHER), OTHER));
+
+    // A place that needs a stone: the map made with one is joined without one.
+    await clearNode(db, CREW, node);
+    const far = beyond(node);
+    const b = await went(far);
+    expect(await scoutNode(db, CREW, far)).toEqual({ live: b.code });
+
+    // Left alone too long, that map is gone: the place is there to be set out for again, with a stone.
+    sql.prepare("UPDATE zones SET updated_at = ? WHERE code = ?").run(Date.now() - CAVE_IDLE_MS - 1000, b.code);
+    const later = everything();
+    expect(await scoutNode(db, CREW, far)).toMatchObject({ status: 409, error: expect.stringMatching(/needs a lodestone/) });
+    expect(await scoutNode(db, CREW, far, "")).toEqual(placeOf(far));
+    expect(everything()).toBe(later);
   });
 });
 
@@ -441,10 +543,32 @@ describe("the town chest", () => {
   });
 });
 
-describe("the lodestone bench", () => {
+describe("the Lapidary: the lodestone bench, and gems", () => {
   const gold = (who: string) => (sql.prepare("SELECT gold FROM characters WHERE player_id = ?").get(who) as { gold: number }).gold;
   const hand = (who: string, kind: string, qty: number) => sql.prepare("INSERT INTO resources (player_id, kind, qty) VALUES (?, ?, ?) ON CONFLICT(player_id, kind) DO UPDATE SET qty = qty + excluded.qty").run(who, kind, qty);
   const count = async (who: string) => (await lodestonesOf(db, who)).reduce((n, h) => n + h.qty, 0);
+
+  it("buys gems for gold, only the ones held, and the market stall no longer does", async () => {
+    const gems = () => (sql.prepare("SELECT qty FROM resources WHERE player_id = 'ann' AND kind = 'gem'").get() as { qty: number } | undefined)?.qty ?? 0;
+    expect(await sellGems(db, "ann", 1)).toMatch(/no gems/);
+    hand("ann", "gem", 5);
+    const had = gold("ann");
+    expect(await sellGems(db, "ann", 2)).toBe(2 * GEM_PRICE);
+    expect(gems()).toBe(3);
+    expect(gold("ann")).toBe(had + 2 * GEM_PRICE);
+    // Not more than are held, not a part of one, and not somebody else's.
+    expect(await sellGems(db, "ann", 4)).toMatch(/only have 3 gems/);
+    for (const bad of [0, -1, 1.5, "2", null, undefined]) expect(await sellGems(db, "ann", bad)).toMatch(/at least one/);
+    expect(await sellGems(db, "bo", 1)).toMatch(/no gems/);
+    expect(await sellGems(db, "nobody", 1)).toMatch(/character/);
+    expect(gems()).toBe(3);
+    expect(gold("ann")).toBe(had + 2 * GEM_PRICE);
+    // The stall sends them on: nothing is taken and nothing paid.
+    expect(await sellMaterial(db, "ann", "gem", 1)).toMatch(/Lapidary/);
+    expect(gems()).toBe(3);
+    expect(await sellGems(db, "ann", 3)).toBe(3 * GEM_PRICE);
+    expect(gems()).toBe(0);
+  });
 
   it("fuses three stones that carry the same into one that carries one more, and uses the three up", async () => {
     for (let i = 0; i < 3; i++) give("ann");

@@ -34,6 +34,14 @@ export const ENEMY_DROPS: Record<string, ResourceKind[]> = {
   bat: ["fur"],
   slime: ["slime"],
   haunt: ["bone"],
+  // What lives out on the atlas's maps (what a body there holds is zone/spoils.ts; these are for the old fights).
+  spider: ["mushrooms", "slime"],
+  broodmother: ["mushrooms", "slime"],
+  frost_wolf: BEAST,
+  ember_hound: BEAST,
+  snow_bear: BEAST,
+  wraith: ["bone"],
+  witch: ["herbs", "mushrooms"],
 };
 
 /** Units of material from one enemy: [min, max]. */

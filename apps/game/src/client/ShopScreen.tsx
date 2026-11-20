@@ -117,7 +117,7 @@ export function ShopScreen({ me, refresh, onClose }: { me: Me; refresh(): Promis
               </>
             ) : (
               <>
-                <h3 className="shop-subhead">Herbs, mushrooms and gems</h3>
+                <h3 className="shop-subhead">Herbs and mushrooms</h3>
                 {forage.map((k) => {
                   const have = stock[k] ?? 0;
                   const each = STALL_BUYS[k]!;
@@ -133,6 +133,7 @@ export function ShopScreen({ me, refresh, onClose }: { me: Me; refresh(): Promis
                     </div>
                   );
                 })}
+                {(stock.gem ?? 0) > 0 && <p className="muted">The stall does not buy gems: take yours to the Lapidary.</p>}
                 <h3 className="shop-subhead">Gear</h3>
                 {sellable.length === 0 && <p className="muted">Nothing to sell. Equipped gear has to be taken off first.</p>}
                 {sellable.map((item) => (

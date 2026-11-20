@@ -92,6 +92,14 @@ export function zoneActionFrom(raw: unknown, by: string, dev: boolean): ZoneActi
   if (a.type === "drink") return text(a.item) ? { type: "drink", by, unit: a.unit, item: a.item as never } : null;
   if (a.type === "pickup") return isHex(a.at) ? { type: "pickup", by, unit: a.unit, at: hex(a.at)! } : null;
   if (a.type === "open") return text(a.poi) ? { type: "open", by, unit: a.unit, poi: a.poi } : null;
+  if (a.type === "loot") return text(a.spot) ? { type: "loot", by, unit: a.unit, spot: a.spot } : null;
+  if (a.type === "take") {
+    // Which thing: by its own number (`uid`), or by its place in a share of the taker's own. Neither: all of it,
+    // so one that is given and makes no sense is dropped, never read as "all".
+    const whole = (v: unknown): v is number => Number.isInteger(v) && (v as number) >= 0;
+    for (const v of [a.index, a.uid]) if (v !== undefined && !whole(v)) return null;
+    return text(a.spot) ? { type: "take", by, unit: a.unit, spot: a.spot, ...(whole(a.index) ? { index: a.index } : {}), ...(whole(a.uid) ? { uid: a.uid } : {}) } : null;
+  }
   if (a.type === "unlock") return text(a.poi) ? { type: "unlock", by, unit: a.unit, poi: a.poi } : null;
   if (a.type === "forage") return text(a.poi) ? { type: "forage", by, unit: a.unit, poi: a.poi } : null;
   if (a.type === "light") return { type: "light", by, unit: a.unit, ...(a.hand === "main" ? { hand: "main" as const } : {}) };

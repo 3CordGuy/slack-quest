@@ -24,8 +24,9 @@ import type { ResourceKind } from "./hut";
  * when it becomes cave floor.
  * `fog` is never part of a real map: it is what a client is sent in place of
  * ground the party has not seen yet.
+ * `paved` is laid stone on a zone's map: the floor of a ruin, a courtyard, the walk along the top of a wall.
  */
-export type Biome = "plains" | "forest" | "hills" | "water" | "dock" | "cobble" | "mud" | "rampart" | "floor" | "wall" | "cave" | "rock" | "gate" | "fog" | "sand";
+export type Biome = "plains" | "forest" | "hills" | "water" | "dock" | "cobble" | "mud" | "rampart" | "floor" | "wall" | "cave" | "rock" | "gate" | "fog" | "sand" | "paved";
 
 export const MOVE_COST: Record<Biome, number> = {
   plains: 1,
@@ -40,6 +41,7 @@ export const MOVE_COST: Record<Biome, number> = {
   wall: Infinity,
   cave: 1,
   sand: 1,
+  paved: 1,
   rock: Infinity,
   gate: Infinity,
   fog: Infinity,
@@ -63,8 +65,18 @@ export interface Tile {
   h: number;
   /** A building stands on this hex (part of the ground a Harbor building takes up): it cannot be walked through. */
   built?: boolean;
-  /** A zone map only: how many levels up this hex stands (0, 1 or 2). High ground helps a shot; a step of two is a cliff. */
+  /**
+   * A zone map only: how many levels up this hex stands (0 to `MAX_ELEV`). High ground helps a shot; a step of two
+   * or more is a cliff, climbed only by a ladder (or jumped, if it is low enough).
+   */
   elev?: number;
+  /**
+   * A zone map only: ladders stand against the cliffs above this hex. Bit i is set for each side (in `HEX_DIRS`
+   * order, as for `path`) on which one climbs from here to the higher hex beside it.
+   */
+  ladder?: number;
+  /** A zone map only: what stands on this hex (zone/props.ts): a wall, a pillar, a brazier. It may bar the way, the view, or neither. */
+  prop?: string;
   /** Something too thick to get through stands on this hex: a stand of old trees in the forest, or a heap of boulders in the hills. */
   blocker?: Blocker;
   /**
@@ -91,7 +103,7 @@ export function tileCost(t: Tile): number {
  * hut, the notice board, the market stall and the pub's contract dealer. `door` is the way out of a hut's room.
  * `gate` is a locked door in the Haunted Caverns, standing on a `gate` tile.
  */
-export type PoiKind = "cave" | "landing" | "hut" | "lair" | "shrine" | "cache" | "camp" | "pier" | "plot" | "board" | "shop" | "ring" | "dice" | "door" | "works" | "pub" | "counter" | "shoals" | "crew" | "tide" | "trader" | "rocks" | "wreck" | "lot" | "site" | "ship" | "pickup" | "fishing" | "felling" | "quarry" | "apothecary" | "smithy" | "galley" | "lighthouse" | "gate" | "dealer" | "crate" | "glowcap" | "bench" | "townchest";
+export type PoiKind = "waygate" | "cave" | "landing" | "hut" | "lair" | "shrine" | "cache" | "camp" | "pier" | "plot" | "board" | "shop" | "ring" | "dice" | "door" | "works" | "pub" | "counter" | "shoals" | "crew" | "tide" | "trader" | "rocks" | "wreck" | "lot" | "site" | "ship" | "pickup" | "fishing" | "felling" | "quarry" | "apothecary" | "smithy" | "galley" | "lighthouse" | "gate" | "dealer" | "crate" | "glowcap" | "lapidary" | "townchest";
 
 export interface Poi {
   id: string;
@@ -260,7 +272,7 @@ function pickBiome(rng: Rng): Biome {
   return "plains";
 }
 
-export const BASE_HEIGHT: Record<Biome, number> = { sand: 0.22, water: 0.05, plains: 0.3, forest: 0.4, hills: 0.75, dock: 0.1, cobble: 0.26, mud: 0.2, rampart: 0.7, floor: 0.1, wall: 0.9, cave: 0.18, rock: 1.4, gate: 0.18, fog: 0.3 };
+export const BASE_HEIGHT: Record<Biome, number> = { sand: 0.22, water: 0.05, plains: 0.3, forest: 0.4, hills: 0.75, dock: 0.1, cobble: 0.26, mud: 0.2, rampart: 0.7, floor: 0.1, wall: 0.9, cave: 0.18, rock: 1.4, gate: 0.18, fog: 0.3, paved: 0.3 };
 
 /** Offset-space position of a hex, used for the island outline. */
 function flatPos(pos: HexPos): { x: number; y: number } {

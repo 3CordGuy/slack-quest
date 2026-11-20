@@ -2,10 +2,11 @@
 // crew's shared Harbor, and an Island (a live voyage). The hash carries the
 // voyage code so it survives a reload (#run/BCDF), or a crew invite
 // (#crew/BCDFGH). #hut/<player id> is the inside of that crew member's hut;
-// #pub, #smithy, #apothecary and #galley are the insides of those buildings.
+// #pub, #smithy, #apothecary, #galley and #lapidary are the insides of those
+// buildings.
 
-import { useCallback, useEffect, useRef, useState } from "react";
-import type { KeeperShop } from "@gantt-quest/world";
+import { Suspense, lazy, useCallback, useEffect, useRef, useState } from "react";
+import { isKeeperHouse, type KeeperHouse } from "@gantt-quest/world";
 import { loadMe, type Me } from "./api";
 import { loadContent } from "./content";
 import { AdminView } from "./admin/AdminView";
@@ -20,8 +21,11 @@ import { PubView } from "./PubView";
 import { ZoneView } from "./ZoneView";
 
 const pubFromHash = () => location.hash === "#pub";
-/** Inside the smithy, the apothecary or the galley (KeeperView). */
-const keeperFromHash = (): KeeperShop | null => (location.hash === "#smithy" ? "smithy" : location.hash === "#apothecary" ? "apothecary" : location.hash === "#galley" ? "galley" : null);
+/** Inside the smithy, the apothecary, the galley or the Lapidary (KeeperView). */
+const keeperFromHash = (): KeeperHouse | null => {
+  const house = location.hash.slice(1);
+  return isKeeperHouse(house) ? house : null;
+};
 /** A zone: a map to walk and fight on (ZoneView). */
 const zoneFromHash = () => /^#zone\/([A-Za-z]{4})$/.exec(location.hash)?.[1].toUpperCase() ?? null;
 /** The crew's atlas: the world, and where on it they can go (atlas/AtlasView.tsx). */
@@ -30,6 +34,10 @@ const adminFromHash = () => location.hash === "#admin";
 const catchesFromHash = () => location.hash === "#catches";
 const hutFromHash = () => /^#hut\/([A-Za-z0-9-]{1,64})$/.exec(location.hash)?.[1] ?? null;
 const inviteFromHash = () => /^#crew\/([A-Za-z]{6})$/.exec(location.hash)?.[1].toUpperCase() ?? null;
+/** A bench for the fight interface with made-up data (development only): #lab/fightui. */
+const FightUiLab = import.meta.env.DEV ? lazy(() => import("./zone/FightUiLab")) : null;
+/** A sample map carrying every kind of zone scenery, in any climate and over any backdrop (development only): #lab/scenery. */
+const SceneryLab = import.meta.env.DEV ? lazy(() => import("./SceneryLab")) : null;
 
 export function App() {
   const [me, setMe] = useState<Me | null>(null);
@@ -83,8 +91,10 @@ export function App() {
   );
 }
 
-function Screen({ me, refresh, zone, atlas, invite, hut, pub, keeper, admin, catches }: { me: Me; refresh(): Promise<void>; zone: string | null; atlas: boolean; invite: string | null; hut: string | null; pub: boolean; keeper: KeeperShop | null; admin: boolean; catches: boolean }) {
+function Screen({ me, refresh, zone, atlas, invite, hut, pub, keeper, admin, catches }: { me: Me; refresh(): Promise<void>; zone: string | null; atlas: boolean; invite: string | null; hut: string | null; pub: boolean; keeper: KeeperHouse | null; admin: boolean; catches: boolean }) {
   const ready = me.character?.status === "active";
+  if (FightUiLab && location.hash === "#lab/fightui") return <Suspense fallback={null}><FightUiLab me={me} refresh={refresh} /></Suspense>;
+  if (SceneryLab && location.hash === "#lab/scenery") return <Suspense fallback={null}><SceneryLab /></Suspense>;
   if (admin) return <AdminView me={me} onLeave={() => (location.hash = "")} />;
   // Every catch's sprite and model, side by side: for admins, and on a development deployment.
   if (catches && (me.isAdmin || me.devTools || import.meta.env.DEV)) return <CatchGallery onLeave={() => (location.hash = "")} />;

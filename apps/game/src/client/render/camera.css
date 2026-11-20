@@ -6,3 +6,7 @@
 .camera-rotate .camera-follow { display: grid; place-items: center; color: var(--brass-hi, #c9c3e6); }
 .camera-rotate .camera-follow[aria-pressed="true"] { color: var(--gold, #ffd23f); border-color: var(--gold, #ffd23f); background: #4a4320; }
 .camera-rotate .camera-follow[hidden] { display: none; }
+/* The combat view (cutaway.ts), on a battle map only: lit gold while trees and walls in the way are cut away. Set a little apart from the turning buttons. */
+.camera-rotate .camera-cutaway { display: grid; place-items: center; margin-top: 6px; color: var(--brass-hi, #c9c3e6); }
+.camera-rotate .camera-cutaway[aria-pressed="true"] { color: var(--gold, #ffd23f); border-color: var(--gold, #ffd23f); background: #4a4320; }
+.camera-rotate .camera-cutaway[hidden] { display: none; }

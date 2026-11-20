@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { hexDistance, posKey, type HexPos } from "@gantt-quest/core";
-import { ATLAS_HOME, ATLAS_SPACING, atlasHex, atlasNode, atlasNodeById, atlasView, type AtlasCell, type AtlasNodeView } from "./atlas";
+import { ATLAS_HOME, ATLAS_LANDS, ATLAS_SPACING, atlasHex, atlasLie, atlasNode, atlasNodeById, atlasView, type AtlasCell, type AtlasNodeView } from "./atlas";
 import { ATLAS_FARSIGHT, ATLAS_GLIMPSE, ATLAS_RIM, ATLAS_SIGHT, ATLAS_VIEW, atlasGround, atlasWorld, type AtlasWorld } from "./atlasMap";
-import type { Tile } from "./map";
+import { HARBOR_SIDES } from "./harbor";
+import { BASE_HEIGHT, CLIMES, type Tile } from "./map";
 
 const SEEDS = ["CREWAA", "CREWBB", "ZGHPQH"];
 const ring = (c: AtlasCell) => (Math.abs(c.q) + Math.abs(c.r) + Math.abs(c.q + c.r)) / 2;
@@ -153,6 +154,55 @@ describe("the window a crew is shown", () => {
       }
     }
   });
+
+  it("draws under every place the land its map is made of, in its climate: what is seen on the atlas is what is got", () => {
+    const seen = new Set<string>();
+    for (const seed of [...SEEDS, "HEYLET", "QWERTY"]) {
+      // Every place within a few rings, as a crew that had opened them all would be shown them.
+      const nodes: AtlasNodeView[] = [];
+      for (let q = -9; q <= 9; q++) for (let r = -9; r <= 9; r++) if (ring({ q, r }) <= 9) nodes.push({ ...atlasNode(seed, { q, r }), state: q === 0 && r === 0 ? "harbor" : "open" });
+      for (const centre of [{ q: 0, r: 0 }, { q: 30, r: -14 }]) {
+        const world = atlasWorld(seed, nodes, centre);
+        const tiles = new Map(world.map.tiles.map((t) => [posKey(t), t]));
+        for (const n of nodes) {
+          if (n.state === "fogged" || n.kind === "harbor") continue;
+          const tile = tiles.get(posKey(n.hex));
+          if (!tile) continue;
+          const where = `${seed} ${n.id} (${n.kind} on ${n.clime} ${n.land})`;
+          // The same reckoning as the ground itself: the land and the climate at its hex.
+          const lie = atlasLie(seed, n.hex);
+          expect({ land: n.land, clime: n.clime }, where).toEqual({ land: lie.land, clime: lie.clime });
+          expect(tile.clime ?? "greenwood", where).toBe(n.clime);
+          expect(tile.blocker, where).toBeUndefined();
+          const round = HARBOR_SIDES.map((d) => tiles.get(posKey({ q: n.hex.q + d.q, r: n.hex.r + d.r })));
+          const high = n.kind === "lookout" || (n.land === "hills" && n.kind !== "seacave");
+          // Sand where its map is sand (the sea's islet, a strand, open sand, and all of the dunes' high ground); else open ground.
+          const sandy = n.kind === "seacave" || n.land === "sea" || n.land === "strand" || n.land === "sand" || (high && n.clime === "dunes");
+          expect(tile.biome, where).toBe(sandy ? "sand" : "plains");
+          // High ground stands high, with crags at its back; everything else lies where open ground lies.
+          if (high) {
+            expect(tile.h, where).toBeGreaterThan(BASE_HEIGHT.hills);
+            expect(round.filter((t) => t?.biome === "hills").length, where).toBeGreaterThanOrEqual(2);
+          } else expect(tile.h, where).toBeLessThanOrEqual(BASE_HEIGHT.plains);
+          if (n.kind === "landfall" || n.kind === "lair") {
+            // In the woods there are trees on every side that will grow them; on open grass none stand right beside it.
+            // (Save where the next place over has made something else of a hex they share.)
+            const shared = (i: number) => nodes.some((o) => o !== n && hexDistance(o.hex, { q: n.hex.q + HARBOR_SIDES[i].q, r: n.hex.r + HARBOR_SIDES[i].r }) <= 1);
+            round.forEach((t, i) => {
+              if (!t || shared(i)) return;
+              if (n.land === "forest") expect(t.biome, where).not.toBe("plains");
+              if (n.land === "grass") expect(t.biome, where).not.toBe("forest");
+              if (n.land === "sea") expect(t.biome, where).not.toBe("water");
+            });
+            seen.add(`${n.clime} ${n.land}`);
+          }
+        }
+      }
+    }
+    // Of every land, and in every climate, somewhere among them.
+    expect(new Set([...seen].map((k) => k.split(" ")[1]))).toEqual(new Set(ATLAS_LANDS));
+    expect(new Set([...seen].map((k) => k.split(" ")[0]))).toEqual(new Set(CLIMES));
+  }, 20_000);
 
   it("lifts the cloud round the Harbor and what is cleared, a little round what is open, and nowhere else", () => {
     for (const seed of SEEDS) {

@@ -11,7 +11,7 @@
 // server refuses outside a development deployment.
 
 import { useEffect, useState } from "react";
-import { ABILITIES, DEFAULT_ZONE_OPTIONS, ENEMIES, HERO_CLASSES, SURFACE_INFO, WEAPONS, poolFor, type SurfaceKind, type ZoneBiome, type ZoneSize } from "@gantt-quest/world";
+import { ABILITIES, CLIMES, DEFAULT_ZONE_OPTIONS, ENEMIES, HERO_CLASSES, SITES, SITE_IDS, SURFACE_INFO, WEAPONS, poolFor, type SurfaceKind, type ZoneBiome, type ZoneSize } from "@gantt-quest/world";
 import { api, PROFILE } from "../api";
 import { setZoneDev, useZoneDev, type KitHero } from "./zoneDev";
 
@@ -32,7 +32,8 @@ const recall = (): Record<string, unknown> => {
 
 export function MapsTab() {
   const dev = useZoneDev();
-  const [options, setOptions] = useState(() => ({ ...DEFAULT_ZONE_OPTIONS, lead: "", seed: "", ...recall() }));
+  // `site` and `clime` empty: whatever suits the ground. `tier` 0: not a place on the atlas (no spoils when it is cleared).
+  const [options, setOptions] = useState(() => ({ ...DEFAULT_ZONE_OPTIONS, lead: "", seed: "", site: "", clime: "", tier: 0, stone: 0, ...recall() }));
   const [said, setSaid] = useState<{ text: string; bad?: boolean } | null>(null);
   const [busy, setBusy] = useState(false);
   const [spawn, setSpawn] = useState({ kind: "wolf", count: 2 });
@@ -50,9 +51,9 @@ export function MapsTab() {
 
   const generate = () => {
     setBusy(true);
-    const { lead, seed, ...rest } = options;
+    const { lead, seed, site, clime, tier, stone, ...rest } = options;
     api
-      .devZone({ ...rest, kinds: lead ? [lead] : [], seed: seed.trim() || undefined })
+      .devZone({ ...rest, kinds: lead ? [lead] : [], seed: seed.trim() || undefined, ...(site ? { site } : {}), ...(clime ? { clime } : {}), ...(tier > 0 ? { tier, stone } : {}) })
       .then(({ code, seed: used }) => {
         setSaid({ text: `Map ${code}, from seed "${used}". Walking in.` });
         location.hash = `zone/${code}`;
@@ -60,7 +61,7 @@ export function MapsTab() {
       .catch((err: Error) => setSaid({ text: err.message, bad: true }))
       .finally(() => setBusy(false));
   };
-  const number = (key: "groups" | "clear" | "party", min: number, max: number, label: string) => (
+  const number = (key: "groups" | "clear" | "party" | "tier" | "stone", min: number, max: number, label: string) => (
     <label>
       {label}
       <input type="number" min={min} max={max} value={options[key]} onChange={(e) => set({ [key]: Math.max(min, Math.min(max, Number(e.target.value) || min)) })} />
@@ -90,9 +91,23 @@ export function MapsTab() {
           Ground
           <select value={options.biome} onChange={(e) => set({ biome: e.target.value as ZoneBiome })}>{BIOMES.map((b) => <option key={b}>{b}</option>)}</select>
         </label>
+        <label>
+          Place
+          <select value={options.site} onChange={(e) => set({ site: e.target.value })}>
+            <option value="">whatever suits</option>
+            {SITE_IDS.map((s) => <option key={s} value={s}>{SITES[s].name}</option>)}
+          </select>
+        </label>
+        <label>
+          Climate
+          <select value={options.clime} onChange={(e) => set({ clime: e.target.value })}>
+            <option value="">greenwood</option>
+            {CLIMES.filter((c) => c !== "greenwood").map((c) => <option key={c}>{c}</option>)}
+          </select>
+        </label>
       </div>
       <div className="dev-row">
-        {number("groups", 0, 6, "Enemy groups")}
+        {number("groups", 0, 8, "Enemy groups")}
         <label>
           Led by
           <select value={options.lead} onChange={(e) => set({ lead: e.target.value })}>
@@ -115,6 +130,8 @@ export function MapsTab() {
         {level("elevation", "High ground")}
         {level("obstacles", "Clutter")}
         {number("clear", 2, 8, "Open start")}
+        {number("tier", 0, 40, "Atlas ring (0: none)")}
+        {number("stone", 0, 3, "Stone carried")}
       </div>
       <div className="dev-row">
         <label>

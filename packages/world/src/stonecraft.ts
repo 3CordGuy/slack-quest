@@ -1,4 +1,5 @@
-// Working lodestones at the bench (lodestone.ts says what a lodestone is):
+// Working lodestones at the lapidary's bench, in her shop in town
+// (lodestone.ts says what a lodestone is; lapidary.ts, what else she does):
 // four ways to turn the stones a hero has into the ones they want.
 //
 //   fuse     three stones that carry the same number of things become one

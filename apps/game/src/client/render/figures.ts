@@ -3073,6 +3073,18 @@ function lowHead(head: Part, look: Look, asleep: boolean, covered = false) {
     head.ball(tone(look.bandana, -0.1), 0.45, 0, 4.15, -3.6 + back, 0);
     for (const s of [-1, 1]) head.shape(look.bandana, [[s * 0.1, 4.2, -3.6 + back], [s * 0.45, 4.2, -3.7 + back], [s * 1.1, 2.7, -3.85 + back], [s * 1.5, 2.85, -3.85 + back]]);
   }
+  if (look.loupe) {
+    // A jeweller's loupe: a leather band round the brow, and hung from it over one eye a short brass tube, wider at
+    // the eye than at its end, with a glass in it.
+    const band = "#4a3426";
+    head.loft(band, fitted([[3.95, 3.86, 3.56], [4.4, 3.89, 3.59]]), 10);
+    const x = 1.15;
+    const z = faceZ(rings, x, 3.05);
+    head.box(band, 0.3, 1.1, 0.25, x, 3.65, z + 0.12);
+    head.cyl(look.loupe, 0.5, 0.62, 1.1, x, 3.05, z + 0.55, 8, [HALF_PI, 0, 0]);
+    head.cyl(tone(look.loupe, -0.14), 0.66, 0.66, 0.2, x, 3.05, z + 0.12, 8, [HALF_PI, 0, 0]);
+    head.cyl("#cfeaff", 0.4, 0.4, 0.08, x, 3.05, z + 1.1, 8, [HALF_PI, 0, 0]);
+  }
   if (chosen?.ink) inkPart(head, "head", chosen.ink);
   if (chosen) lowFacialHair(head, chosen.beard, chosen.mustache, skin, look.hair, rings, chinY, mouthY);
   // A stock figure's own (the galley's cook): no beard, just what its look names.
@@ -3938,10 +3950,12 @@ function lowHat(head: Part, look: Look) {
       return;
     }
     case "wizard": {
-      // A wide brim just over the brows, a band, and a tall crown that bends back to its tip.
-      head.loft(look.accent, fitted([[4.3, 5.3, 5.05, -0.05], [4.68, 5.3, 5.05, -0.05]]), 14);
-      head.loft(look.body, fitted([[4.5, 3.82, 3.52, -0.05], [6.2, 3.22, 2.97, -0.15], [7.8, 2.25, 2.05, -0.4], [9.3, 1.3, 1.2, -0.85], [10.5, 0.55, 0.55, -1.5], [11.1, 0.1, 0.1, -1.95]]), 10);
-      head.loft(tone(look.body, -0.08), fitted([[4.65, 3.86, 3.56, -0.05], [5.3, 3.72, 3.44, -0.08]]), 10);
+      // A wide brim just over the brows, a band, and a tall crown that bends back to its tip. A hat of its own
+      // colour (a witch's) is that colour brim and all; otherwise the crown is the robe's and the brim the trim's.
+      const c = look.hatColor ?? look.body;
+      head.loft(look.hatColor ? tone(c, 0.04) : look.accent, fitted([[4.3, 5.3, 5.05, -0.05], [4.68, 5.3, 5.05, -0.05]]), 14);
+      head.loft(c, fitted([[4.5, 3.82, 3.52, -0.05], [6.2, 3.22, 2.97, -0.15], [7.8, 2.25, 2.05, -0.4], [9.3, 1.3, 1.2, -0.85], [10.5, 0.55, 0.55, -1.5], [11.1, 0.1, 0.1, -1.95]]), 10);
+      head.loft(tone(c, -0.08), fitted([[4.65, 3.86, 3.56, -0.05], [5.3, 3.72, 3.44, -0.08]]), 10);
       const f = facet(fitted(OVER_HAIR), 10, 5, 0, 0.3);
       head.shape(look.accent, sym([[0, 5.55, f.z], [0.5, 5, f.z], [0, 4.45, f.z], [0, 5, f.z + 0.25]]));
       return;
@@ -4788,6 +4802,12 @@ function drawHead(head: Part, look: Look, asleep: boolean) {
     head.box(look.hair, look.mustache === "pencil" ? 2.2 : 3, look.mustache === "pencil" ? 0.35 : 0.7, 0.4, 0, 1.55, 3.05);
     if (look.mustache !== "pencil") for (const s of [-1, 1]) head.box(look.hair, 0.6, 1, 0.4, s * 1.3, look.mustache === "handlebar" ? 1.85 : 1.1, 3.05);
   }
+  if (look.loupe) {
+    // A jeweller's loupe over one eye, on a leather band round the brow.
+    head.box("#4a3426", 6.9, 0.5, 6.3, 0, 4.25, -0.05);
+    head.box(look.loupe, 1.5, 1.5, 1.1, 1.5, 2.95, 3.5);
+    head.box("#cfeaff", 0.9, 0.9, 0.2, 1.5, 2.95, 4.1);
+  }
 }
 
 /** The headgear a class or enemy has by default. */
@@ -4800,9 +4820,10 @@ function drawHat(head: Part, look: Look) {
     for (const s of [-1, 1]) head.box(c, 0.7, 2.6, 3.2, s * 3.45, 2.9, 0.4);
     head.box(look.accent, 1, 1.5, 3.6, 0, 7.9, -0.2);
   } else if (hat === "wizard") {
-    head.cyl(look.accent, 5.3, 5.3, 0.6, 0, 6.2, 0, 10);
-    head.cyl(look.body, 2.1, 3.4, 3, 0, 8, 0, 8);
-    head.cone(look.body, 2.1, 4.2, 0, 11.4, -0.5, 8, [-0.25, 0, 0]);
+    const c = look.hatColor ?? look.body;
+    head.cyl(look.hatColor ? tone(c, 0.04) : look.accent, 5.3, 5.3, 0.6, 0, 6.2, 0, 10);
+    head.cyl(c, 2.1, 3.4, 3, 0, 8, 0, 8);
+    head.cone(c, 2.1, 4.2, 0, 11.4, -0.5, 8, [-0.25, 0, 0]);
     head.box(look.accent, 1, 1, 0.5, 0, 7.6, 3.1);
   } else if (hat === "hood") {
     drawHood(head, look.hatColor ?? look.body);
@@ -5195,6 +5216,14 @@ function drawHeld(id: string, b: Biped, trim: string, look: Look, shield: boolea
       w.box(GEAR.steel, 0.36, 5.2, 0.5, 0, 5.3, 1.82);
       w.box("#2a2623", 0.38, 0.5, 0.5, 0, 7.3, -0.5);
       return { tilt: 0.5 };
+    case "dop":
+      // The lapidary's dop: a short turned stick with a brass ferrule, a lump of dark wax on its end and the stone
+      // being cut set in the wax. It is what she holds the stone to the wheel with.
+      w.cyl("#8a6a44", 0.34, 0.42, 4.6, 0, 1.9, 0, 6);
+      w.cyl(GEAR.gold, 0.46, 0.46, 0.5, 0, 4.2, 0, 6);
+      w.ball("#3a2a22", 0.6, 0, 4.9, 0, 0);
+      w.glowBall(look.accent, 0.42, 0, 5.5, 0);
+      return { tilt: 0.3 };
     case "paddle":
       // A brewer's paddle, taller than he is: a long shaft of pale, scrubbed ash, a dark band where it is gripped,
       // and a broad blade on the end, stained green where it goes into the brew. Pale so it shows against the
@@ -6419,20 +6448,24 @@ function fourLegs(top: THREE.Group, legs: Part[], head: Part, tail: Part | null,
       // On its side.
       top.rotation.set(0, 0, HALF_PI);
       top.position.set(tall * 0.55, across, 0);
-      for (const leg of legs) leg.joint.rotation.x = 0;
+      for (const leg of legs) leg.joint.rotation.set(0, 0, 0);
       head.joint.rotation.set(0, 0, 0);
       return;
     }
     top.rotation.set(-a.strike * 0.3, 0, 0);
     top.position.set(0, (a.breath + 1) * 0.06 + a.strike * 1.2, 0);
-    legs.forEach((leg, i) => (leg.joint.rotation.x = (i === 0 || i === 3 ? 1 : -1) * a.swing * 0.7));
+    // (Every turn of a joint is set, not one of them: getting up from a fall, it is eased back from however it lay.)
+    legs.forEach((leg, i) => leg.joint.rotation.set((i === 0 || i === 3 ? 1 : -1) * a.swing * 0.7, 0, 0));
     head.joint.rotation.set(stoop + a.breath * 0.04 + a.strike * 0.35, 0, 0);
-    if (tail) tail.joint.rotation.y = Math.sin(a.t * 3.1) * 0.3;
+    if (tail) tail.joint.rotation.set(0, Math.sin(a.t * 3.1) * 0.3, 0);
   };
 }
 
-/** A wolf, nose toward +z. The pack leader is the same animal, darker, with a red eye. */
-function wolf(top: THREE.Group, fur = "#7d8793", dark = "#59616c", eye = "#ffd23f"): Rig {
+/**
+ * A wolf, nose toward +z. The pack leader is the same animal, darker, with a red eye. `ember` is the fire in an
+ * Ember Hound: it shows through cracks down its back and lights its mouth.
+ */
+function wolf(top: THREE.Group, fur = "#7d8793", dark = "#59616c", eye = "#ffd23f", ember?: string): Rig {
   const parts: Part[] = [];
   const part = (parent: THREE.Object3D, x: number, y: number, z: number) => (parts[parts.length] = new Part(parent, x, y, z));
   const body = part(top, 0, 0, 0);
@@ -6454,6 +6487,18 @@ function wolf(top: THREE.Group, fur = "#7d8793", dark = "#59616c", eye = "#ffd23
       body.shape(i % 2 ? dark : tone(fur, 0.05), [[x - 0.65, y, z + 0.6], [x + 0.65, y, z + 0.6], [x, y, z - 0.6], [x + s * 0.45, y + rise, z - 0.75]]);
     }
   }
+  if (ember) {
+    // Cracks in the hide either side of the spine, slanting one way and then the other, and coals at the root of the tail.
+    for (let i = 0; i < 7; i++) {
+      const z = 4.1 - i * 1.3;
+      const spans = z > 0.9 ? ruff : trunk;
+      for (const s of [-1, 1]) {
+        const a = s * (0.62 + (i % 2) * 0.3);
+        body.glowBox(ember, 0.17, 0.5, 1.9 - (i % 3) * 0.3, ...onHide(spans, z, a, 0), [0, s * (i % 2 ? 0.75 : -0.55), -a]);
+      }
+    }
+    for (const s of [-1, 1]) body.glowBall(ember, 0.3, ...onHide(trunk, -4.3, s * 0.5, 0.05));
+  }
   // Head down, snarling (see fourLegs' stoop).
   const head = part(top, 0, 7.7, 4.4);
   // A long skull, a dark tapering snout with a black nose, ears pinned back, bright eyes, and bared fangs.
@@ -6469,6 +6514,7 @@ function wolf(top: THREE.Group, fur = "#7d8793", dark = "#59616c", eye = "#ffd23
   }
   // The jaw dropped a little, the dark of the mouth showing between.
   lengthwise(head, OUTLINE, [[2.6, 0.85, 0.3, -0.85], [4.7, 0.6, 0.25, -0.9]], 6);
+  if (ember) head.glowBox(ember, 1.3, 0.34, 1.9, 0, -0.86, 3.6);
   lengthwise(head, dark, [[2.4, 1, 0.5, -1.15], [4.4, 0.78, 0.38, -1.25], [4.9, 0.5, 0.28, -1.22]], 6);
   // The lip curled back off the teeth: wrinkles over the snout.
   for (const z of [3.2, 3.75]) head.shape(tone(dark, -0.08), sym([[0.85, 0.85, z], [0.85, 0.85, z + 0.22], [0, 1.25, z], [0, 1.25, z + 0.22]]));
@@ -6489,9 +6535,10 @@ function wolf(top: THREE.Group, fur = "#7d8793", dark = "#59616c", eye = "#ffd23
 
 /**
  * A bear on all fours: heavier than the wolf, with a hump at the shoulders, round ears, a pale muzzle and
- * thick clawed legs. `frost` greys the hump and brow for the old Great Bear.
+ * thick clawed legs. `frost` greys the hump and brow for the old Great Bear; `claw` is the colour of its claws
+ * (a Snow Bear's are dark against its white).
  */
-function bear(top: THREE.Group, fur = "#7a5232", dark = "#4f3420", muzzle = "#b98a5a", eye = "#f2a33a", frost?: string): Rig {
+function bear(top: THREE.Group, fur = "#7a5232", dark = "#4f3420", muzzle = "#b98a5a", eye = "#f2a33a", frost?: string, claw: string = GEAR.paper): Rig {
   const parts: Part[] = [];
   const part = (parent: THREE.Object3D, x: number, y: number, z: number) => (parts[parts.length] = new Part(parent, x, y, z));
   const body = part(top, 0, 0, 0);
@@ -6516,7 +6563,7 @@ function bear(top: THREE.Group, fur = "#7a5232", dark = "#4f3420", muzzle = "#b9
     const rings: Ring[] = z > 0 ? [[1.5, 1.55, 1.75], [-0.8, 1.35, 1.55, 0.1], [-3, 1.25, 1.45, 0.2], [-4.2, 1.35, 1.6, 0.35]] : [[1.8, 1.75, 2.2, -0.3], [-0.6, 1.45, 1.7, -0.3], [-2.8, 1.25, 1.45, -0.05], [-4.2, 1.35, 1.6, 0.25]];
     leg.loft(dark, rings, 8);
     leg.shape(tone(dark, -0.05), sym([[1.4, -4.8, -1.25], [1.5, -4.8, 1], [1.1, -4.8, 1.85], [0, -4.8, 2.05], [1.35, -3.9, -1.15], [1.4, -3.9, 0.9], [0, -3.9, 1.7]]));
-    for (const cx of [-0.8, 0, 0.8]) leg.shape(GEAR.paper, [[cx - 0.25, -4.8, 1.55], [cx + 0.25, -4.8, 1.55], [cx, -4.25, 1.6], [cx, -4.75, 2.55]]);
+    for (const cx of [-0.8, 0, 0.8]) leg.shape(claw, [[cx - 0.25, -4.8, 1.55], [cx + 0.25, -4.8, 1.55], [cx, -4.25, 1.6], [cx, -4.75, 2.55]]);
     return leg;
   });
   return { parts, animate: fourLegs(top, legs, head, null, 3.6, 12), getUp: BEAST_GET_UP };
@@ -6524,9 +6571,10 @@ function bear(top: THREE.Group, fur = "#7a5232", dark = "#4f3420", muzzle = "#b9
 
 /**
  * A ghost of the Haunted Caverns: a pale hooded shape with a ragged hem, hollow eyes and reaching hands,
- * hanging in the air. `crown` gives the bound Haunt the tarnished crown of whoever it was in life.
+ * hanging in the air. `crown` gives the bound Haunt the tarnished crown of whoever it was in life. `rime` is the
+ * ice on a Rime Wraith: shards of it stand from its shoulders and back, and it is the cold light in its eyes.
  */
-function ghost(top: THREE.Group, pale = "#dfe8f2", shade = "#a7b6cc", eye = "#24203a", crown?: string): Rig {
+function ghost(top: THREE.Group, pale = "#dfe8f2", shade = "#a7b6cc", eye = "#24203a", crown?: string, rime?: string): Rig {
   const parts: Part[] = [];
   const body = (parts[0] = new Part(top, 0, 2, 0));
   // One shape from the hem up over a round head, narrowing at the neck.
@@ -6541,6 +6589,17 @@ function ghost(top: THREE.Group, pale = "#dfe8f2", shade = "#a7b6cc", eye = "#24
   }
   for (const s of [-1, 1]) body.ball(eye, 1, s * 1.5, 13, 3.35, 1, [0.92, 1.12, 0.55]);
   body.ball(eye, 1, 0, 10.2, 3.42, 1, [1.15, 0.8, 0.5]);
+  if (rime) {
+    for (const s of [-1, 1]) body.glowBall(rime, 0.55, s * 1.5, 13, 3.72);
+    // Shards of ice round the shoulders and down the back (not the front, where the arms reach), long and short by turns.
+    for (let i = 0; i < 7; i++) {
+      const a = Math.PI + (i - 3) * 0.42;
+      const long = i % 2 === 0 ? 3.4 : 2.1;
+      const y = 10.6 + (i % 2) * 0.9;
+      const at = (r: number, h: number, turn = 0): Pt => [Math.sin(a + turn) * r, h, Math.cos(a + turn) * r + 0.1];
+      body.shape(rime, [at(3.3, y - 0.7, -0.14), at(3.3, y - 0.7, 0.14), at(3.3, y + 0.5), at(2.9, y), at(3.9 + long, y + long * 0.75)]);
+    }
+  }
   if (crown) {
     body.loft(crown, [[15.3, 3.15, 3.05, -0.1], [16.2, 3, 2.92, -0.12]], 8);
     for (let i = 0; i < 4; i++) {
@@ -6564,7 +6623,7 @@ function ghost(top: THREE.Group, pale = "#dfe8f2", shade = "#a7b6cc", eye = "#24
     }
     top.rotation.set(a.strike * 0.35, 0, 0);
     top.position.set(0, Math.sin(a.t * 1.8) * 0.7 + 0.7, 0);
-    arms.forEach((arm, i) => (arm.joint.rotation.x = -0.25 + Math.sin(a.t * 1.3 + i * 2) * 0.15 - a.strike * 0.6));
+    arms.forEach((arm, i) => arm.joint.rotation.set(-0.25 + Math.sin(a.t * 1.3 + i * 2) * 0.15 - a.strike * 0.6, 0, 0));
   };
   return { parts, animate, clean: true };
 }
@@ -6606,13 +6665,13 @@ function bat(top: THREE.Group): Rig {
     if (a.lying) {
       top.rotation.set(-HALF_PI, 0, 0);
       top.position.set(0, -8, 10);
-      wings.forEach((p, i) => (p.joint.rotation.z = (i ? -1 : 1) * 0.2));
+      wings.forEach((p, i) => p.joint.rotation.set(0, 0, (i ? -1 : 1) * 0.2));
       return;
     }
     top.rotation.set(a.strike * 0.5, 0, 0);
     top.position.set(0, Math.sin(a.t * 5) * 0.6, 0);
     const flap = Math.sin(a.t * 15) * 0.6;
-    wings.forEach((p, i) => (p.joint.rotation.z = (i ? 1 : -1) * flap));
+    wings.forEach((p, i) => p.joint.rotation.set(0, 0, (i ? 1 : -1) * flap));
   };
   return { parts, animate, clean: true };
 }
@@ -6689,6 +6748,226 @@ function seaTurtle(top: THREE.Group): Rig {
   return { parts, animate };
 }
 
+/** A point on a lengthwise loft: `z` along it, `a` radians round it from straight up (toward +x), `by` outside it. */
+function onHide(spans: readonly Span[], z: number, a: number, by = 0): Pt {
+  const r = ringAt(spans as readonly Ring[], z);
+  return [Math.sin(a) * (r.rx + by), r.dz + Math.cos(a) * (r.rz + by), z];
+}
+
+/**
+ * A hide over part of a lengthwise loft of `sides` sides (an even number) that swells and narrows along its
+ * length, where pelt's one flat-sided piece would let the body show through: between `z0` and `z1`, round it
+ * from angle `a0` to `a1` (radians from straight up, toward +x), `by` outside it, a piece to each stretch of
+ * the loft and a face to each of its faces. Each piece goes a little way into the body, so a narrow one is still a solid.
+ */
+function hide(part: Part, color: string, spans: readonly Span[], sides: number, z0: number, z1: number, a0: number, a1: number, by = 0.12) {
+  const along = [z0, ...spans.map((s) => s[0]).filter((z) => z > z0 && z < z1), z1];
+  const step = (Math.PI * 2) / sides;
+  const round = [a0];
+  for (let a = (Math.floor(a0 / step) + 0.5) * step; a < a1; a += step) if (a > a0) round.push(a);
+  round.push(a1);
+  for (let i = 0; i + 1 < along.length; i++) part.shape(color, [along[i], along[i + 1]].flatMap((z) => round.flatMap((a) => [onHide(spans, z, a, by), onHide(spans, z, a, by - 0.4)])));
+}
+
+/**
+ * A two-boned leg with its knee held high, as a spider's is: how far above level the thigh points and then the
+ * shin (radians), for a foot `out` from the hip along the ground and `up` above it (below it: under 0). A foot
+ * out of reach is brought in along the same line.
+ */
+function kneeHigh(out: number, up: number, thigh: number, shin: number): [number, number] {
+  const d = Math.min(thigh + shin - 0.01, Math.max(Math.abs(thigh - shin) + 0.01, Math.hypot(out, up)));
+  const toFoot = Math.atan2(up, out);
+  const e1 = toFoot + Math.acos((thigh * thigh + d * d - shin * shin) / (2 * thigh * d));
+  return [e1, Math.atan2(Math.sin(toFoot) * d - Math.sin(e1) * thigh, Math.cos(toFoot) * d - Math.cos(e1) * thigh)];
+}
+
+/**
+ * A spider's four legs a side, front to back: where the hip is along the body (z, from its middle) and out from
+ * it (x), which way the leg points (radians round from straight ahead), how far out its foot stands, and how
+ * long it is beside the others. The first and last pairs are the longest.
+ */
+const SPIDER_LEGS: readonly (readonly [z: number, x: number, yaw: number, reach: number, long: number])[] = [
+  [1.9, 1.65, 0.5, 7.4, 1],
+  [0.8, 2.1, 1.15, 7, 0.94],
+  [-0.3, 2.1, 1.9, 6.6, 0.9],
+  [-1.3, 1.7, 2.5, 7.6, 1.04],
+];
+/** A spider's walk: how far each foot goes fore and aft of where it stands, and how high it is lifted on the way forward. */
+const SCUTTLE = { stride: 1.9, lift: 2.2 };
+
+/**
+ * A giant hunting spider, eyes toward +z: a low head-and-chest with a cluster of lit eyes, two fangs and two
+ * feelers under them, a fat abdomen behind with a marking down its back, and eight legs, each jointed at a knee
+ * held high over its body. The legs walk in two sets of four, turn about; each foot is put where it should
+ * stand and the leg bent to reach it (see kneeHigh), so the body can sink, sway and lunge over planted feet.
+ * `brood` is the Broodmother: a little bigger (a boss is drawn larger besides) and much heavier, spined, an
+ * hourglass for its marking and a sac of eggs carried under its tail.
+ */
+function spider(top: THREE.Group, shell = "#24332b", dark = "#121a16", back = "#3f7d3c", mark = "#dbe6b4", glow = "#9dff5a", brood = false): Rig {
+  const parts: Part[] = [];
+  // Modelled at a hound's size, and drawn `k` times that: each part's meshes are scaled, and its joints set as far apart.
+  const k = brood ? 1.08 : 1;
+  const stout = brood ? 1.22 : 1;
+  const part = (parent: THREE.Object3D, x: number, y: number, z: number) => {
+    const p = (parts[parts.length] = new Part(parent, x * k, y * k, z * k));
+    p.skin.scale.setScalar(k);
+    return p;
+  };
+  /** The middle of the head-and-chest, above the ground and ahead of the figure's own middle. */
+  const [cy, cz] = [4.2, 1.6];
+  const chest = part(top, 0, cy, cz);
+  // A low shield, widest behind its middle and blunt in front, its back coloured and the plate under it dark.
+  const carapace: Span[] = [[-2.7, 1, 0.85, 0.15], [-1.9, 2.1, 1.5, 0.3], [-0.3, 2.65, 1.9, 0.4], [1.1, 2.45, 1.8, 0.3], [2.2, 1.95, 1.5, 0.15], [2.9, 1.45, 1.15, 0.05], [3.2, 0.75, 0.65, 0]];
+  lengthwise(chest, shell, carapace, 10);
+  hide(chest, back, carapace, 10, -2.1, 1.5, -0.8, 0.8, 0.1);
+  hide(chest, dark, carapace, 10, -2.3, 0.3, -0.1, 0.1, 0.18);
+  hide(chest, dark, carapace, 10, -2.2, 2.4, Math.PI - 0.8, Math.PI + 0.8, 0.1);
+  // The brow the eyes sit in, and the eyes: two great ones in front, one out to each side of them, four small above.
+  chest.ball(shell, 1.3, 0, 0.75, 2.05, 1, [1.2, 0.8, 1]);
+  for (const s of [-1, 1]) {
+    chest.glowBall(glow, 0.46, s * 0.58, 0.72, 3.12);
+    chest.glowBall(glow, 0.32, s * 1.36, 0.86, 2.62);
+    chest.glowBall(glow, 0.24, s * 0.5, 1.52, 2.55);
+    chest.glowBall(glow, 0.22, s * 1.2, 1.42, 1.95);
+  }
+  // The jaws: a stout dark base hung under the eyes, and a long pale fang curving down and in from it.
+  const fangs = [-1, 1].map((s) => {
+    const jaw = part(chest.joint, s * 0.66, -0.3, 2.7);
+    strut(jaw, dark, [0, 0.35, -0.35], [s * 0.08, -1.15, 0.85], 0.68, 0.52, 6);
+    jaw.shape(GEAR.bone, [[s * 0.08 - 0.3, -1.2, 0.85], [s * 0.08 + 0.3, -1.2, 0.85], [s * 0.08, -1.2, 1.25], [s * 0.08, -1.2, 0.5], [-s * 0.3, -2.7, 0.8]]);
+    return jaw;
+  });
+  // A feeler either side of them, held out in front and bent down at its tip.
+  const feelers = [-1, 1].map((s) => {
+    const p = part(chest.joint, s * 1.35, -0.35, 2.3);
+    strut(p, shell, [0, 0, 0], [s * 0.55, 0.45, 1.6], 0.44, 0.38, 6);
+    p.ball(dark, 0.44, s * 0.55, 0.45, 1.6);
+    strut(p, dark, [s * 0.55, 0.45, 1.6], [s * 0.4, -1.2, 2.5], 0.36, 0.2, 6);
+    return p;
+  });
+  // The abdomen, hung from the waist: far bigger than the chest, highest behind its middle, its back coloured.
+  const belly = part(chest.joint, 0, 0.2, -2.5);
+  const sac: Span[] = [[-8.1, 0.7, 0.65, 0.8], [-7.5, 1.8 * stout, 1.6 * stout, 1], [-6.3, 2.9 * stout, 2.6 * stout, 1.35], [-4.5, 3.5 * stout, 3.1 * stout, 1.5], [-2.5, 3.3 * stout, 2.9 * stout, 1.2], [-0.7, 2.3 * stout, 2 * stout, 0.6], [0.4, 0.9, 0.8, 0.1]];
+  lengthwise(belly, shell, sac, 10);
+  hide(belly, back, sac, 10, -7.3, -1, -1, 1, 0.12);
+  hide(belly, dark, sac, 10, -7, -1.2, Math.PI - 0.7, Math.PI + 0.7, 0.1);
+  for (const s of [-1, 1]) belly.ball(dark, 0.42, s * 0.35, 0.6, -8.15);
+  /** A patch on the abdomen's back with its corners at (z, angle round): a marking. */
+  const patch = (color: string, corners: [number, number][]) => {
+    const z = corners.reduce((sum, c) => sum + c[0], 0) / corners.length;
+    belly.shape(color, [...corners.map(([cz, a]) => onHide(sac, cz, a, 0.2)), onHide(sac, z, 0, 0.36), onHide(sac, z, 0, -0.7)]);
+  };
+  if (brood) {
+    // An hourglass: two wedges, point to point.
+    patch(mark, [[-2.3, -0.4], [-2.3, 0.4], [-4.1, -0.07], [-4.1, 0.07]]);
+    patch(mark, [[-6.1, -0.44], [-6.1, 0.44], [-4.3, -0.07], [-4.3, 0.07]]);
+    // A row of spines down each side of it.
+    for (let i = 0; i < 6; i++) {
+      const z = -1.5 - i * 1.05;
+      for (const s of [-1, 1]) belly.shape(dark, [onHide(sac, z + 0.4, s * 0.8, -0.1), onHide(sac, z - 0.4, s * 0.8, -0.1), onHide(sac, z, s * 0.98, -0.1), onHide(sac, z, s * 0.62, -0.1), onHide(sac, z - 0.7, s * 0.86, 1.3 - Math.abs(i - 2) * 0.16)]);
+    }
+    // The eggs, bound up in silk under the tail.
+    const silk = "#e9e2cf";
+    belly.ball(silk, 1.55, 0, -2.5, -6.2, 1, [1.05, 0.9, 1.15]);
+    belly.ball(tone(silk, -0.06), 0.8, 1, -2.2, -5, 1);
+    belly.ball(tone(silk, -0.06), 0.7, -1.05, -2.3, -5.3, 1);
+    belly.ball(silk, 0.65, 0.2, -2.1, -7.6, 1);
+  } else {
+    // Three pale diamonds down the back, each smaller than the last, a lit speck either side of each.
+    ([[-2.5, 1, 0.34], [-4.6, 0.85, 0.3], [-6.3, 0.6, 0.26]] as const).forEach(([z, half, wide]) => {
+      patch(mark, [[z + half, 0], [z, wide], [z - half, 0], [z, -wide]]);
+      for (const s of [-1, 1]) belly.glowBall(glow, 0.24, ...onHide(sac, z, s * (wide + 0.34), 0.06));
+    });
+  }
+  // The legs. Each is made as it stands (thigh up and out to the knee, shin out and over to a second bend and
+  // down to a point), in its own frame: +z out along the ground the way it points, so it lies in y and z.
+  const hipY = cy - 0.45;
+  const legs = SPIDER_LEGS.flatMap(([z, x, yaw, reach, long], i) =>
+    [1, -1].map((s) => {
+      const [thigh, shin] = [5.4 * long, 9.4 * long];
+      const [e1, e2] = kneeHigh(reach, -hipY, thigh, shin);
+      const knee = [Math.sin(e1) * thigh, Math.cos(e1) * thigh];
+      const foot = [-hipY - knee[0], reach - knee[1]];
+      const bend = [foot[0] * 0.44 + (foot[1] / shin) * 2, foot[1] * 0.44 - (foot[0] / shin) * 2];
+      const limb = tone(shell, -0.04);
+      const upper = part(top, s * x, hipY, cz + z);
+      upper.joint.rotation.order = "YXZ";
+      strut(upper, limb, [0, 0, 0], [0, knee[0], knee[1]], 0.68 * stout, 0.5 * stout, 6);
+      const lower = part(upper.joint, 0, knee[0], knee[1]);
+      lower.ball(dark, 0.66 * stout, 0, 0, 0, 1);
+      strut(lower, limb, [0, 0, 0], [0, bend[0], bend[1]], 0.5 * stout, 0.4 * stout, 6);
+      lower.ball(dark, 0.5 * stout, 0, bend[0], bend[1], 1);
+      strut(lower, dark, [0, bend[0], bend[1]], [0, foot[0], foot[1]], 0.38 * stout, 0.07, 6);
+      // Where the foot stands, in the figure's space; which of the two sets of four it walks with.
+      const stand = new THREE.Vector3(s * (x + Math.sin(yaw) * reach) * k, 0, (cz + z + Math.cos(yaw) * reach) * k);
+      return { upper, lower, thigh: thigh * k, shin: shin * k, e1, e2, yaw: s * yaw, stand, first: (i + (s > 0 ? 0 : 1)) % 2 === 0, front: i === 0, side: s };
+    }),
+  );
+  /** Bend a leg so its thigh and shin point `e1` and `e2` above level, the leg turned `yaw` round from straight ahead. */
+  const set = (leg: (typeof legs)[number], yaw: number, e1: number, e2: number) => {
+    leg.upper.joint.rotation.set(leg.e1 - e1, yaw, 0);
+    leg.lower.joint.rotation.set(leg.e2 - e2 - (leg.e1 - e1), 0, 0);
+  };
+  const inTop = new THREE.Matrix4();
+  const at = new THREE.Vector3();
+  /** Each spider fidgets on its own beat. */
+  const quirk = Math.random() * 20;
+  /** Where the walk is in its step, -1 to 1 a quarter turn ahead of the swing: above 0 the first set of feet is in the air. */
+  let gait = 0;
+  let wasAt = -1;
+  let wasSwing = 0;
+  const animate = (a: Anim) => {
+    const dt = wasAt < 0 ? 0 : Math.max(0, a.t - wasAt);
+    if (dt > 0) {
+      const rate = (a.swing - wasSwing) / dt;
+      const want = Math.sign(rate) * Math.sqrt(Math.max(0, 1 - a.swing * a.swing)) * Math.min(1, Math.abs(rate) / 1.5);
+      gait += (want - gait) * Math.min(1, dt * 25);
+    }
+    wasAt = a.t;
+    wasSwing = a.swing;
+    if (a.lying) {
+      // On its back, tail down, its legs drawn up over it and curled in.
+      top.rotation.set(0.12, 0, Math.PI);
+      top.position.set(0, (cy + 1.7 + 3.1 * stout) * k, 0);
+      chest.joint.rotation.set(0, 0, 0);
+      belly.joint.rotation.set(0, 0, 0);
+      legs.forEach((leg, i) => set(leg, leg.yaw + (i % 2 ? 0.16 : 0), -0.7 - (i % 3) * 0.08, -2.45 - (i % 2) * 0.14));
+      fangs.forEach((jaw) => jaw.joint.rotation.set(0.25, 0, 0));
+      feelers.forEach((p) => p.joint.rotation.set(0.5, 0, 0));
+      return;
+    }
+    // The body over its feet: it rises and sinks as it breathes, rides the walk, and on a strike rears and lunges.
+    top.rotation.set(-a.strike * 0.24, a.swing * 0.04, 0);
+    top.position.set(Math.sin(a.t * 0.8 + quirk) * 0.14 * k, ((a.breath + 1) * 0.14 + gait * gait * 0.3 + a.strike * 0.7) * k, a.strike * 2.6 * k);
+    chest.joint.rotation.set(0, 0, 0);
+    belly.joint.rotation.set(a.breath * 0.035 + a.strike * 0.14, -a.swing * 0.07, 0);
+    fangs.forEach((jaw, i) => jaw.joint.rotation.set(Math.sin(a.t * 2.3 + i * 2 + quirk) * 0.05 - a.strike * 1.05, 0, (i ? 1 : -1) * a.strike * 0.4));
+    feelers.forEach((p, i) => p.joint.rotation.set(Math.sin(a.t * 3.1 + i * 1.7 + quirk) * 0.14 - a.strike * 0.6, 0, 0));
+    top.updateMatrix();
+    inTop.copy(top.matrix).invert();
+    for (const leg of legs) {
+      // Its foot: forward through the air and back along the ground, turn about with the other set.
+      const step = leg.first ? 1 : -1;
+      const lift = Math.max(0, step * gait);
+      at.copy(leg.stand);
+      at.z += step * a.swing * SCUTTLE.stride * k;
+      at.y += lift * SCUTTLE.lift * k;
+      if (leg.front) {
+        // The first pair: thrown up and wide on a strike; now and then one taps the ground, standing.
+        const tap = Math.max(0, Math.sin(a.t * 0.9 + quirk + leg.side) - 0.9) * 10;
+        at.y += (a.strike * 9 + tap * 0.9) * k;
+        at.x += leg.side * a.strike * 2 * k;
+        at.z += a.strike * 2.2 * k;
+      }
+      at.applyMatrix4(inTop).sub(leg.upper.joint.position);
+      const [e1, e2] = kneeHigh(Math.hypot(at.x, at.z), at.y, leg.thigh, leg.shin);
+      set(leg, Math.atan2(at.x, at.z), e1, e2);
+    }
+  };
+  // (No mud: slung this low, all of it would be the colour of the ground.)
+  return { parts, animate, clean: true };
+}
+
 /** The sparring ring's training dummy: a straw sack on a post, with a target painted on its chest. */
 function dummy(top: THREE.Group): Rig {
   const straw = "#d9b662";
@@ -6752,6 +7031,18 @@ function rigFor(kind: string, top: THREE.Group, look: Look, outfit: Outfit | und
       return troll(top);
     case "sea_turtle":
       return seaTurtle(top);
+    case "spider":
+      return spider(top);
+    case "broodmother":
+      return spider(top, "#2b1d3a", "#140d1f", "#3d2857", "#e23a30", "#ff3b3b", true);
+    case "frost_wolf":
+      return wolf(top, "#eaf2f8", "#a9c6dc", "#a8e4ff");
+    case "ember_hound":
+      return wolf(top, "#34302f", "#1c1a1b", "#ff9a2e", "#ff7a1e");
+    case "snow_bear":
+      return bear(top, "#eef3f6", "#c9d5de", "#dbe4ea", "#1d2230", undefined, "#2b2f3a");
+    case "wraith":
+      return ghost(top, "#e4f6ff", "#8fc9e8", "#16384f", undefined, "#7ff1ff");
     case "drowned_cutlass":
       return skeleton(top, "cutlass");
     case "drowned_gunner":
@@ -6815,8 +7106,11 @@ function castShape(top: THREE.Group, made: THREE.BufferGeometry[]): THREE.Mesh |
   return mesh;
 }
 
+/** What is slung too low to show much from the side: in a portrait it is tipped toward the viewer, to show its back. */
+export const SEEN_FROM_ABOVE = new Set(["spider", "broodmother"]);
+
 /** The animals that stand side-on in a portrait, as they did in their sprites. */
-export const FOUR_LEGGED = new Set(["wolf", "alpha", "bear", "great_bear"]);
+export const FOUR_LEGGED = new Set(["wolf", "alpha", "bear", "great_bear", "frost_wolf", "ember_hound", "snow_bear"]);
 
 // ---------- falling dead ----------
 

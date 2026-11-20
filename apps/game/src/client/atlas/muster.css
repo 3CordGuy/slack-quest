@@ -1,0 +1,60 @@
+/* The muster card (Muster.tsx): where the crew is asked who is coming. It hangs under the top of the view, in the
+   middle, over the map: tarred boards, brass, and a clock that runs down. Lengths are the view's own pixels. */
+
+.muster.panel {
+  --m-out: #1c0d0e; --m-brass: #c9a24a; --m-brass-hi: #f6e2a1; --m-gold: #f4c64e; --m-good: #9be08a; --m-bad: #ff8571;
+  position: absolute; top: 58px; left: 50%; translate: -50% 0; z-index: 40;
+  width: min(430px, calc(100% - 20px)); display: flex; gap: 12px; align-items: flex-start; padding: 12px 14px 12px 12px;
+  box-shadow: 0 0 0 2px var(--m-gold), 0 0 26px 3px rgba(244, 198, 78, 0.4), 0 10px 26px rgba(0, 0, 0, 0.6);
+  animation: muster-in 0.45s cubic-bezier(0.2, 1.4, 0.4, 1) both, muster-breathe 2.2s ease-in-out 0.45s infinite;
+}
+.muster.panel.gone, .muster.panel.off { animation: muster-in 0.3s ease-out both; box-shadow: 0 0 0 1px var(--m-brass), 0 10px 26px rgba(0, 0, 0, 0.6); }
+.muster.panel.urgent { animation: muster-in 0.45s both, muster-urgent 0.9s ease-in-out infinite; }
+@keyframes muster-in { from { translate: -50% -26px; opacity: 0; scale: 0.94; } to { translate: -50% 0; opacity: 1; scale: 1; } }
+@keyframes muster-breathe { 50% { box-shadow: 0 0 0 2px #ffe08a, 0 0 38px 8px rgba(244, 198, 78, 0.6), 0 10px 26px rgba(0, 0, 0, 0.6); } }
+@keyframes muster-urgent { 50% { box-shadow: 0 0 0 2px #ff5a3c, 0 0 38px 8px rgba(255, 80, 50, 0.6), 0 10px 26px rgba(0, 0, 0, 0.6); } }
+
+.muster-clock { position: relative; flex: none; width: 56px; height: 56px; display: grid; place-items: center; }
+.muster-clock svg { position: absolute; inset: 0; width: 100%; height: 100%; rotate: -90deg; }
+.muster-clock circle { fill: none; stroke-width: 5; }
+.muster-clock .muster-clock-bed { fill: rgba(20, 10, 8, 0.82); stroke: rgba(0, 0, 0, 0.55); }
+.muster-clock .muster-clock-now { stroke: #ffe9a0; transition: stroke-dashoffset 1s linear, stroke 0.3s; }
+.muster-clock b { position: relative; font: bold 21px/1 ui-monospace, Consolas, monospace; color: #fff3c4; font-variant-numeric: tabular-nums; }
+.muster.urgent .muster-clock-now { stroke: #ff5a3c; }
+.muster.urgent .muster-clock b { color: #ff8a70; }
+.muster.gone .muster-clock b { color: var(--m-good); }
+.muster.off .muster-clock b { color: var(--m-bad); }
+
+.muster-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 7px; }
+.muster-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 9px; }
+.muster-head small { flex: 0 0 100%; font-family: var(--font-head); font-size: 12px; line-height: 1; letter-spacing: 0.16em; text-transform: uppercase; color: var(--m-brass); }
+.muster-head strong { font-family: var(--font-title); font-size: 27px; line-height: 1.05; font-weight: normal; letter-spacing: 0.02em; color: var(--m-brass-hi); text-shadow: 0 2px 0 #000; }
+.muster-head span { font-size: 12px; color: var(--muted, #d2a585); }
+.muster-line { margin: 0; font-size: 13px; line-height: 1.4; }
+
+.muster-crew { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 5px; }
+.muster-crew li { display: inline-flex; align-items: center; gap: 6px; padding: 2px 9px 3px 6px; font-size: 12px; background: rgba(0, 0, 0, 0.32); border: 2px solid var(--m-out); box-shadow: 0 0 0 1px rgba(201, 162, 74, 0.35); }
+.muster-crew li i { font-style: normal; font-weight: bold; width: 13px; text-align: center; color: var(--muted, #d2a585); }
+.muster-crew li em { font-style: normal; color: var(--muted, #d2a585); }
+.muster-crew li.caller i, .muster-crew li.caller em { color: var(--m-gold); }
+.muster-crew li.ready { box-shadow: 0 0 0 1px var(--m-good); }
+.muster-crew li.ready i, .muster-crew li.ready em { color: var(--m-good); }
+.muster-crew li.no { opacity: 0.7; }
+.muster-crew li.no i, .muster-crew li.no em { color: var(--m-bad); }
+.muster-crew li.asked i { animation: muster-dots 1.2s ease-in-out infinite; }
+@keyframes muster-dots { 50% { opacity: 0.25; } }
+
+.muster-error { margin: 0; font-size: 12px; }
+.muster-buttons { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 2px; }
+.muster-buttons button.primary { font-size: 15px; padding: 6px 16px 7px; }
+.muster-said { font-family: var(--font-head); font-size: 15px; letter-spacing: 0.05em; color: var(--m-good); }
+
+@media (max-width: 640px) {
+  .muster.panel { top: 50px; padding: 10px; gap: 9px; }
+  .muster-clock { width: 46px; height: 46px; }
+  .muster-clock b { font-size: 17px; }
+  .muster-head strong { font-size: 22px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .muster.panel, .muster-crew li.asked i { animation: none !important; }
+}

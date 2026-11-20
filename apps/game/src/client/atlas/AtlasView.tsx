@@ -29,11 +29,13 @@
 // spent as the map is made, with what it carries added to the place's own.
 // Anywhere but beside the Harbor there must be one. What a stone carries is
 // told by pointing at it. Stones are cut and worked down in the Harbor, at
-// the stonecutter's bench, before coming up here.
+// the Lapidary, before coming up here.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { hexDistance, type HexPos } from "@gantt-quest/core";
-import { ATLAS_HOME, ATLAS_SPACING, ATLAS_VIEW, LAIR_RINGS, modEffect, modName, modSide, atlasNodeById, atlasTier, atlasWorld, bountyPay, modsOf, needsStone, stoneKey, stoneName, stoneOn, type AtlasNode, type Lodestone } from "@gantt-quest/world";
+import { ATLAS_HOME, ATLAS_SPACING, ATLAS_VIEW, LAIR_RINGS, LAND_GROUND, SITES, SPOIL_STONES, modEffect, modName, modSide, atlasNodeById, atlasTier, atlasWorld, bountyPay, modsOf, needsStone, nodePlace, nodeSite, stoneKey, stoneName, stoneOn, type AtlasNode, type Lodestone, type SiteDef, type SiteGround, type SiteId } from "@gantt-quest/world";
+import { HARBOR_WAYGATE, musterOpen } from "@gantt-quest/world";
+import { MusterPanel, useMuster } from "./Muster";
 import { api, type Chart, type ChartNode, type Me } from "../api";
 import { useAudioScene } from "../audio/useAudioScene";
 import { InventoryScreen } from "../InventoryScreen";
@@ -48,11 +50,30 @@ import "./atlas.css";
 
 type Known = Extract<ChartNode, { state: "harbor" | "cleared" | "open" }>;
 const known = (n: ChartNode | undefined): n is Known => !!n && n.state !== "fogged";
-const GROUND: Record<Known["biome"], string> = { meadow: "Open ground", woods: "Deep woods", shore: "A stretch of shore", caves: "A sea cave" };
 /** The climate a place lies in, as the card says it. */
 const CLIME: Record<Known["clime"], string> = { greenwood: "the Greenwood", frost: "the Frost", dunes: "the Dunes", mire: "the Mire", ash: "the Ashlands" };
+/**
+ * What is underfoot at a place, said plainly: the land it stands on in its climate, which is the hex the atlas
+ * draws under it, and is what its map is made of (packages/world/src/atlas.ts: `atlasLie`).
+ */
+const UNDERFOOT: Record<Known["clime"], Record<SiteGround, string>> = {
+  greenwood: { shore: "A sandy shore", meadow: "Open grass", woods: "Deep woods", heights: "High, broken ground" },
+  frost: { shore: "A frozen shore", meadow: "Snow and ice", woods: "Snowbound woods", heights: "Frozen heights" },
+  dunes: { shore: "A desert shore", meadow: "Open sand", woods: "Sand and dead trees", heights: "Red rock above the sand" },
+  mire: { shore: "Black water and mud", meadow: "Bog and moss", woods: "Drowned woods", heights: "High ground over the bog" },
+  ash: { shore: "The edge of the fire", meadow: "Cinders", woods: "Burnt woods", heights: "Black crags over the fire" },
+};
+const lower = (text: string) => text.charAt(0).toLowerCase() + text.slice(1);
+/** The line under a place's name that says what its map is like: where it is fought (under a roof, under ground, or in the open) and on what ground. */
+function underfoot(node: Known, site: SiteDef | null): string {
+  const ground = UNDERFOOT[node.clime][LAND_GROUND[node.land]];
+  if (node.kind === "seacave") return `A cave in the rock, under ${lower(ground)}`;
+  return site?.inside === "halls" ? `Under a roof, on ${lower(ground)}` : site?.inside === "caves" ? `Under ground, below ${lower(ground)}` : ground;
+}
 /** How often the chart is asked for again: a crewmate may have cleared something. */
 const REFRESH_MS = 10_000;
+/** How often the crew's muster is asked after: it has a clock on it, and the atlas has no socket to hear of it by. */
+const MUSTER_POLL_MS = 1500;
 /** Places lose what is written under them when they are drawn closer together than this, in pixels. */
 const CROWDED_PX = 120;
 /** How far the camera may travel from the middle of the window it was given before it is given another, in hexes. */
@@ -352,6 +373,8 @@ export function AtlasView({ me, refresh, onLeave }: { me: Me; refresh(): Promise
   const inSlot = slotted && held.some((h) => stoneKey(h.stone) === stoneKey(slotted)) ? slotted : null;
   /** Whether the place picked has a map being fought through already: its slot is filled, or was never needed, and is shut. */
   const begun = !!shown?.zone;
+  /** The kind of place it is (a sea cave is a delve, not one; nor is the Harbor). */
+  const shownSite: SiteDef | null = chart && shown && shown.kind !== "harbor" && shown.kind !== "seacave" ? SITES[nodeSite(chart.seed, shown) as SiteId] : null;
   /** What the place carries: its own, and what the lodestone in its slot adds (the one its map was made with, or the one put in now). */
   const carried = shown ? stoneOn(shown, (begun ? shown.stone : inSlot) ?? []) : { mods: [], added: [] };
   const needs = !!shown && shown.state === "open" && needsStone(shown);
@@ -366,15 +389,23 @@ export function AtlasView({ me, refresh, onLeave }: { me: Me; refresh(): Promise
       // Storage is off: coming back lands on the Harbor.
     }
   };
+  // The crew's muster: asked for often here, since the atlas has no socket to be told by. When one this player is
+  // ready for starts, the stone it took is gone from the pack.
+  const muster = useMuster(me.player.id, { poll: MUSTER_POLL_MS, onStart: () => void refresh() });
+  const mustering = !!muster.muster && musterOpen(muster.muster);
   const setOut = async (n: Known) => {
     setBusy(true);
     setError(null);
     try {
-      const { code } = await api.openNode(n.id, n.zone || !inSlot ? undefined : stoneKey(inSlot));
+      // A map already begun there is walked onto. A fresh one asks the crew first: whoever in town says they are
+      // ready comes too, and the map is made (and the stone spent) when the muster starts. Alone in town, it starts at once.
+      const went = await api.callMuster(n.id, n.zone || !inSlot ? undefined : stoneKey(inSlot));
       remember(n.id);
-      // The stone is gone from the pack.
-      void refresh();
-      location.hash = `zone/${code}`;
+      if (went.code) {
+        // The stone is gone from the pack.
+        void refresh();
+        location.hash = `zone/${went.code}`;
+      } else muster.take(went.muster ?? null);
     } catch (e) {
       setError((e as Error).message);
       void load();
@@ -399,6 +430,12 @@ export function AtlasView({ me, refresh, onLeave }: { me: Me; refresh(): Promise
   const show = (n: ChartNode) => renderer.current?.lookAt(n.hex);
   const close = () => {
     remember(null);
+    // Back in town where the atlas is opened from: at the waygate.
+    try {
+      sessionStorage.setItem("gq.harborAt", `${HARBOR_WAYGATE.q},${HARBOR_WAYGATE.r}`);
+    } catch {
+      // Storage is off: the middle of the square it is.
+    }
     onLeave();
   };
 
@@ -406,6 +443,7 @@ export function AtlasView({ me, refresh, onLeave }: { me: Me; refresh(): Promise
     <div className={`run atlas-view ${hovered ? "pointing" : ""} ${opening ? "opening" : ""}`} ref={root}>
       <div className="stage" ref={mount} />
       <div className="atlas-vignette" aria-hidden />
+      {muster.muster && <MusterPanel muster={muster.muster} me={me.player.id} onSay={muster.say} busy={muster.busy} error={muster.error} />}
       {opening && onScreen && (
         <div className="atlas-opening" aria-hidden>
           <span className="atlas-opening-title">The Atlas</span>
@@ -439,7 +477,7 @@ export function AtlasView({ me, refresh, onLeave }: { me: Me; refresh(): Promise
           {!shown && (error ?? unreached) && <span className="atlas-reckoning bad" role="alert">{error ?? unreached}</span>}
           {!chart && !unreached && <span className="atlas-reckoning">Unrolling the atlas…</span>}
         </div>
-        <button className="atlas-close" onClick={close} title="Back down to the Harbor, at the lighthouse">Close atlas</button>
+        <button className="atlas-close" onClick={close} title="Back to the Harbor, at the waygate">Close atlas</button>
         <div className="atlas-corner">
           <button className="small" onClick={() => { const home = byId.get(ATLAS_HOME); if (home) show(home); }} title="Bring the Harbor back to the middle">Find the Harbor</button>
           <button className="small" onClick={() => setBag((open) => !open)} title="Your sea bag (I): drag a lodestone from it into a place's slot">{bag ? "Close the bag" : "Sea bag"}</button>
@@ -479,8 +517,9 @@ export function AtlasView({ me, refresh, onLeave }: { me: Me; refresh(): Promise
                     : shown.kind === "lookout" ? <span className="atlas-what lookout" title="High, broken ground. Clearing it lifts the cloud far round it.">Lookout</span>
                     : shown.kind === "seacave" ? <span className="atlas-what cave" title="Dark inside, with chests to open and a hoard at the bottom. It is cleared when the last of them is open.">Sea cave</span>
                     : null}
+                  {/* The kind of place, named with its country: what the map will be. */}
+                  {shownSite && chart && <span className="atlas-what site" title={shownSite.blurb}>{nodePlace(chart.seed, shown)}</span>}
                   {shown.state === "open" && <strong className={shown.level > level + 1 ? "bad" : shown.level < level ? "good" : "atlas-even"} title={`What is there is level ${shown.level}; you are level ${level}`}>Level {shown.level}</strong>}
-                  <span className={`atlas-clime ${shown.clime}`} title={GROUND[shown.biome]}>{CLIME[shown.clime]}</span>
                   {/* What is odd about the place itself, told by pointing at each. */}
                   {shown.state === "open" && shown.mods.length > 0 && (
                     <span className="atlas-own">
@@ -488,6 +527,8 @@ export function AtlasView({ me, refresh, onLeave }: { me: Me; refresh(): Promise
                     </span>
                   )}
                 </p>
+                {/* The ground its map is made of: the hex it stands on, in its climate. */}
+                <p className="atlas-line atlas-env muted">{underfoot(shown, shownSite)}, in <span className={`atlas-clime ${shown.clime}`}>{CLIME[shown.clime]}</span></p>
                 {shown.state === "cleared" ? (
                   <p className="good">Cleared. The routes beyond it are open.</p>
                 ) : (
@@ -541,11 +582,15 @@ export function AtlasView({ me, refresh, onLeave }: { me: Me; refresh(): Promise
                         </div>
                       )}
                     </div>
-                    {!begun && !inSlot && <p className="atlas-line muted">{!needs ? "No lodestone needed beside the Harbor." : held.length > 0 ? "Put a lodestone in the slot to set out." : "It takes a lodestone, and you carry none. One can be cut at the stonecutter's bench in the Harbor."}</p>}
-                    {pay && <p className="atlas-line atlas-bounty" title={pay.gear >= 1 ? "With a piece of gear" : `And a ${Math.round(pay.gear * 100)}% chance of a piece of gear`}>Bounty <strong>{pay.xp} XP</strong> · <strong>{pay.gold[0]}–{pay.gold[1]} gold</strong></p>}
+                    {!begun && !inSlot && <p className="atlas-line muted">{!needs ? "No lodestone needed beside the Harbor." : held.length > 0 ? "Put a lodestone in the slot to set out." : "It takes a lodestone, and you carry none. One can be cut at the Lapidary in the Harbor."}</p>}
+                    {pay && (
+                      <p className="atlas-line atlas-bounty" title={`${pay.gear >= 1 ? "With a piece of gear" : `And a ${Math.round(pay.gear * 100)}% chance of a piece of gear`}. Its spoils always hold a lodestone as good as the one that opened it (one in four times, a little better), and ${1 + (inSlot?.length ?? 0)} more ${inSlot?.length ? "chances" : "chance"} of another (about ${Math.round(Math.min(0.95, SPOIL_STONES.chance + SPOIL_STONES.perThing * (inSlot?.length ?? 0) + sum.stones) * 100)}% each). The more a stone carries, the more stones its place gives back.`}>
+                        Spoils <strong>{pay.xp} XP</strong> · <strong>{pay.gold[0]}–{pay.gold[1]} gold</strong> · <strong>1 to {2 + (inSlot?.length ?? 0)} lodestones</strong>
+                      </p>
+                    )}
                     {error && <p className="bad" role="alert">{error}</p>}
                     <p className="atlas-go">
-                      <button className="primary" disabled={busy || (!begun && needs && !inSlot)} onClick={() => void setOut(shown)}>{begun ? "Join them" : "Set out"}</button>
+                      <button className="primary" disabled={busy || (!begun && (mustering || (needs && !inSlot)))} title={!begun && mustering ? "A muster is on: answer it first" : undefined} onClick={() => void setOut(shown)}>{begun ? "Join them" : "Set out"}</button>
                       {me.devTools && <button className="small" disabled={busy} onClick={() => void dev("clear", shown.id)}>Dev: clear it</button>}
                     </p>
                   </>

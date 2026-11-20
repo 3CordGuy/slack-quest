@@ -58,7 +58,7 @@
 // where it goes. While a fight is on the gear worn stays as it is; the pack
 // can still be looked through.
 
-import { Fragment, useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent as ReactDragEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { CatchPanel } from "./CatchPanel";
 import {
   CARRY_FORMULA,
@@ -74,6 +74,7 @@ import {
   SLOT_LABEL,
   STACK_MAX,
   STALL_BUYS,
+  GEM_PRICE,
   THROWABLES,
   addedSlots,
   armorBlock,
@@ -275,6 +276,12 @@ interface Props {
    * `why` says why).
    */
   torch?: { hand: "main" | "off"; rounds: number; stow?(): void; why?: string };
+  /**
+   * On a map: something dragged out of a loot window (zone/LootPanel.tsx, a "text/gq-loot" drag carrying its index
+   * there, and "text/gq-loot-uid" its own number where it has one) was dropped anywhere on the bag. The server
+   * decides where in the pack it lands.
+   */
+  onLootDrop?: (index: number, uid?: number) => void;
 }
 
 /**
@@ -399,7 +406,31 @@ function EyeGlyph({ shut }: { shut: boolean }) {
   );
 }
 
-export function InventoryScreen({ me, refresh, onClose, onIsland = false, chest = null, trade = null, town = null, usable, gearLocked, stones, torch }: Props) {
+export function InventoryScreen({ me, refresh, onClose, onIsland = false, chest = null, trade = null, town = null, usable, gearLocked, stones, torch, onLootDrop }: Props) {
+  /** Loot is being dragged over the bag: it is lit as the place to drop it. */
+  const [lootOver, setLootOver] = useState(false);
+  const lootDrop = onLootDrop && {
+    onDragOver: (e: ReactDragEvent) => {
+      if (!e.dataTransfer.types.includes("text/gq-loot")) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "move";
+      if (!lootOver) setLootOver(true);
+    },
+    onDragLeave: (e: ReactDragEvent) => {
+      if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setLootOver(false);
+    },
+    onDrop: (e: ReactDragEvent) => {
+      setLootOver(false);
+      const raw = e.dataTransfer.getData("text/gq-loot");
+      if (raw === "") return;
+      e.preventDefault();
+      const index = Number(raw);
+      // The thing's own number, as it was when the drag began: the list may have moved under it since.
+      const own = e.dataTransfer.getData("text/gq-loot-uid");
+      const uid = own === "" ? undefined : Number(own);
+      if (Number.isInteger(index) && index >= 0) onLootDrop(index, uid !== undefined && Number.isInteger(uid) ? uid : undefined);
+    },
+  };
   /** The atlas's slot as it is now, for the handlers that outlive a render. */
   const stoneSlot = useRef(stones);
   stoneSlot.current = stones;
@@ -1202,7 +1233,7 @@ export function InventoryScreen({ me, refresh, onClose, onIsland = false, chest 
         </div>
       )}
 
-      <div className={`bag panel window ${held ? "holding" : ""}`} role="dialog" aria-label="Sea bag" style={{ "--u": `${U}px` } as CSSProperties} onContextMenu={putBack}>
+      <div className={`bag panel window ${held ? "holding" : ""} ${lootOver ? "loot-over" : ""}`} role="dialog" aria-label="Sea bag" style={{ "--u": `${U}px` } as CSSProperties} onContextMenu={putBack} {...lootDrop}>
         <span className="win-plate">Sea Bag</span>
         <button className="bag-close hud-btn" aria-label="Close" title="Close (Esc)" onClick={onClose}>×</button>
         {(error ?? (trade ? null : refused)) && <div className="banner error">{error ?? refused}</div>}
@@ -1388,7 +1419,7 @@ function LodestoneDetail({ stone, total, how, inChest = false }: { stone: Lodest
           ))}
         </ul>
       )}
-      <p>{inChest ? "The crew keeps" : "You carry"} <strong>{total}</strong>{inChest ? " here" : ""}. Put one into a place's slot on the atlas, at the lighthouse, to set out for it: it is spent, and what it carries is added to the place. Stones are cut and worked at the stonecutter's bench, beside the smithy at the west end of the High Street.</p>
+      <p>{inChest ? "The crew keeps" : "You carry"} <strong>{total}</strong>{inChest ? " here" : ""}. Put one into a place's slot on the atlas, opened at the waygate, to set out for it: it is spent, and what it carries is added to the place. Stones are cut and worked at the Lapidary in the Harbor.</p>
       {how && <p className="muted">{how}</p>}
     </div>
   );
@@ -1434,6 +1465,7 @@ function MaterialDetail({ kind, total, where = "pack" }: { kind: ResourceKind; t
         : where === "at-town" ? <p className="muted">Drag it into the town chest, or shift-click it; right-click to put in part of it.</p>
         : where === "pack" && <p className="muted">Stow it in a chest in your hut to free the square, or hand it to a crewmate in a trade.</p>}
       {price && <p className="muted">The market stall buys it for {price}g each.</p>}
+      {kind === "gem" && <p className="muted">The Lapidary buys them for {GEM_PRICE}g each. Tempering a lodestone there takes gems, and so does attuning one to a boon.</p>}
     </div>
   );
 }

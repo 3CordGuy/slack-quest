@@ -90,6 +90,7 @@ A tab left open on an older build is told when a newer one is out (`src/client/N
 | `…/timing.ts` | The timed stop shared by fishing, the quarry and the splitting block: markers, grades and how a stat eases them |
 | `…/projects.ts` | Crew projects (the lighthouse and those still to open) |
 | `…/pub.ts` | The pub's room, menu and food-and-drink boosts |
+| `…/keepers.ts`, `…/lapidary.ts` | The rooms you walk into with a keeper inside (smithy, apothecary, galley, and the Lapidary, which is open from a crew's first day), their keepers, stock and haggling; and what the Lapidary's keeper pays for gems. Lodestones are cut and worked there (`…/lodestone.ts`, `…/stonecraft.ts`) |
 | `…/dice.ts`, `…/shoals.ts` | The pub's two table games, each a pure reducer with a per-player view |
 | `…/trade.ts` | Offers between crewmates and their validation |
 | `apps/game/src/releases.ts`, `scripts/release-notes.ts` | Release notes on the Harbor's notice board, read out of git at build time |
@@ -104,7 +105,7 @@ A tab left open on an older build is told when a newer one is out (`src/client/N
 | `apps/game/src/server/ai.ts` | Prompts and the Workers AI calls (and the mock) |
 | `apps/game/src/server/db.ts` | D1 access |
 | `apps/game/src/server/email.ts` | Sending sign-in codes |
-| `apps/game/src/client/render/` | Three.js renderer, placeholder sprites, furniture models (`props.ts`), the sky, weather, shadows and moving decoration (`ambience.ts`), and felling (`fellingScene.ts`, a `WorldMinigame`: the renderer swings its camera into the hero's eyes and hands it the input while it runs) |
+| `apps/game/src/client/render/` | Three.js renderer, placeholder sprites, furniture models (`props.ts`), the sky, weather, shadows and moving decoration (`ambience.ts`), felling (`fellingScene.ts`, a `WorldMinigame`: the renderer swings its camera into the hero's eyes and hands it the input while it runs), and a battle map's combat view (`cutaway.ts`: on by itself in a fight, or with its button or V, walls and rock in the way sink to a kerb and trees thin to ghosts, all in the scenery's own shaders) |
 | `apps/game/src/client/*.tsx` | Character creation, crew gate, shared Harbor, huts, the pub, notice board (`board/`), works (`works/`), sparring, gathering, trading, inventory, market stall, the crossing, fight pacing (`BattleBeats.tsx`) and the in-voyage HUD (React) |
 | `apps/game/src/client/itemArt.ts` | Pixel-art item icons drawn in code, in the style of the hero sprites; the accent colour is the item's rarity |
 

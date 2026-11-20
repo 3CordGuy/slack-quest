@@ -11,7 +11,7 @@
 // checks every purchase, brew, dish, step and haggle again.
 
 import { useMemo, useState, type ReactNode } from "react";
-import { BREWS, DISHES, FLASK_RECIPES, HAGGLE_ASKS, KEEPER_PLACES, POT_DAILY, RARITY_COLOR, SHELF_DAILY, SLOT_LABEL, SMITHY_MAX_STEPS, THROWABLES, THROWABLE_KINDS, brewBuff, brewProblem, cookProblem, equipProblem, flaskProblem, haggledPrice, smithyProblem, smithyWork, upgradedName, workKey, type Deal, type HaggleAsk, type KeeperShop, type Resources, type Throwable } from "@gantt-quest/world";
+import { BREWS, DISHES, FLASK_RECIPES, HAGGLE_ASKS, KEEPER_PLACES, POT_DAILY, RARITY_COLOR, SHELF_DAILY, SLOT_LABEL, SMITHY_MAX_STEPS, THROWABLES, THROWABLE_KINDS, brewBuff, brewProblem, cookProblem, equipProblem, flaskProblem, haggledPrice, smithyProblem, smithyWork, upgradedName, workKey, type Deal, type HaggleAsk, type KeeperHouse, type KeeperShop, type Resources, type Throwable } from "@gantt-quest/world";
 import { api, type ApothecaryView, type GalleyKeeperView, type HaggleResult, type KeeperWare, type Me, type SmithyView } from "../api";
 import { DragPanel } from "../DragPanel";
 import { CostChips, RewardChips, perkText } from "../hutDrops";
@@ -27,7 +27,7 @@ const amountsText = (gold: number, r: Resources) =>
   [gold > 0 ? `${gold} gold` : "", ...Object.entries(r).filter(([, n]) => n).map(([k, n]) => `${n} ${label("resource", k).toLowerCase()}`)].filter(Boolean).join(", ");
 
 /** What the panel shows after something is done: the keeper's word on it, or what went wrong. */
-interface Said {
+export interface Said {
   text: string;
   tone: "good" | "bad" | "plain";
 }
@@ -67,8 +67,8 @@ function HaggleAsks({ list, chances, busy, onAsk, onCancel }: { list: number; ch
   );
 }
 
-/** The shared frame: the keeper at the top, what you hold, the last word, and the scrolling list. */
-function Frame({ shop, said, above, hold, onDone, children }: { shop: KeeperShop; said: Said | null; /** Kept in view over what you hold: the crew's larder. */ above?: ReactNode; hold: ReactNode; onDone(): void; children: ReactNode }) {
+/** The shared frame: the keeper at the top, what you hold, the last word, and the scrolling list. (The Lapidary's panel, LapidaryPanel.tsx, stands in it too.) */
+export function Frame({ shop, said, above, hold, onDone, children }: { shop: KeeperHouse; said: Said | null; /** Kept in view over what you hold: the crew's larder. */ above?: ReactNode; hold: ReactNode; onDone(): void; children: ReactNode }) {
   const { keeper, title } = KEEPER_PLACES[shop];
   return (
     <DragPanel id={`keeper.${shop}`} title={title} className={`story panel pub-bar keeper-panel keeper-${shop}`}>

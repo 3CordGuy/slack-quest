@@ -35,7 +35,7 @@ describe("HarborRoom unstick", () => {
   let mine: FakeSocket;
   let theirs: FakeSocket;
   let room: InstanceType<typeof HarborRoom>;
-  // Three hexes east along the High Street: always open ground.
+  // Three hexes east of where heroes arrive, on the open grass south of the High Street: always open ground.
   const away = { q: HARBOR_SPAWN.q + 3, r: HARBOR_SPAWN.r };
   const elsewhere = { q: HARBOR_SPAWN.q - 2, r: HARBOR_SPAWN.r + 1 };
 

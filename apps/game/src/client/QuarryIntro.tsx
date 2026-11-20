@@ -2,7 +2,7 @@
 // the rules as four pictures with a few words each, what the face can give,
 // and the way in. The run itself is played in the Harbor (Quarry.tsx).
 
-import { MINE_MS, MINE_RARITY, STALL_GEM_PRICE, type GatherView, type Resources } from "@gantt-quest/world";
+import { GEM_PRICE, MINE_MS, MINE_RARITY, type GatherView, type Resources } from "@gantt-quest/world";
 import type { GatherStatus, XpResult } from "./api";
 import { ResourceChips } from "./hutDrops";
 import { StaminaBolts } from "./StaminaBolts";
@@ -108,7 +108,7 @@ const RULES: { icon: string; title: string; sub: string; tone?: string }[] = [
     // A cut gem.
     icon: "M4 2h4v1h-4zM3 3h6v2h-6zM4 5h4v2h-4zM5 7h2v2h-2z|M4 3h1v1h-1z",
     title: "Gems sparkle",
-    sub: `Rare · ${STALL_GEM_PRICE}g at the stall`,
+    sub: `Rare · ${GEM_PRICE}g at the Lapidary`,
     tone: "gem",
   },
 ];

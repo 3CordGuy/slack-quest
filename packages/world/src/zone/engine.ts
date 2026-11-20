@@ -5,13 +5,13 @@
 import { hexDistance, posKey, type StatKey } from "@gantt-quest/core";
 import { tileAt } from "../map";
 import type { Rng } from "../rng";
-import { adjacent, elevOf, inFight } from "./geometry";
+import { adjacent, close, elevOf, inFight } from "./geometry";
 import { EFFECT_TICK, SUNDERED_DEFENCE } from "../content";
 import { AQUEOUS, AURAS, CORAL_ARMOR, ENEMY_KIT, FORTIFY, NORTH_STAR, SHIELD_SET_ASIDE, enemyDefence, enemySave } from "./kit";
 import { inDark } from "./light";
-import { d20, heroDefence, mod, netAdvantage, rollDice, statOf } from "./rules";
+import { d20, heroDefence, mod, netAdvantage, rollShown, statOf } from "./rules";
 import { songDefence, songHit, windward } from "./song";
-import type { Condition, Roll, Unit, UnitCondition, ZoneEffect, ZoneEvent, ZoneState } from "./types";
+import type { Condition, Roll, Rolled, Unit, UnitCondition, ZoneEffect, ZoneEvent, ZoneState } from "./types";
 
 export interface Ctx {
   state: ZoneState;
@@ -108,10 +108,17 @@ export const inWater = (state: ZoneState, unit: Unit): boolean => state.surfaces
 /** Aqueous Regeneration comes again as a unit's turn starts (or a round passes out of a fight): more for one standing in water. */
 export function regrow(ctx: Ctx, unit: Unit): void {
   if (unit.down || !has(unit, "regenerating") || unit.hp >= unit.maxHp) return;
-  heal(ctx, unit, rollDice(ctx.rng, AQUEOUS.tick) + (inWater(ctx.state, unit) ? AQUEOUS.water : 0), { actor: null, what: "aqueous_regeneration" });
+  const rolled = rollShown(ctx.rng, AQUEOUS.tick, inWater(ctx.state, unit) ? AQUEOUS.water : 0);
+  heal(ctx, unit, rolled.total, { actor: null, what: "aqueous_regeneration", dice: rolled });
 }
 
 export const saveBonus = (unit: Unit, stat: StatKey): number => (unit.side === "hero" ? mod(statOf(unit, stat)) : enemySave(unit.kind));
+
+/** A unit goes down: no HP left, nothing on it any more. */
+export function strikeDown(ctx: Ctx, unit: Unit): void {
+  if (unit.down) return;
+  fall(ctx, unit);
+}
 
 function fall(ctx: Ctx, unit: Unit): void {
   const spot = unit.conditions.find((c) => c.kind === "black_spot");
@@ -163,16 +170,17 @@ function soak(unit: Unit, amount: number): number {
 /**
  * Deal damage from a blow or a blast. Guarded halves it (rounding up) unless it goes through a guard;
  * a hit that lands always does at least 1. A shield (Bolstered) takes what it can before HP does.
- * Returns the HP it cost.
+ * Returns the HP it cost. `dice`: what was rolled for it, told with the hit (`halved`: the target saved for half).
  */
-export function damage(ctx: Ctx, target: Unit, amount: number, opts: { actor: string | null; what: string; crit?: boolean }): number {
+export function damage(ctx: Ctx, target: Unit, amount: number, opts: { actor: string | null; what: string; crit?: boolean; dice?: Rolled; halved?: boolean }): number {
   if (target.down) return 0;
   let dealt = Math.max(1, Math.round(amount));
   if (has(target, "guarded")) dealt = Math.ceil(dealt / 2);
   const blocked = soak(target, dealt);
   dealt = Math.min(dealt - blocked, target.hp);
   target.hp -= dealt;
-  ctx.events.push({ t: "hit", actor: opts.actor, target: target.id, amount: dealt, what: opts.what, crit: !!opts.crit, ...(blocked > 0 ? { blocked } : {}) });
+  const dice = opts.dice ? { ...opts.dice, ...(opts.halved ? { halved: true } : {}) } : undefined;
+  ctx.events.push({ t: "hit", actor: opts.actor, target: target.id, amount: dealt, what: opts.what, crit: !!opts.crit, ...(blocked > 0 ? { blocked } : {}), ...(dice ? { dice } : {}) });
   if (target.hp <= 0) fall(ctx, target);
   // North Star: whatever its bearer strikes on the other side catches fire.
   const by = opts.actor ? ctx.state.units.find((u) => u.id === opts.actor) : undefined;
@@ -190,14 +198,14 @@ export function tick(ctx: Ctx, target: Unit, kind: Condition | "poison" | "fire"
 }
 
 /** Heal a unit. Someone down is back on their feet. Returns what was healed. */
-export function heal(ctx: Ctx, target: Unit, amount: number, opts: { actor: string | null; what: string }): number {
+export function heal(ctx: Ctx, target: Unit, amount: number, opts: { actor: string | null; what: string; dice?: Rolled }): number {
   if (target.down) {
     target.down = false;
     ctx.events.push({ t: "up", id: target.id });
   }
   const healed = Math.max(0, Math.min(target.maxHp - target.hp, Math.round(amount)));
   target.hp += healed;
-  ctx.events.push({ t: "heal", actor: opts.actor, target: target.id, amount: healed, what: opts.what });
+  ctx.events.push({ t: "heal", actor: opts.actor, target: target.id, amount: healed, what: opts.what, ...(opts.dice ? { dice: opts.dice } : {}) });
   return healed;
 }
 
@@ -215,8 +223,9 @@ export interface AttackContext {
  * Advantage: the target is Exposed or Stunned, or Prone and struck in melee; Focus was spent; a pack
  * animal has one of its own beside the target; the attacker carries a Beacon, or an ally near enough (AURAS.range) does;
  * the attacker is Unseen. Disadvantage: the attacker is Poisoned or Fumbling, carries the Black Spot or a Red Sky, is
- * shooting with an enemy beside them, or is shooting at something Prone. Shots also get +2 from
- * higher ground, -2 from lower, and -2 at a target standing among trees.
+ * shooting with an enemy beside them (or on their own hex), or is shooting at something Prone. Shots also get +2 from
+ * higher ground, -2 from lower, and -2 at a target standing among trees. A blow by hand down a ladder gets
+ * +2, and one struck up it -2.
  */
 export function attackContext(state: ZoneState, attacker: Unit, target: Unit, opts: { melee: boolean; focus?: boolean }): AttackContext {
   const notes: string[] = [];
@@ -231,7 +240,7 @@ export function attackContext(state: ZoneState, attacker: Unit, target: Unit, op
   if (has(attacker, "invisible")) adv("you are Unseen");
   if (has(attacker, "inspired")) adv("you are Inspired");
   if (has(target, "guiding_light") && target.side !== attacker.side) adv("the target is lit by Guiding Light");
-  if (attacker.side === "enemy" && ENEMY_KIT[attacker.kind]?.pack && state.units.some((u) => u.id !== attacker.id && u.side === "enemy" && !u.down && adjacent(u.pos, target.pos))) adv("the pack is on the target");
+  if (attacker.side === "enemy" && ENEMY_KIT[attacker.kind]?.pack && state.units.some((u) => u.id !== attacker.id && u.side === "enemy" && !u.down && close(u.pos, target.pos))) adv("the pack is on the target");
   if (state.units.some((u) => u.side === attacker.side && !u.down && has(u, "beacon") && hexDistance(u.pos, attacker.pos) <= AURAS.range)) adv(has(attacker, "beacon") ? "your Beacon" : "an ally's Beacon");
   if (has(attacker, "poisoned")) dis("Poisoned");
   if (has(attacker, "glitched")) dis("Fumbling");
@@ -240,17 +249,21 @@ export function attackContext(state: ZoneState, attacker: Unit, target: Unit, op
   // The party strikes blind at what the light does not reach. The things of the caves see in the dark.
   if (attacker.side === "hero" && inDark(state, target.pos)) dis("the target is in the dark");
   if (!opts.melee) {
-    if (state.units.some((u) => u.side !== attacker.side && !u.down && inFight(state, u.id) && adjacent(u.pos, attacker.pos))) dis("an enemy is beside you");
+    if (state.units.some((u) => u.side !== attacker.side && !u.down && inFight(state, u.id) && close(u.pos, attacker.pos))) dis("an enemy is beside you");
     if (has(target, "prone")) dis("the target is Prone");
   }
   let mods = 0;
   const sung = songHit(state, attacker);
   if (sung > 0) { mods += sung; notes.push(`+${sung} Lively Shanty`); }
+  const rise = elevOf(state.map, attacker.pos) - elevOf(state.map, target.pos);
   if (!opts.melee) {
-    const rise = elevOf(state.map, attacker.pos) - elevOf(state.map, target.pos);
     if (rise > 0) { mods += 2; notes.push("+2 high ground"); }
     if (rise < 0) { mods -= 2; notes.push("-2 shooting uphill"); }
     if (tileAt(state.map, target.pos)?.biome === "forest") { mods -= 2; notes.push("-2 the target is among trees"); }
+  } else if (Math.abs(rise) >= 2) {
+    // Only a ladder joins two that far apart: whoever holds the top of it has the better of it.
+    if (rise > 0) { mods += 2; notes.push("+2 striking down a ladder"); }
+    else { mods -= 2; notes.push("-2 striking up a ladder"); }
   }
   return { adv: netAdvantage(advantage, disadvantage), mods, notes };
 }

@@ -7,6 +7,7 @@ import { hexDistance, hexNeighbors, inBounds, posKey, type HexPos } from "@gantt
 import { MOVE_COST, tileAt, type Tile, type WorldMap } from "../map";
 import { crateAt } from "./crates";
 import { ENEMY_KIT } from "./kit";
+import { propOf } from "./props";
 import type { Side, Unit, Weather, ZoneState } from "./types";
 
 /** The six neighbours of a hex, clockwise from the upper right. */
@@ -22,25 +23,66 @@ export const HEX_DIRS: readonly HexPos[] = [
 export const sameHex = (a: HexPos, b: HexPos): boolean => a.q === b.q && a.r === b.r;
 
 /** How far a hero may be sent in one click while walking freely. */
-export const FREE_WALK = 40;
+export const FREE_WALK = 80;
+
+/** The highest a hex stands, in levels. */
+export const MAX_ELEV = 5;
+
+/** How many of one side can stand on one hex at once. The two sides never share one. The dead take up no room. */
+export const HEX_ROOM = 2;
 
 export const elevOf = (map: WorldMap, pos: HexPos): number => tileAt(map, pos)?.elev ?? 0;
 
-/** Ground nobody can stand on, whatever is on it. */
-export const solid = (tile: Tile | undefined): boolean => !tile || !!tile.built || !Number.isFinite(MOVE_COST[tile.biome]);
+/** Ground nobody can stand on, whatever is on it: no ground at all, water or rock, a building, or something standing there that bars the way (props.ts). */
+export const solid = (tile: Tile | undefined): boolean => !tile || !!tile.built || !!propOf(tile)?.blocks || !Number.isFinite(MOVE_COST[tile.biome]);
+
+/**
+ * Whether a ladder joins two hexes that lie side by side: it stands on the lower one, against the cliff of the
+ * higher (`Tile.ladder`, a bit for each side in `HEX_DIRS` order).
+ */
+export function ladderBetween(map: WorldMap, a: HexPos, b: HexPos): boolean {
+  const [ea, eb] = [elevOf(map, a), elevOf(map, b)];
+  if (ea === eb) return false;
+  const [low, high] = ea < eb ? [a, b] : [b, a];
+  const bits = tileAt(map, low)?.ladder ?? 0;
+  if (!bits) return false;
+  const side = HEX_DIRS.findIndex((d) => low.q + d.q === high.q && low.r + d.r === high.r);
+  return side >= 0 && (bits & (1 << side)) !== 0;
+}
+
+/**
+ * Whether a blow by hand (or a helping one) reaches from one hex to another: the hex beside it, or the same hex
+ * (which only an ally shares), and no cliff between (a level's difference at most), unless a ladder joins them: a
+ * fight goes on up and down a ladder.
+ */
+export function strikes(map: WorldMap, a: HexPos, b: HexPos): boolean {
+  if (hexDistance(a, b) > 1) return false;
+  return Math.abs(elevOf(map, a) - elevOf(map, b)) <= 1 || ladderBetween(map, a, b);
+}
 
 // A shut door (a delve's "gate") blocks the view and the light like the rock round it.
 const SIGHT_BLOCKERS: ReadonlySet<string> = new Set(["rock", "wall", "rampart", "fog", "gate"]);
 const blockerIndex = new WeakMap<Tile[], Set<string>>();
 
-/** The hexes sight cannot pass: living rock and walls. Trees and water do not block it. */
+/** The hexes sight cannot pass: living rock and walls, and whatever stands tall enough to hide behind (props.ts). Trees and water do not block it. */
 function sightBlockers(map: WorldMap): Set<string> {
   let set = blockerIndex.get(map.tiles);
   if (!set) {
-    set = new Set(map.tiles.filter((t) => SIGHT_BLOCKERS.has(t.biome)).map(posKey));
+    set = new Set(map.tiles.filter((t) => SIGHT_BLOCKERS.has(t.biome) || !!propOf(t)?.hides).map(posKey));
     blockerIndex.set(map.tiles, set);
   }
   return set;
+}
+
+const relief = new WeakMap<Tile[], boolean>();
+/** Whether any of a map stands above the rest: on a flat one, the lie of the land hides nothing. */
+function hasRelief(map: WorldMap): boolean {
+  let any = relief.get(map.tiles);
+  if (any === undefined) {
+    any = map.tiles.some((t) => (t.elev ?? 0) > 0);
+    relief.set(map.tiles, any);
+  }
+  return any;
 }
 
 function hexRound(fq: number, fr: number): HexPos {
@@ -68,11 +110,19 @@ export function hexesBetween(from: HexPos, to: HexPos): HexPos[] {
   return out;
 }
 
-/** Whether a line can be drawn from one hex to another without crossing rock or a wall. Units never block it. */
+/**
+ * Whether a line can be drawn from one hex to another without crossing rock or a wall, or ground that stands
+ * higher than both ends of it (a ridge between). Units never block it.
+ */
 export function sees(map: WorldMap, from: HexPos, to: HexPos): boolean {
   const blocked = sightBlockers(map);
-  if (blocked.size === 0) return true;
-  return hexesBetween(from, to).every((p) => !blocked.has(posKey(p)));
+  const hilly = hasRelief(map);
+  if (blocked.size === 0 && !hilly) return true;
+  const between = hexesBetween(from, to);
+  if (between.some((p) => blocked.has(posKey(p)))) return false;
+  if (!hilly) return true;
+  const top = Math.max(elevOf(map, from), elevOf(map, to));
+  return between.every((p) => elevOf(map, p) <= top);
 }
 
 /**
@@ -89,12 +139,40 @@ export function seesFor(state: Pick<ZoneState, "map" | "weather">, side: Side, f
 
 /**
  * A fallen enemy is dead: its body lies where it fell until the fight is over, but takes up no room. A fallen
- * hero is only down, and keeps their hex: they are brought back to their feet on it.
+ * hero is only down, and keeps their place on their hex: they are brought back to their feet on it.
  */
 export const isDead = (unit: Unit): boolean => unit.down && unit.side === "enemy";
 
-/** Who takes up a hex: whoever is on it, bar the dead. */
-export const unitAt = (state: ZoneState, pos: HexPos): Unit | undefined => state.units.find((u) => sameHex(u.pos, pos) && !isDead(u));
+/** Everyone on a hex, standing or fallen. */
+export const unitsAt = (state: Pick<ZoneState, "units">, pos: HexPos): Unit[] => state.units.filter((u) => sameHex(u.pos, pos));
+
+/** Someone on a hex: one still standing, if anyone there is; else a hero who is down there. Never the dead. */
+export const unitAt = (state: Pick<ZoneState, "units">, pos: HexPos): Unit | undefined => {
+  const there = unitsAt(state, pos).filter((u) => !isDead(u));
+  return there.find((u) => !u.down) ?? there[0];
+};
+
+/**
+ * Whether a hex is held against `side`: someone of the other side is on it, on their feet or down but not dead.
+ * Nobody enters a hex held against them, by any means: on foot, by a leap, or shoved.
+ */
+export const heldAgainst = (state: Pick<ZoneState, "units">, pos: HexPos, side: Side): boolean =>
+  state.units.some((u) => u.side !== side && !isDead(u) && sameHex(u.pos, pos));
+
+/**
+ * Whether there is room on a hex for `who` to stand: nobody of the other side is on it, and fewer than `HEX_ROOM`
+ * of their own (not counting `who`, if they are there already). With nobody named: whether it is free of everyone.
+ * The dead take up no room.
+ */
+export const roomAt = (state: Pick<ZoneState, "units">, pos: HexPos, who?: Pick<Unit, "id" | "side">): boolean => {
+  let own = 0;
+  for (const u of state.units) {
+    if (isDead(u) || u.id === who?.id || !sameHex(u.pos, pos)) continue;
+    if (!who || u.side !== who.side) return false;
+    own += 1;
+  }
+  return own < HEX_ROOM;
+};
 
 export const unitById = (state: ZoneState, id: string): Unit | undefined => state.units.find((u) => u.id === id);
 
@@ -106,7 +184,7 @@ export interface Reached {
   cost: number;
   prev: string | null;
   pos: HexPos;
-  /** Whether the walker can end a move here: not on a hex somebody else is on. */
+  /** Whether the walker can end a move here: there is room on the hex for them (it is not full of their own side). */
   stop: boolean;
   /** Reckoned with a course charted: the way here, start excluded (the hexes before it may be best reached some other way). */
   way?: HexPos[];
@@ -139,34 +217,43 @@ export const blockerAt = (state: Pick<ZoneState, "map"> & { weather?: Weather[] 
 
 /**
  * What one step costs `unit`, or Infinity if it cannot be made. Open ground is 1; forest and hills 2;
- * climbing a level 1 more; oil or slime underfoot 1 more. A drop or a climb of two levels is a cliff. Enemies
- * on their feet bar the way; allies and fallen heroes can be walked past but not stopped on; a dead enemy is
- * in nobody's way, and its hex can be stopped on. Chests and crates bar it.
+ * climbing a level 1 more; oil or slime underfoot 1 more. A drop or a climb of two levels or more is a cliff:
+ * it is crossed only where a ladder stands (a step more for each level climbed, one more to climb down).
+ * The other side bars the way: a hex with any of them on it, on their feet or down (a hero who is down keeps
+ * their place; a dead enemy takes up no room and bars nobody), cannot be stepped onto, so it is neither stopped on
+ * nor passed through. A unit's own side does not: up to `HEX_ROOM` of them stand on one hex, and a full one can
+ * still be walked through, though not stopped on. What flies is barred the same way. Chests, crates and whatever
+ * else stands in the way bar it too.
  */
 export function stepCost(state: ZoneState, unit: Unit, from: HexPos, to: HexPos, shut?: ReadonlySet<string>): { cost: number; stop: boolean } {
   const tile = tileAt(state.map, to);
   const air = flies(unit);
   const none = { cost: Infinity, stop: false };
-  if (!tile || tile.built || shut?.has(posKey(to)) || blockerAt(state, to)) return none;
+  if (!tile || tile.built || propOf(tile)?.blocks || shut?.has(posKey(to)) || blockerAt(state, to)) return none;
   let cost = air ? (SIGHT_BLOCKERS.has(tile.biome) ? Infinity : 1) : MOVE_COST[tile.biome];
   if (!Number.isFinite(cost)) return none;
   if (!air) {
     const climb = (tile.elev ?? 0) - elevOf(state.map, from);
-    if (Math.abs(climb) >= 2) return none;
-    if (climb === 1) cost += 1;
+    if (Math.abs(climb) >= 2) {
+      if (!ladderBetween(state.map, from, to)) return none;
+      cost += climb > 0 ? climb : 1;
+    } else if (climb === 1) cost += 1;
     const underfoot = state.surfaces[posKey(to)]?.kind;
     if (underfoot === "oil" || underfoot === "slime") cost += 1;
   }
-  const there = unitAt(state, to);
-  if (there && there.id !== unit.id) {
-    if (there.side !== unit.side && !there.down) return none;
-    return { cost, stop: false };
+  // Who is there already (as roomAt counts them): any of the other side, and there is no going there at all.
+  let own = 0;
+  for (const u of state.units) {
+    if (u.id === unit.id || isDead(u) || !sameHex(u.pos, to)) continue;
+    if (u.side !== unit.side) return none;
+    own += 1;
   }
-  return { cost, stop: true };
+  return { cost, stop: own < HEX_ROOM };
 }
 
 /**
- * Everywhere `unit` can get to within `budget`, cheapest way first (Dijkstra). `shut` closes hexes
+ * Everywhere `unit` can get to within `budget`, cheapest way first (Dijkstra): round whoever of the other
+ * side stands in the way, and through its own (stepCost). `shut` closes hexes
  * off altogether: the enemy uses it to look for a way round a burning or poisoned hex. With a `course`
  * (Chart a Course), steps nearer a mark spend its movement first, and `cost` is what is spent of `budget`.
  */
@@ -260,8 +347,28 @@ export function pathIn(reach: Map<string, Reached>, to: HexPos): HexPos[] | null
   return path;
 }
 
-/** Whether two units are close enough to strike each other in melee. */
+/** What swallows whoever is knocked into it: deep water, lava (the ashlands' water), or nothing at all, off the edge of the land. */
+export type Pit = "water" | "lava" | "void";
+
+/** The pit a hex is, if it is one: water of any kind, or no ground there at all. Nobody walks into one; they are knocked in (combat.ts shift). */
+export function pitAt(map: WorldMap, pos: HexPos): Pit | null {
+  const tile = tileAt(map, pos);
+  if (!tile) return "void";
+  if (tile.biome !== "water") return null;
+  return tile.clime === "ash" ? "lava" : "water";
+}
+
+/** The most that standing above a target adds to how far a shot or a spell reaches: a hex for each level, up to this. */
+export const HIGH_REACH = 2;
+
+/** How far a shot or a spell of this range reaches from one hex to another: further from above, a hex for each level up to `HIGH_REACH`. */
+export const reachFrom = (map: WorldMap, from: HexPos, to: HexPos, range: number): number => range + Math.max(0, Math.min(HIGH_REACH, elevOf(map, from) - elevOf(map, to)));
+
+/** Whether two hexes lie side by side. */
 export const adjacent = (a: HexPos, b: HexPos): boolean => hexDistance(a, b) === 1;
+
+/** Whether two hexes are the same one (two of a side sharing it) or lie side by side: near enough to crowd each other, whatever the ground between does. */
+export const close = (a: HexPos, b: HexPos): boolean => hexDistance(a, b) <= 1;
 
 /** The direction, of the six, that points most nearly from one hex toward another. */
 export function directionToward(from: HexPos, toward: HexPos): HexPos {

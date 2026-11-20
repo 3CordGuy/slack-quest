@@ -9,7 +9,8 @@
 // Everywhere else it is light enough to see: all of this is a no-op.
 
 import { hexDistance, posKey, type HexPos } from "@gantt-quest/core";
-import { adjacent, inFight, sees } from "./geometry";
+import { close, inFight, sees } from "./geometry";
+import { propOf } from "./props";
 import { AURAS, FIRE_GLOW, LIGHT_RADIUS } from "./kit";
 import { GLOWCAP_LIGHT } from "./forage";
 import { wearsLanternHelm } from "../gear";
@@ -38,6 +39,11 @@ export function lightSources(state: ZoneState): { at: HexPos; radius: number }[]
   }
   // Glowing mushrooms, until they are picked.
   for (const p of state.map.pois) if (p.kind === "glowcap" && !p.cleared) out.push({ at: p.pos, radius: GLOWCAP_LIGHT });
+  // Braziers, campfires and whatever else burns or glows where it stands.
+  for (const t of state.map.tiles) {
+    const glow = t.prop ? propOf(t)?.light : undefined;
+    if (glow) out.push({ at: { q: t.q, r: t.r }, radius: glow });
+  }
   // Daylight falls in at the way out.
   for (const p of state.map.pois) if (p.kind === "landing") out.push({ at: p.pos, radius: DAYLIGHT_RADIUS });
   for (const [key, s] of Object.entries(state.surfaces)) {
@@ -72,7 +78,7 @@ export const inDark = (state: ZoneState, pos: HexPos, lit: Set<string> | null = 
 /** Whether the party can make this unit out: it stands in the light, or right beside a hero. */
 export function seenByHeroes(state: ZoneState, unit: Unit, lit: Set<string> | null = litHexes(state)): boolean {
   if (!lit || lit.has(posKey(unit.pos))) return true;
-  return state.units.some((h) => h.side === "hero" && !h.down && adjacent(h.pos, unit.pos));
+  return state.units.some((h) => h.side === "hero" && !h.down && close(h.pos, unit.pos));
 }
 
 /** The enemies the dark hides from the party right now. */

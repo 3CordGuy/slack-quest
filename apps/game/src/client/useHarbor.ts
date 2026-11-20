@@ -14,7 +14,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { HexPos } from "@gantt-quest/core";
-import { HARBOR_NAME, generateHarbor, harborPath, type HarborBoard, type HarborClientMessage, type HarborPlayer, type HarborServerMessage, type XpMessage } from "@gantt-quest/world";
+import { HARBOR_NAME, generateHarbor, harborPath, type HarborBoard, type HarborClientMessage, type HarborPlayer, type HarborServerMessage, type Muster, type XpMessage } from "@gantt-quest/world";
 import { PROFILE } from "./api";
 import { useAwake } from "./awake";
 import { gaze } from "./gaze";
@@ -36,6 +36,8 @@ export interface HarborConnection {
   error: string | null;
   /** Counts up whenever the player's trades may have changed (a crewmate changed one, or the connection is new): ask for them again. */
   trades: number;
+  /** The crew's muster as the room last told it (someone setting out for a place on the atlas, asking who is coming), or null. */
+  muster: Muster | null;
   send(message: HarborClientMessage): void;
 }
 
@@ -55,6 +57,7 @@ export function useHarbor(onMoved: (id: string, path: HexPos[]) => void, onXp?: 
   const [status, setStatus] = useState<HarborConnection["status"]>("connecting");
   const [error, setError] = useState<string | null>(null);
   const [trades, setTrades] = useState(0);
+  const [muster, setMuster] = useState<Muster | null>(null);
   const awake = useAwake();
   const socket = useRef<WebSocket | null>(null);
   /** Where your own hero stands, to ask for again after a pause. */
@@ -124,13 +127,15 @@ export function useHarbor(onMoved: (id: string, path: HexPos[]) => void, onXp?: 
           ahead.current = [];
           const me = msg.players.find((p) => p.id === msg.you);
           believed.current = me ? { id: me.id, pos: me.pos, vessel: me.vessel } : null;
-          setBoard({ members: msg.members, ships: msg.ships, log: msg.log, works: msg.works });
+          setBoard({ members: msg.members, ships: msg.ships, log: msg.log, works: msg.works, maps: msg.maps });
           // A trade may have changed while there was no connection to hear of it.
           setTrades((n) => n + 1);
         } else if (msg.type === "trades") {
           setTrades((n) => n + 1);
+        } else if (msg.type === "muster") {
+          setMuster(msg.muster);
         } else if (msg.type === "board") {
-          setBoard({ members: msg.members, ships: msg.ships, log: msg.log, works: msg.works });
+          setBoard({ members: msg.members, ships: msg.ships, log: msg.log, works: msg.works, maps: msg.maps });
         } else if (msg.type === "joined") {
           // Your own hero as the room has them now: a boat bought since changes where you can go. Where you stand
           // is kept as believed while walks are still ahead (the room tells this from where it last had you).
@@ -215,5 +220,5 @@ export function useHarbor(onMoved: (id: string, path: HexPos[]) => void, onXp?: 
     believed.current = { ...me, pos: path[path.length - 1] };
     showWalk(me.id, path);
   }, []);
-  return { you, crew, players, board, chat, status, error, trades, send };
+  return { you, crew, players, board, chat, status, error, trades, muster, send };
 }

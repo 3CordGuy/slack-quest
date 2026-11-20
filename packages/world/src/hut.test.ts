@@ -192,12 +192,11 @@ describe("the resource bin on a new plot", () => {
 });
 
 describe("selling foraged goods to the stall", () => {
-  it("buys herbs, mushrooms and gems only, whole amounts the seller holds", async () => {
-    const { STALL_BUYS, STALL_GEM_PRICE, sellMaterialProblem } = await import("./index");
-    expect(Object.keys(STALL_BUYS).sort()).toEqual(["gem", "herbs", "mushrooms"]);
-    expect(STALL_BUYS.gem).toBe(STALL_GEM_PRICE);
+  it("buys herbs and mushrooms only, whole amounts the seller holds, and sends gems to the Lapidary", async () => {
+    const { STALL_BUYS, sellMaterialProblem } = await import("./index");
+    expect(Object.keys(STALL_BUYS).sort()).toEqual(["herbs", "mushrooms"]);
     const have = { herbs: 4, mushrooms: 1, wood: 9, gem: 2, iron: 3 };
-    expect(sellMaterialProblem("gem", 2, have)).toBeNull();
+    expect(sellMaterialProblem("gem", 2, have)).toMatch(/Lapidary/);
     expect(sellMaterialProblem("iron", 1, have)).toMatch(/does not buy/);
     expect(sellMaterialProblem("herbs", 4, have)).toBeNull();
     expect(sellMaterialProblem("mushrooms", 1, have)).toBeNull();
@@ -205,5 +204,15 @@ describe("selling foraged goods to the stall", () => {
     expect(sellMaterialProblem("wood", 1, have)).toMatch(/does not buy/);
     expect(sellMaterialProblem("gold", 1, have)).toMatch(/does not buy/);
     for (const bad of [0, -1, 1.5, "2", null]) expect(sellMaterialProblem("herbs", bad, have)).toMatch(/at least one/);
+  });
+
+  it("sells gems to the lapidary: whole amounts the seller holds", async () => {
+    const { GEM_PRICE, sellGemsProblem } = await import("./index");
+    expect(GEM_PRICE).toBeGreaterThan(0);
+    expect(sellGemsProblem(2, { gem: 2 })).toBeNull();
+    expect(sellGemsProblem(3, { gem: 2 })).toMatch(/only have 2 gems/);
+    expect(sellGemsProblem(2, { gem: 1 })).toMatch(/only have 1 gem\./);
+    expect(sellGemsProblem(1, { herbs: 9 })).toMatch(/no gems/);
+    for (const bad of [0, -1, 1.5, "2", null]) expect(sellGemsProblem(bad, { gem: 5 })).toMatch(/at least one/);
   });
 });

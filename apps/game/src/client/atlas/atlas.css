@@ -74,6 +74,8 @@
 .atlas-go { display: flex; align-items: center; gap: 8px; }
 .atlas-even { font-family: var(--font-head, serif); color: var(--gold, #f4c64e); }
 /* The climate a place lies in, in that climate's own colour. */
+/* What a place's map is made of: one line of plain words, the climate in its own colour. */
+.atlas-env { display: block; }
 .atlas-clime { font-weight: bold; }
 .atlas-clime.greenwood { color: #8fcf6a; } .atlas-clime.frost { color: #cfe8f7; } .atlas-clime.dunes { color: #e8c07a; } .atlas-clime.mire { color: #9aa86a; } .atlas-clime.ash { color: #ff8a55; }
 /* The place's one slot, and the lodestones in your pack to put into it. */
@@ -127,3 +129,5 @@
   .atlas-opening-title { animation-name: none; }
 }
 @media (prefers-reduced-motion: reduce) { .atlas-slot.wanting { animation: none; } }
+
+.atlas-what.site { color: #f3e9cf; background: #4d5a3c; }

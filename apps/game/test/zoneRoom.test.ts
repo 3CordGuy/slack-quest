@@ -143,8 +143,11 @@ async function arrive() {
 /** Walk Ann toward the wolves until the fight starts. */
 async function pickFight(zone: InstanceType<typeof ZoneRoom>, ann: FakeSocket) {
   const wolf = ann.state.units.find((u) => u.side === "enemy")!;
-  for (let i = 0; i < 6 && !ann.state.encounter; i++) await act(zone, ann, { type: "move", unit: "ann", to: wolf.pos });
-  // A click on the wolf's own hex is refused (it is standing there): aim beside it.
+  // A click on the wolf's own hex is refused (nobody walks onto an enemy's): aim beside it, the nearest side first.
+  const from = hero(ann.state, "ann").pos;
+  const beside = ann.state.map.tiles.filter((t) => hexDistance(t, wolf.pos) === 1).sort((a, b) => hexDistance(a, from) - hexDistance(b, from));
+  for (const t of beside) if (!ann.state.encounter) await act(zone, ann, { type: "move", unit: "ann", to: { q: t.q, r: t.r } });
+  // And if none of those could be walked to in one go, a step at a time.
   for (let i = 0; i < 12 && !ann.state.encounter; i++) {
     const me = hero(ann.state, "ann");
     const step = ann.state.map.tiles.filter((t) => hexDistance(t, me.pos) === 1 && t.biome === "plains").sort((a, b) => hexDistance(a, wolf.pos) - hexDistance(b, wolf.pos))[0];
@@ -361,7 +364,7 @@ describe("ZoneRoom", () => {
     expect((sql.prepare("SELECT status FROM zones WHERE code = ?").get(code) as { status: string }).status).toBe("cleared");
   });
 
-  it("pays a delve's chests into the character, and calls the delve cleared only once its foes are gone and its chests open", async () => {
+  it("leaves a delve's chest open to be taken from, pays what is taken into the character, and calls the delve cleared only once its foes are gone and its chests open", async () => {
     const code = await createZoneRow(db, "ann", zoneOptions({ biome: "caves", delve: true, party: 1 }), "room-delve", "caves", "crew1");
     let zone = room();
     await connect(zone, code, "ann");
@@ -379,11 +382,26 @@ describe("ZoneRoom", () => {
     const goldBefore = (sql.prepare("SELECT gold FROM characters WHERE player_id = 'ann'").get() as { gold: number }).gold;
     await act(zone, ann, { type: "open", unit: "ann", poi: chests[0].id });
     expect(ann.errors).toEqual([]);
-    const spoils = ann.sent.flatMap((m) => (m.type === "update" ? m.events : [])).find((e) => e.t === "spoils") as Extract<ZoneEvent, { t: "spoils" }>;
-    expect(spoils.gold).toBeGreaterThan(0);
-    expect((sql.prepare("SELECT gold FROM characters WHERE player_id = 'ann'").get() as { gold: number }).gold).toBe(goldBefore + spoils.gold!);
-    if (spoils.potions) expect((sql.prepare("SELECT qty FROM consumables WHERE player_id = 'ann' AND kind = 'healing'").get() as { qty: number }).qty).toBeGreaterThanOrEqual(spoils.potions);
-    if (spoils.item) expect(sql.prepare("SELECT name FROM inventory WHERE player_id = 'ann'").all().map((r) => (r as { name: string }).name)).toContain(spoils.item);
+    const told = () => ann.sent.flatMap((m) => (m.type === "update" ? m.events : []));
+    // Opening it pays its XP and nothing else: what is inside is there to be looked at, for whoever takes it first.
+    const spoils = told().find((e) => e.t === "spoils") as Extract<ZoneEvent, { t: "spoils" }>;
+    expect(spoils.xp).toBeGreaterThan(0);
+    expect(spoils.gold).toBeUndefined();
+    expect(told().some((e) => e.t === "looked" && e.id === "ann" && e.spot === chests[0].id)).toBe(true);
+    expect((sql.prepare("SELECT gold FROM characters WHERE player_id = 'ann'").get() as { gold: number }).gold).toBe(goldBefore);
+    const inside = saved(code).loot!.find((s) => s.id === chests[0].id)!.shared!;
+    expect(inside.some((item) => item.t === "gold" && item.n > 0)).toBe(true);
+    // Taking it all pays it into the character: the gold in the purse, a potion in the pack, a piece of gear in the bag.
+    await act(zone, ann, { type: "take", unit: "ann", spot: chests[0].id });
+    expect(ann.errors).toEqual([]);
+    const took = told().find((e) => e.t === "took") as Extract<ZoneEvent, { t: "took" }>;
+    expect(took.items).toEqual(inside);
+    const gold = inside.reduce((n, item) => n + (item.t === "gold" ? item.n : 0), 0);
+    expect((sql.prepare("SELECT gold FROM characters WHERE player_id = 'ann'").get() as { gold: number }).gold).toBe(goldBefore + gold);
+    const potions = inside.reduce((n, item) => n + (item.t === "use" && item.kind === "healing" ? item.n : 0), 0);
+    if (potions) expect((sql.prepare("SELECT qty FROM consumables WHERE player_id = 'ann' AND kind = 'healing'").get() as { qty: number }).qty).toBeGreaterThanOrEqual(potions);
+    for (const item of inside) if (item.t === "gear") expect(sql.prepare("SELECT name FROM inventory WHERE player_id = 'ann'").all().map((r) => (r as { name: string }).name)).toContain(item.item.name);
+    expect(saved(code).loot!.find((s) => s.id === chests[0].id)!.shared).toEqual([]);
     // No foes left, but chests still shut: not cleared, and the crew's cave is still there to go back to.
     const status = () => (sql.prepare("SELECT status FROM zones WHERE code = ?").get(code) as { status: string }).status;
     expect(status()).toBe("open");
@@ -401,6 +419,69 @@ describe("ZoneRoom", () => {
     }
     expect(status()).toBe("cleared");
     expect(await openCave(db, "crew1")).toBeNull();
+  });
+
+  it("gives what is in a chest to whoever takes it first: two players are sent the same things, and each thing reaches exactly one of their packs", async () => {
+    const code = await createZoneRow(db, "ann", zoneOptions({ biome: "caves", delve: true, party: 2 }), "room-shared", "caves", "crew1");
+    let zone = room();
+    await connect(zone, code, "ann");
+    await connect(zone, code, "bo");
+    // Nobody left below but the two of them, both beside the hoard (gold, and a piece of gear for certain).
+    const state = saved(code);
+    const chest = state.map.pois.find((p) => p.kind === "cache" && p.loot === "hoard")!;
+    expect(chest).toBeDefined();
+    state.units = state.units.filter((u) => u.side === "hero");
+    const beside = state.map.tiles.filter((t) => t.biome === "cave" && hexDistance(t, chest.pos) === 1);
+    hero(state, "ann").pos = { q: beside[0].q, r: beside[0].r };
+    hero(state, "bo").pos = { q: (beside[1] ?? beside[0]).q, r: (beside[1] ?? beside[0]).r };
+    sql.prepare("UPDATE zones SET state_json = ? WHERE code = ?").run(JSON.stringify(state), code);
+    zone = room();
+    const ann = await connect(zone, code, "ann");
+    const bo = await connect(zone, code, "bo");
+    const purse = (id: string) => (sql.prepare("SELECT gold FROM characters WHERE player_id = ?").get(id) as { gold: number }).gold;
+    const bag = (id: string) => sql.prepare("SELECT name FROM inventory WHERE player_id = ?").all(id).map((r) => (r as { name: string }).name);
+    const mats = (id: string) => Object.fromEntries((sql.prepare("SELECT kind, qty FROM resources WHERE player_id = ?").all(id) as { kind: string; qty: number }[]).map((r) => [r.kind, r.qty]));
+    const before = Object.fromEntries(["ann", "bo"].map((id) => [id, { gold: purse(id), bag: bag(id), mats: mats(id) }]));
+    await act(zone, ann, { type: "open", unit: "ann", poi: chest.id });
+    expect(ann.errors).toEqual([]);
+    // One lot of things in it, and both are sent it: Bo too, who has not so much as looked.
+    const inside = saved(code).loot!.find((s) => s.id === chest.id)!.shared!;
+    const seen = (ws: FakeSocket) => ws.state.loot!.find((s) => s.id === chest.id)!.shared;
+    expect(seen(ann)).toEqual(inside);
+    expect(seen(bo)).toEqual(inside);
+    const gear = inside.find((item) => item.t === "gear") as Extract<(typeof inside)[number], { t: "gear" }>;
+    const gold = inside.find((item) => item.t === "gold") as Extract<(typeof inside)[number], { t: "gold" }>;
+    expect(gear && gold).toBeTruthy();
+    // Bo is quicker to the gear: it goes from what both are sent, and both are told who has it.
+    await act(zone, bo, { type: "take", unit: "bo", spot: chest.id, uid: gear.uid });
+    expect(bo.errors).toEqual([]);
+    for (const ws of [ann, bo]) {
+      expect(seen(ws)).toEqual(inside.filter((item) => item.uid !== gear.uid));
+      expect(ws.sent.flatMap((m) => (m.type === "update" ? m.events : []))).toContainEqual({ t: "took", id: "bo", spot: chest.id, items: [gear] });
+    }
+    // Ann's click on it lands a moment later: she is told so, and is given nothing.
+    await act(zone, ann, { type: "take", unit: "ann", spot: chest.id, uid: gear.uid });
+    expect(ann.errors).toEqual(["Someone else took that."]);
+    expect(purse("ann")).toBe(before.ann.gold);
+    expect(bag("ann")).toEqual(before.ann.bag);
+    // Both sweep up the rest at the same moment: one of them has it, and the other is told there is nothing left.
+    await Promise.all([act(zone, ann, { type: "take", unit: "ann", spot: chest.id }), act(zone, bo, { type: "take", unit: "bo", spot: chest.id })]);
+    expect([...ann.errors.slice(1), ...bo.errors]).toEqual(["There is nothing left in it."]);
+    expect(saved(code).loot!.find((s) => s.id === chest.id)!.shared).toEqual([]);
+    // What was in it is in their packs exactly once between them: the gold in one purse, the gear in Bo's bag alone, each material once.
+    const gained = ["ann", "bo"].map((id) => purse(id) - before[id].gold);
+    expect(gained[0] + gained[1]).toBe(gold.n);
+    expect(gained.filter((n) => n > 0)).toHaveLength(1);
+    expect(bag("bo")).toHaveLength(before.bo.bag.length + 1);
+    expect(bag("bo")).toContain(gear.item.name);
+    expect(bag("ann")).toEqual(before.ann.bag);
+    const materials = inside.filter((item) => item.t === "res") as Extract<(typeof inside)[number], { t: "res" }>[];
+    expect(materials.length).toBeGreaterThan(0);
+    for (const item of materials) {
+      const more = ["ann", "bo"].map((id) => (mats(id)[item.kind] ?? 0) - (before[id].mats[item.kind] ?? 0));
+      expect(more[0] + more[1], item.kind).toBe(item.n);
+      expect(more.filter((n) => n > 0), item.kind).toHaveLength(1);
+    }
   });
 
   it("finds a crew's cave still being fought through, and not a cleared, stale or other crew's one", async () => {
@@ -594,5 +675,10 @@ describe("ZoneRoom", () => {
     expect(zoneActionFrom({ type: "away", player: "bo", away: true }, "ann", true)).toBeNull();
     expect(zoneActionFrom({ type: "move", by: "bo", unit: "ann", to: { q: 1, r: 2, extra: true } }, "ann", true)).toEqual({ type: "move", by: "ann", unit: "ann", to: { q: 1, r: 2 } });
     expect(zoneActionFrom("move", "ann", true)).toBeNull();
+    // A thing to take is named by its own number; one that makes no sense is dropped, never read as "take it all".
+    expect(zoneActionFrom({ type: "take", unit: "ann", spot: "box", uid: 3, extra: 1 }, "ann", true)).toEqual({ type: "take", by: "ann", unit: "ann", spot: "box", uid: 3 });
+    expect(zoneActionFrom({ type: "take", unit: "ann", spot: "box" }, "ann", true)).toEqual({ type: "take", by: "ann", unit: "ann", spot: "box" });
+    expect(zoneActionFrom({ type: "take", unit: "ann", spot: "box", uid: "3" }, "ann", true)).toBeNull();
+    expect(zoneActionFrom({ type: "take", unit: "ann", spot: "box", index: -1 }, "ann", true)).toBeNull();
   });
 });

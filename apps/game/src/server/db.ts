@@ -79,6 +79,7 @@ import {
   HARBOR_XP,
   cleanStone,
   stoneItem,
+  atlasNodeById,
 } from "@gantt-quest/world";
 import { LOOKS } from "../client/render/looks";
 import { prepareXp, xpOutcome, type XpResult } from "./harbor-xp";
@@ -1203,6 +1204,9 @@ const LOBBY_STALE_MS = 2 * 60 * 60_000;
 const VOYAGE_STALE_MS = 12 * 60 * 60_000;
 
 /** Everything on a Harbor's notice board: who is in the crew, which ships are moored or away, and recent voyages. */
+/** How long a map nobody has walked on still counts as open (the same as zones.ts CAVE_IDLE_MS, which cannot be imported here). */
+const OPEN_MAP_MS = 12 * 60 * 60_000;
+
 export async function harborBoard(db: D1Database, crewId: string, pierCount: number): Promise<HarborBoard> {
   const [works, members, runs] = await Promise.all([
     crewWorks(db, crewId),
@@ -1248,7 +1252,14 @@ export async function harborBoard(db: D1Database, crewId: string, pierCount: num
   // Who is out on a zone, and whether they are fighting there.
   const zoneOf = await crewPresence(db, crewId);
   const roster = members.results.map(({ bin, ...m }) => ({ ...m, ...(m.plot !== null && bin !== null ? { bin: parseBin(bin) } : {}), ...(zoneOf.has(m.id) ? { zone: zoneOf.get(m.id) } : {}) }));
-  return { members: roster, ships, log, works };
+  // The maps the crew has open out through the waygate: made for a place on its atlas, not cleared, and walked on
+  // lately (as long as the atlas itself keeps a map: zones.ts CAVE_IDLE_MS). The crew's id is its chart's seed.
+  const open = await db
+    .prepare("SELECT code, node FROM zones WHERE kind = 'atlas' AND crew_id = ?1 AND status != 'cleared' AND updated_at > ?2 ORDER BY updated_at DESC LIMIT 6")
+    .bind(crewId, now() - OPEN_MAP_MS)
+    .all<{ code: string; node: string | null }>();
+  const maps = open.results.map((z) => ({ code: z.code, node: z.node ?? "", place: (z.node ? atlasNodeById(crewId, z.node)?.name : null) ?? "a landfall" }));
+  return { members: roster, ships, log, works, ...(maps.length > 0 ? { maps } : {}) };
 }
 
 /** Ask a crew's Harbor to re-read its notice board and tell everyone present. Never throws. */

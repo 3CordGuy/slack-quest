@@ -5,7 +5,7 @@
 
 import type { StatKey, Stats } from "@gantt-quest/core";
 import type { Rng } from "../rng";
-import type { Roll, Unit } from "./types";
+import type { Roll, Rolled, Unit } from "./types";
 
 export interface Dice {
   n: number;
@@ -51,9 +51,18 @@ export const diceText = (dice: Dice): string => `${dice.n}d${dice.d}${dice.plus 
 
 /** Roll damage or healing. A critical hit rolls the dice (not the flat part) twice. */
 export function rollDice(rng: Rng, dice: Dice, crit = false): number {
-  let total = dice.plus;
-  for (let i = 0; i < dice.n * (crit ? 2 : 1); i++) total += rng.int(1, dice.d);
-  return Math.max(0, total);
+  return rollShown(rng, dice, 0, crit).total;
+}
+
+/**
+ * Roll damage or healing and keep what each die showed, for the log: the dice, `more` added to their flat
+ * part (a hero's stat, weapon and level; whatever else the blow adds), and what it all came to.
+ */
+export function rollShown(rng: Rng, dice: Dice, more = 0, crit = false): Rolled {
+  const faces: number[] = [];
+  for (let i = 0; i < dice.n * (crit ? 2 : 1); i++) faces.push(rng.int(1, dice.d));
+  const plus = dice.plus + more;
+  return { d: dice.d, faces, plus, total: Math.max(0, faces.reduce((n, f) => n + f, 0) + plus), ...(crit ? { crit: true } : {}) };
 }
 
 /** Advantage and disadvantage cancel: any of each leaves a plain roll. */
