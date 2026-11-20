@@ -924,6 +924,7 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
           me={me}
           refresh={reloadAll}
           onClose={closeBag}
+          onLogbook={() => { closeBag(); setBook(true); }}
           // Shutting the chest leaves the bag as it was before the chest opened it.
           chest={chestOpen ? { box: chestOpen, furnishings, own, send: hut.send, carry: (id) => (setEditing(true), pick(id)), onClose: () => setOpened(null) } : null}
         />
@@ -951,7 +952,7 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
           }}
         />
       )}
-      {heroSheet.open && you && <HeroSheet id={heroSheet.open} you={you} onClose={heroSheet.close} />}
+      {heroSheet.open && you && <HeroSheet id={heroSheet.open} you={you} onClose={heroSheet.close} logbook={me.character ? { hero: me.character, open: () => { heroSheet.close(); setBook(true); } } : undefined} />}
     </div>
   );
 }

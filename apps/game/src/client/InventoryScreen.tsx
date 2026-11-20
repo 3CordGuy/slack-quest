@@ -60,6 +60,7 @@
 
 import { Fragment, useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent as ReactDragEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { CatchPanel } from "./CatchPanel";
+import { LogbookButton } from "./Logbook";
 import {
   CARRY_FORMULA,
   CHEST_COLS,
@@ -256,6 +257,8 @@ interface Props {
   me: Me;
   refresh(): Promise<unknown>;
   onClose(): void;
+  /** Open the logbook, from a button under the hero's name. No button without it. */
+  onLogbook?(): void;
   /** On the atlas: a lodestone can be put from here into the slot of the place picked. */
   stones?: StoneSlot;
   /** Opened during a voyage: gear can be changed, but the catch stays at home. */
@@ -406,7 +409,7 @@ function EyeGlyph({ shut }: { shut: boolean }) {
   );
 }
 
-export function InventoryScreen({ me, refresh, onClose, onIsland = false, chest = null, trade = null, town = null, usable, gearLocked, stones, torch, onLootDrop }: Props) {
+export function InventoryScreen({ me, refresh, onClose, onLogbook, onIsland = false, chest = null, trade = null, town = null, usable, gearLocked, stones, torch, onLootDrop }: Props) {
   /** Loot is being dragged over the bag: it is lit as the place to drop it. */
   const [lootOver, setLootOver] = useState(false);
   const lootDrop = onLootDrop && {
@@ -1235,7 +1238,11 @@ export function InventoryScreen({ me, refresh, onClose, onIsland = false, chest 
 
       <div className={`bag panel window ${held ? "holding" : ""} ${lootOver ? "loot-over" : ""}`} role="dialog" aria-label="Sea bag" style={{ "--u": `${U}px` } as CSSProperties} onContextMenu={putBack} {...lootDrop}>
         <span className="win-plate">Sea Bag</span>
-        <button className="bag-close hud-btn" aria-label="Close" title="Close (Esc)" onClick={onClose}>×</button>
+        {/* The close button, and the way into the logbook beside it. */}
+        <div className="bag-top">
+          <button className="bag-close hud-btn" aria-label="Close" title="Close (Esc)" onClick={onClose}>×</button>
+          {onLogbook && <LogbookButton hero={c} onOpen={onLogbook} />}
+        </div>
         {(error ?? (trade ? null : refused)) && <div className="banner error">{error ?? refused}</div>}
 
         <div className={`bag-doll ${gearLocked ? "locked" : ""}`} style={{ height: DOLL_ROWS * U }}>

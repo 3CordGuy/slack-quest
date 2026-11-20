@@ -36,13 +36,14 @@
 // typing. The bag's button does the same: press it again to put the bag away.
 
 import { Children, useEffect, useRef, useState, type CSSProperties, type DragEvent, type MouseEvent, type ReactNode } from "react";
-import { ABILITIES, COMMON_ACTIONS, ITEM_AP, RARITY_COLOR, THROWABLES, abilitiesFor, classAbilitiesOf, commonCost, loadoutOf, maxHpFor, parseAbilityLoadout, parseTraits, pendingTraitTiers, tacticOf, withClassAbilities, xpToNext, type CommonAction, type Throwable } from "@gantt-quest/world";
+import { ABILITIES, COMMON_ACTIONS, ITEM_AP, RARITY_COLOR, THROWABLES, abilitiesFor, classAbilitiesOf, commonCost, loadoutOf, maxHpFor, parseAbilityLoadout, tacticOf, withClassAbilities, xpToNext, type CommonAction, type Throwable } from "@gantt-quest/world";
 import type { Me } from "../api";
 import { Icon, ItemDetail, toOwned } from "../items";
 import { blurb, label } from "../labels";
 import { PixelIcon } from "../PixelIcon";
 import { LiquidMeter } from "./LiquidMeter";
 import { COMMON_ICON, ITEM_ICON, abilityIcon } from "../zone/actionIcons";
+import { logbookNews } from "../Logbook";
 import { loadBar, moveSlot, saveBar } from "../zone/hotbar";
 import { RACK, RACK_ROW, paintRack } from "./rackArt";
 import "./hud.css";
@@ -311,7 +312,7 @@ export function HudBar({ me, place, children, hp, meter, pips = [], chips, quick
   const maxHp = hp?.max ?? maxHpFor(stats, c.level);
   const nowHp = hp?.now ?? maxHp;
   const next = xpToNext(c.level);
-  const news = c.unspent_points > 0 || pendingTraitTiers(c.class_id, c.level, parseTraits(c.traits)).length > 0;
+  const news = logbookNews(c);
   const left = pips.filter((p) => p.kind !== "focus");
   const right = pips.filter((p) => p.kind === "focus");
   const pipRow = (p: HudPips) => (

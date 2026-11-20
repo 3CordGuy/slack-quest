@@ -537,7 +537,7 @@ export function PubView({ me, refresh, onLeave }: { me: Me; refresh(): Promise<u
         {atBoard && !holdingDice && <button className="primary" disabled={reading} onClick={() => setReading(true)}>Read the board</button>}
         <button className={atDoor ? "primary" : ""} disabled={holdingDice} onClick={onLeave}>Leave</button>
       </HudBar>}
-      {bag && me.character && <InventoryScreen me={me} refresh={refresh} onClose={() => setBag(false)} />}
+      {bag && me.character && <InventoryScreen me={me} refresh={refresh} onClose={() => setBag(false)} onLogbook={() => { setBag(false); setBook(true); }} />}
       {book && me.character && <Logbook me={me} refresh={refresh} onClose={() => setBook(false)} />}
       {atDoor && self && !holdingDice && <TileAction renderer={renderer} pos={self.pos} unitId={self.id} label="Leave" run={onLeave} />}
       {near && self && !talking && !holdingDice && !atBoard && <TileAction renderer={renderer} pos={self.pos} unitId={self.id} label={`Talk to ${near.short}`} run={() => setTalkTo(near.id)} />}
@@ -552,7 +552,7 @@ export function PubView({ me, refresh, onLeave }: { me: Me; refresh(): Promise<u
           <button className="primary" onClick={onLeave}>Back to the Harbor</button>
         </div>
       )}
-      {heroSheet.open && you && <HeroSheet id={heroSheet.open} you={you} onClose={heroSheet.close} />}
+      {heroSheet.open && you && <HeroSheet id={heroSheet.open} you={you} onClose={heroSheet.close} logbook={me.character ? { hero: me.character, open: () => { heroSheet.close(); setBook(true); } } : undefined} />}
     </div>
   );
 }

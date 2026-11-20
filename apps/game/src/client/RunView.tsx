@@ -393,7 +393,7 @@ export function RunView({ code, me, refresh, onLeave }: { code: string; me: Me; 
               {find && <FindCard find={find} onDone={() => setFind(null)} />}
               {state.phase === "overworld" && heroSheet.open && (() => {
                 const h = state.heroes.find((x) => x.id === heroSheet.open);
-                return h && <HeroSheet id={h.id} you={state.you} onClose={heroSheet.close} live={{ hp: h.hp, maxHp: h.maxHp, focus: h.focus, maxFocus: h.maxFocus }} />;
+                return h && <HeroSheet id={h.id} you={state.you} onClose={heroSheet.close} live={{ hp: h.hp, maxHp: h.maxHp, focus: h.focus, maxFocus: h.maxFocus }} logbook={me.character ? { hero: me.character, open: () => { heroSheet.close(); void refresh(); setBook(true); } } : undefined} />;
               })()}
               {hover && state.phase === "overworld" && <HexTip state={state} hover={hover} />}
             </>
@@ -410,6 +410,7 @@ export function RunView({ code, me, refresh, onLeave }: { code: string; me: Me; 
                 run.regear();
               }}
               onClose={() => setInventory(false)}
+              onLogbook={() => { setInventory(false); setBook(true); }}
             />
           )}
           {book && me.character && state.phase !== "battle" && <Logbook me={me} onIsland refresh={refresh} onClose={() => setBook(false)} />}

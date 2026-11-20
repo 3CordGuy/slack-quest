@@ -26,6 +26,7 @@ import {
   pendingTraitTiers,
   statPct,
   traitsFor,
+  unlockedFor,
   xpToNext,
 } from "@gantt-quest/world";
 import { api, type Me, type StatKey } from "./api";
@@ -37,6 +38,34 @@ import { spriteDataUrl, withLook } from "./render/sprites";
 import "./book.css";
 
 type Page = "stats" | "traits" | "skills";
+
+type Hero = NonNullable<Me["character"]>;
+
+/**
+ * Whether the logbook has something waiting: points to spend, a trait to pick, or a class ability slot
+ * left empty while there is an opened ability to put in it. Marks every way into the logbook.
+ */
+export function logbookNews(c: Hero): boolean {
+  if (c.unspent_points > 0) return true;
+  if (pendingTraitTiers(c.class_id, c.level, parseTraits(c.traits)).length > 0) return true;
+  return abilitySlotOpen(c);
+}
+
+/** A class ability slot gives nothing while there is an opened ability not yet slotted. */
+function abilitySlotOpen(c: Hero): boolean {
+  const slotted = classAbilitiesOf(c.class_id, c.level, parseAbilityLoadout(c.ability_loadout));
+  return slotted.length < Math.min(ABILITY_SLOTS, unlockedFor(c.class_id, c.level).length);
+}
+
+/** The way into the logbook from another panel: "Assign skills and stats", with a diamond when something is waiting. */
+export function LogbookButton({ hero, onOpen, wide = false }: { hero: Hero; onOpen(): void; /** Stretched across the panel it sits in. */ wide?: boolean }) {
+  const news = logbookNews(hero);
+  return (
+    <button type="button" className={`small logbook-btn ${wide ? "wide" : ""}`} onClick={onOpen} title={news ? "Something to spend or pick in the logbook (L)" : "Open the logbook (L)"}>
+      Assign skills and stats{news && <i className="news-diamond" aria-label="something waiting" />}
+    </button>
+  );
+}
 
 interface Props {
   me: Me;
@@ -71,6 +100,8 @@ export function Logbook({ me, refresh, onClose, onIsland = false }: Props) {
   const pool = poolFor(c.class_id);
   const equipped = classAbilitiesOf(c.class_id, c.level, slotted);
   const [pickSlot, setPickSlot] = useState<number | null>(null);
+  /** An empty slot is marked while there is an opened ability left to put in it. */
+  const slotOpen = abilitySlotOpen(c);
   const next = xpToNext(c.level);
 
   return (
@@ -178,9 +209,9 @@ export function Logbook({ me, refresh, onClose, onIsland = false }: Props) {
                       const idle = !!id && !equipped.includes(id);
                       const entry = id ? pool.find((e) => e.id === id) : undefined;
                       return (
-                        <button key={slot} className={`book-slot ${pickSlot === slot ? "on" : ""} ${idle ? "idle" : ""}`} disabled={onIsland || busy} aria-pressed={pickSlot === slot} onClick={() => setPickSlot(pickSlot === slot ? null : slot)}>
+                        <button key={slot} className={`ability-slot ${pickSlot === slot ? "on" : ""} ${idle ? "idle" : ""}`} disabled={onIsland || busy} aria-pressed={pickSlot === slot} onClick={() => setPickSlot(pickSlot === slot ? null : slot)}>
                           <span className="book-skill-n">{slot + 1}</span>
-                          <strong>{id ? label("ability", id) : "Empty"}</strong>
+                          {id ? <strong>{label("ability", id)}</strong> : <strong className="ability-empty">{onIsland ? "Empty" : "Empty - Click to pick an ability"}{slotOpen && <i className="news-diamond" aria-label="an ability to put here" />}</strong>}
                           {id && <small>{!idle ? blurb("ability", id) : entry ? `Opens at level ${entry.level}: does nothing until then.` : "No longer one of your class's abilities: does nothing."}</small>}
                         </button>
                       );
@@ -208,7 +239,7 @@ export function Logbook({ me, refresh, onClose, onIsland = false }: Props) {
         </section>
 
         <nav className="book-ribbons" aria-label="Pages">
-          {([["stats", "Stats", c.unspent_points > 0], ["traits", "Traits", waiting.length > 0], ["skills", "Skills", false]] as const).map(([id, name, news]) => (
+          {([["stats", "Stats", c.unspent_points > 0], ["traits", "Traits", waiting.length > 0], ["skills", "Skills", slotOpen]] as const).map(([id, name, news]) => (
             <button key={id} className={`ribbon ${id} ${page === id ? "on" : ""}`} aria-pressed={page === id} onClick={() => setPage(id)}>
               {name}{news && <i aria-label="something waiting" />}
             </button>

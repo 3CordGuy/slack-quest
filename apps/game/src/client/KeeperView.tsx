@@ -253,7 +253,7 @@ export function KeeperView({ shop, me, refresh, onLeave }: { shop: KeeperHouse; 
         {!atKeeper && !refused && <button className="primary" onClick={() => walk.current(place.stand)}>Talk to {keeper.short}</button>}
         <button className={atDoor ? "primary" : ""} onClick={onLeave}>Leave</button>
       </HudBar>}
-      {bag && <InventoryScreen me={me} refresh={refresh} onClose={closeBag} />}
+      {bag && <InventoryScreen me={me} refresh={refresh} onClose={closeBag} onLogbook={() => { closeBag(); setBook(true); }} />}
       {book && <Logbook me={me} refresh={refresh} onClose={() => setBook(false)} />}
       {atDoor && !refused && <TileAction renderer={renderer} pos={pos} unitId={you} label="Leave" run={onLeave} />}
 
