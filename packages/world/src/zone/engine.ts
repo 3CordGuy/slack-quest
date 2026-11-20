@@ -221,8 +221,7 @@ export interface AttackContext {
  * What bears on an attack besides the attacker's skill.
  *
  * Advantage: the target is Exposed or Stunned, or Prone and struck in melee; Focus was spent; a pack
- * animal has one of its own beside the target; the attacker carries a Beacon, or an ally near enough (AURAS.range) does;
- * the attacker is Unseen. Disadvantage: the attacker is Poisoned or Fumbling, carries the Black Spot or a Red Sky, is
+ * animal has one of its own beside the target; the attacker is Unseen. Disadvantage: the attacker is Poisoned or Fumbling, carries the Black Spot or a Red Sky, is
  * shooting with an enemy beside them (or on their own hex), or is shooting at something Prone. Shots also get +2 from
  * higher ground, -2 from lower, and -2 at a target standing among trees. A blow by hand down a ladder gets
  * +2, and one struck up it -2.
@@ -241,7 +240,6 @@ export function attackContext(state: ZoneState, attacker: Unit, target: Unit, op
   if (has(attacker, "inspired")) adv("you are Inspired");
   if (has(target, "guiding_light") && target.side !== attacker.side) adv("the target is lit by Guiding Light");
   if (attacker.side === "enemy" && ENEMY_KIT[attacker.kind]?.pack && state.units.some((u) => u.id !== attacker.id && u.side === "enemy" && !u.down && close(u.pos, target.pos))) adv("the pack is on the target");
-  if (state.units.some((u) => u.side === attacker.side && !u.down && has(u, "beacon") && hexDistance(u.pos, attacker.pos) <= AURAS.range)) adv(has(attacker, "beacon") ? "your Beacon" : "an ally's Beacon");
   if (has(attacker, "poisoned")) dis("Poisoned");
   if (has(attacker, "glitched")) dis("Fumbling");
   if (has(attacker, "black_spot")) dis("the Black Spot is on you");
@@ -253,6 +251,11 @@ export function attackContext(state: ZoneState, attacker: Unit, target: Unit, op
     if (has(target, "prone")) dis("the target is Prone");
   }
   let mods = 0;
+  // A Beacon on the attacker, or on an ally near enough (AURAS.range): a steady bonus to hit, however many are lit.
+  if (state.units.some((u) => u.side === attacker.side && !u.down && has(u, "beacon") && hexDistance(u.pos, attacker.pos) <= AURAS.range)) {
+    mods += AURAS.beaconHit;
+    notes.push(`+${AURAS.beaconHit} ${has(attacker, "beacon") ? "your Beacon" : "an ally's Beacon"}`);
+  }
   const sung = songHit(state, attacker);
   if (sung > 0) { mods += sung; notes.push(`+${sung} Lively Shanty`); }
   const rise = elevOf(state.map, attacker.pos) - elevOf(state.map, target.pos);

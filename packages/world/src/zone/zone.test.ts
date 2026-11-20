@@ -2742,22 +2742,26 @@ describe("the Paladin's class abilities", () => {
     expect(poolFor("qa_paladin").map((e) => e.id)).toEqual(["beacon_aura", "healing_aura", "branding_strike", "stoke_the_fire", "bolster", "show_the_way"]);
   });
 
-  it("Beacon Aura: a Bonus action that gives the Paladin and allies within 2 hexes advantage, not anyone further off", () => {
+  it("Beacon Aura: a Bonus action that gives the Paladin and allies within 2 hexes +2 to hit, not anyone further off", () => {
     let { state, dummy } = party();
     const foe = () => unit(state, dummy);
-    expect(attackContext(state, unit(state, "bo"), foe(), { melee: true }).adv).toBe(0);
+    const before = (id: string, melee: boolean) => attackContext(state, unit(state, id), foe(), { melee });
+    const was = { bo: before("bo", true), ann: before("ann", true), cy: before("cy", false), foe: attackContext(state, foe(), unit(state, "ann"), { melee: true }) };
     state = must(state, { type: "use", by: "ann", unit: "ann", ability: "beacon_aura" });
     expect(state.encounter!.budgets.ann).toMatchObject({ ap: AP_TURN - BONUS_AP });
     const bo = attackContext(state, unit(state, "bo"), foe(), { melee: true });
-    expect(bo.adv).toBe(1);
-    expect(bo.notes.join()).toMatch(/Beacon/);
+    expect(bo.mods).toBe(was.bo.mods + AURAS.beaconHit);
+    expect(bo.adv).toBe(was.bo.adv);
+    expect(bo.notes.join()).toMatch(/\+2 an ally's Beacon/);
     const ann = attackContext(state, unit(state, "ann"), foe(), { melee: true });
-    expect(ann.adv).toBe(1);
-    expect(ann.notes.join()).toMatch(/your Beacon/);
-    expect(attackContext(state, unit(state, "cy"), foe(), { melee: false }).adv).toBe(0);
-    expect(bo.notes.join()).toMatch(/an ally's Beacon/);
+    expect(ann.mods).toBe(was.ann.mods + AURAS.beaconHit);
+    expect(ann.adv).toBe(was.ann.adv);
+    expect(ann.notes.join()).toMatch(/\+2 your Beacon/);
+    // Too far off for it.
+    expect(attackContext(state, unit(state, "cy"), foe(), { melee: false }).mods).toBe(was.cy.mods);
     // Enemies beside the Paladin get nothing from it.
-    expect(attackContext(state, foe(), unit(state, "ann"), { melee: true }).adv).toBe(0);
+    const theirs = attackContext(state, foe(), unit(state, "ann"), { melee: true });
+    expect([theirs.mods, theirs.adv]).toEqual([was.foe.mods, was.foe.adv]);
   });
 
   it("Beacon Aura: lights the dark around the Paladin while it lasts, and lasts 4 of the Paladin's turns after this one", () => {
@@ -2893,9 +2897,10 @@ describe("the Paladin's class abilities", () => {
     let { state } = party();
     const bo = unit(state, "bo");
     bo.conditions = (["burning", "poisoned", "slowed", "exposed", "hasted"] as const).map((kind) => ({ kind, rounds: 3 }));
+    const before = state.encounter!.budgets.ann.ap;
     state = must(state, { type: "use", by: "ann", unit: "ann", ability: "show_the_way", target: "bo" });
     expect(unit(state, "bo").conditions.map((c) => c.kind)).toEqual(["hasted"]);
-    expect(state.encounter!.budgets.ann.ap).toBeLessThanOrEqual(AP_TURN - ACTION_AP);
+    expect(state.encounter!.budgets.ann.ap).toBe(before - BONUS_AP);
   });
 
   it("Show the Way: heals the ally a little, less than a Mend", () => {

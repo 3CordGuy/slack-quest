@@ -342,7 +342,7 @@ export const TACTICS: Record<string, Tactic> = {
   branding_strike: melee({ cooldown: 3 }),
   stoke_the_fire: melee({ shape: "adjacent", cooldown: 3 }),
   bolster: { cost: 2, reach: "spell", range: 0, shape: "self", cooldown: 4, shield: BOLSTER },
-  show_the_way: mend(5, { cooldown: 3, clearWay: true }),
+  show_the_way: mend(5, { cost: 1, cooldown: 3, clearWay: true }),
   // Mage
   shock: spell(6, { vsWet: 3 }),
   mend: mend(5, { cooldown: 1 }),
@@ -465,12 +465,13 @@ export function reactionStrike(abilities: string[]): string {
 
 /**
  * What the aura conditions reach and do. Beacon: the bearer gives light, and the bearer and every ally within
- * `range` attack with advantage. Mending: at the start of each of the bearer's turns, the bearer and every ally
+ * `range` get `beaconHit` on their rolls to hit. Mending: at the start of each of the bearer's turns, the bearer and every ally
  * standing within `range` heal `heal` (the fallen are not got up).
  */
 export const AURAS = {
   range: 2,
   beaconLight: 2,
+  beaconHit: 2,
   heal: { n: 1, d: 4, plus: 1 } satisfies Dice,
 };
 
@@ -529,7 +530,7 @@ export const CONDITION_INFO: Record<Condition, { name: string; blurb: string; co
   prone: info("prone", "Flat on the ground: standing up costs 1 AP. Melee attacks against it have advantage, ranged attacks disadvantage."),
   sundered: info("sundered", `Its armor is dented: ${SUNDERED_DEFENCE} less Defence.`),
   wet: { name: "Wet", blurb: "Soaked through: lightning hits harder, and it cannot burn.", color: "#7dd3fc" },
-  beacon: { name: "Beacon", blurb: "Gives light, and it and allies within 2 hexes have advantage on their attacks.", color: "#fff7d6" },
+  beacon: { name: "Beacon", blurb: `Gives light, and it and allies within 2 hexes get +${AURAS.beaconHit} to hit.`, color: "#fff7d6" },
   mending: { name: "Healing Aura", blurb: "At the start of each of its turns, it and every ally within 2 hexes heal a little.", color: "#5dffa0" },
   bolstered: { name: "Bolstered", blurb: "A shield takes the damage of blows before its HP does, until it is spent or wears off.", color: "#9ec9ff" },
   invisible: { name: "Unseen", blurb: "Enemies cannot see it to attack it. Its next roll to hit has advantage, and using any ability (or throwing, or shoving) gives it away.", color: "#b8c4d6" },

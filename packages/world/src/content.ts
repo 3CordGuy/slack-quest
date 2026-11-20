@@ -141,10 +141,10 @@ export const ABILITIES: Record<string, AbilityDef> = {
   // A lit torch swung in the main hand (zones only): the weapon is put away while it is held.
   torch_swing: { id: "torch_swing", name: "Torch Swing", stat: "str", rolls: 2, target: "enemy", damage: 6, perfect: { effect: "burning", turns: 2 }, blurb: "A swing of a lit torch. Whoever it hits may catch fire." },
   // Paladin weapons. Mace: Bash and Recover. Greatsword: Cleave and Block. Flail: Strike and Armor Crush.
-  bash: { id: "bash", name: "Bash", stat: "str", rolls: 3, target: "enemy", damage: 9, perfect: { effect: "prone", turns: 1 }, blurb: "A heavy blow with the mace. On a hit, the target must save or be knocked Prone." },
+  bash: { id: "bash", name: "Bash", stat: "str", rolls: 3, target: "enemy", damage: 8, perfect: { effect: "prone", turns: 1 }, blurb: "A heavy blow with the mace. On a hit, the target must save or be knocked Prone." },
   recover: { id: "recover", name: "Recover", stat: "vit", rolls: 1, target: "self", heal: 7, blurb: "Catch your breath and heal yourself a fair amount." },
   block: { id: "block", name: "Block", stat: "vit", rolls: 1, target: "self", blurb: "Set the flat of the blade before you, for a shield of 8 plus your level that takes the damage of blows before HP does, through your next turn." },
-  flail_strike: { id: "flail_strike", name: "Strike", stat: "str", rolls: 3, target: "enemy", damage: 9, perfect: { effect: "slowed", turns: 2 }, blurb: "A swing of the flail. On a hit, the target must save or be Slowed." },
+  flail_strike: { id: "flail_strike", name: "Strike", stat: "str", rolls: 3, target: "enemy", damage: 8, perfect: { effect: "slowed", turns: 2 }, blurb: "A swing of the flail. On a hit, the target must save or be Slowed." },
   armor_crush: { id: "armor_crush", name: "Armor Crush", stat: "str", rolls: 2, target: "enemy", damage: 4, perfect: { effect: "sundered", turns: 2 }, blurb: "A quick blow at the joints of its armor. On a hit, the target must save or be Sundered, with 2 less Defence for 2 turns." },
   // Mage weapons. Staff: Shock and Mend. Logbook: Slicing Wind and Wind's Blessing. Rod: Waterbolt and Lightning Strike.
   shock: { id: "shock", name: "Shock", stat: "int_stat", rolls: 3, target: "enemy", damage: 9, blurb: "A bolt of lightning. Hits 3 harder on anything Wet." },
@@ -209,7 +209,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
   soul_drain: { id: "soul_drain", name: "Soul Drain", stat: "int_stat", rolls: 3, target: "enemy", damage: 11, drain: 0.34, blurb: "Takes some of their life for yours: heals you a third of the damage dealt. 2 turns to wait." },
   // Class abilities: chosen for a hero's slots from their class's pool (classabilities.ts), not given by a weapon.
   // Paladin. The two auras are conditions on the Paladin in a fight (zone/kit.ts AURAS).
-  beacon_aura: { id: "beacon_aura", name: "Beacon Aura", stat: "vit", rolls: 1, target: "self", blurb: "For 4 turns you shine: you light the dark around you, and you and allies within 2 hexes have advantage on your attacks." },
+  beacon_aura: { id: "beacon_aura", name: "Beacon Aura", stat: "vit", rolls: 1, target: "self", blurb: "For 4 turns you shine: you light the dark around you, and you and allies within 2 hexes get +2 to hit." },
   healing_aura: { id: "healing_aura", name: "Healing Aura", stat: "vit", rolls: 1, target: "self", blurb: "For 4 turns, at the start of each of your turns, you and every ally within 2 hexes heal a little." },
   branding_strike: { id: "branding_strike", name: "Branding Strike", stat: "str", rolls: 3, target: "enemy", damage: 11, targetEffect: { effect: "burning", turns: 2 }, blurb: "A searing blow that hits harder than most, and sets the target Burning." },
   soothing_rain: { id: "soothing_rain", name: "Soothing Rain", stat: "int_stat", rolls: 1, target: "ally", blurb: "A rain cloud over 3 hexes for 3 turns. It lays water under itself, and heals your side a little as it comes, as each of you starts a turn in it, and the first time on a turn each of you walks into it." },
