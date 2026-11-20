@@ -441,7 +441,7 @@ export function HudBar({ me, place, children, hp, meter, pips = [], chips, slots
           </button>
         )}
         {!rest && emote && (
-          <span className="hud-tab emote" style={tab("left", 1)} {...hover(4, <Tip name="Emotes" line="Wave, cheer, bow, dance or breakdance. It costs nothing and takes no turn." keys="G" />)}>
+          <span className="hud-tab emote" style={tab("left", 1)} {...hover(4, <Tip name="Emotes" line="Wave, cheer, bow, dance, do the running man or breakdance. It costs nothing and takes no turn." keys="G" />)}>
             {emote}
           </span>
         )}

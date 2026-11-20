@@ -3,7 +3,7 @@
 .emote-veil { position: fixed; inset: 0; z-index: 900; }
 .emote-wheel { position: absolute; width: 0; height: 0; }
 .emote-wheel::before {
-  content: ""; position: absolute; left: -116px; top: -116px; width: 232px; height: 232px; border-radius: 50%;
+  content: ""; position: absolute; left: -132px; top: -132px; width: 264px; height: 264px; border-radius: 50%;
   background: radial-gradient(circle, var(--panel-lo, #1e1610) 0 30%, rgba(23, 19, 16, 0.94) 31% 100%);
   border: 2px solid var(--brass-lo, #8a6a2a); box-shadow: 0 0 0 2px var(--out, #000), 0 6px 0 rgba(0, 0, 0, 0.35);
   pointer-events: none;
@@ -20,4 +20,4 @@
 .emote-slice.hot { border-color: var(--gold, #e3b757); background: var(--panel-lo, #1e1610); transform: translate(-50%, -50%) scale(1.12); }
 .emote-glyph { display: grid; place-items: center; height: 26px; color: var(--gold, #e3b757); }
 .emote-glyph .pixel-glyph { display: block; image-rendering: pixelated; }
-.emote-name { font-size: 11px; }
+.emote-name { font-size: 10px; white-space: nowrap; letter-spacing: -0.02em; }

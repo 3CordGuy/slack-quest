@@ -730,6 +730,7 @@ describe("emotes", () => {
     expect(emoteTyped("/wave")).toBe("wave");
     expect(emoteTyped("  /DANCE ")).toBe("dance");
     expect(emoteTyped("/breakdance")).toBe("breakdance");
+    expect(emoteTyped("/runningman")).toBe("runningman");
     expect(emoteTyped("/bow please")).toBeNull();
     expect(emoteTyped("wave")).toBeNull();
     expect(emoteTyped("/shrug")).toBeNull();
