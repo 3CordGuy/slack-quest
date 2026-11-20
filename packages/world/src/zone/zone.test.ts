@@ -4026,7 +4026,7 @@ describe("the Sage's stars", () => {
     const ap = state.encounter!.budgets.ann.ap;
     state = must(state, cast("constellation"));
     expect(state.encounter!.budgets.ann).toMatchObject({ ap: ap - BONUS_AP });
-    expect(unit(state, "ann").cooldowns.constellation).toBe(4);
+    expect(unit(state, "ann").cooldowns.constellation).toBe(3);
     for (const id of foes.slice(0, 3)) {
       expect(hurt(state, id)).toBeGreaterThan(0);
       expect(has(state, id, "guiding_light")).toBe(true);
@@ -5051,7 +5051,7 @@ describe("Sage weapons", () => {
     expect(tacticOf("st_elmos_fire").cooldown).toBe(3);
     expect(tacticOf("rust_armor").cooldown).toBe(2);
     expect(tacticOf("st_elmos_fire").cost).toBe(BONUS_AP);
-    expect(ABILITIES.starbeam.damage).toBe(12);
+    expect(abilityDiceFor(ABILITIES.starbeam)).toEqual({ n: 1, d: 6, plus: 3 });
     expect(ABILITIES.rust_armor.perfect).toEqual({ effect: "sundered", turns: 3 });
   });
 
