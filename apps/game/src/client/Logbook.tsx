@@ -100,6 +100,8 @@ export function Logbook({ me, refresh, onClose, onIsland = false }: Props) {
   const pool = poolFor(c.class_id);
   const equipped = classAbilitiesOf(c.class_id, c.level, slotted);
   const [pickSlot, setPickSlot] = useState<number | null>(null);
+  /** An empty slot is marked while there is an opened ability left to put in it. */
+  const slotOpen = abilitySlotOpen(c);
   const next = xpToNext(c.level);
 
   return (
@@ -209,7 +211,7 @@ export function Logbook({ me, refresh, onClose, onIsland = false }: Props) {
                       return (
                         <button key={slot} className={`ability-slot ${pickSlot === slot ? "on" : ""} ${idle ? "idle" : ""}`} disabled={onIsland || busy} aria-pressed={pickSlot === slot} onClick={() => setPickSlot(pickSlot === slot ? null : slot)}>
                           <span className="book-skill-n">{slot + 1}</span>
-                          <strong>{id ? label("ability", id) : "Empty"}</strong>
+                          {id ? <strong>{label("ability", id)}</strong> : <strong className="ability-empty">{onIsland ? "Empty" : "Empty - Click to pick an ability"}{slotOpen && <i className="news-diamond" aria-label="an ability to put here" />}</strong>}
                           {id && <small>{!idle ? blurb("ability", id) : entry ? `Opens at level ${entry.level}: does nothing until then.` : "No longer one of your class's abilities: does nothing."}</small>}
                         </button>
                       );
@@ -237,7 +239,7 @@ export function Logbook({ me, refresh, onClose, onIsland = false }: Props) {
         </section>
 
         <nav className="book-ribbons" aria-label="Pages">
-          {([["stats", "Stats", c.unspent_points > 0], ["traits", "Traits", waiting.length > 0], ["skills", "Skills", false]] as const).map(([id, name, news]) => (
+          {([["stats", "Stats", c.unspent_points > 0], ["traits", "Traits", waiting.length > 0], ["skills", "Skills", slotOpen]] as const).map(([id, name, news]) => (
             <button key={id} className={`ribbon ${id} ${page === id ? "on" : ""}`} aria-pressed={page === id} onClick={() => setPage(id)}>
               {name}{news && <i aria-label="something waiting" />}
             </button>
