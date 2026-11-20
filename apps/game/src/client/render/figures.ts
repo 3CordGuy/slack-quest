@@ -1955,14 +1955,29 @@ const DANCE = { over: 5, beat: 2.4, up: [[0, 0], [0.25, 1], [4.7, 1], [5, 0]] as
  */
 const BREAK = { over: 5, spin: [0.65, 4.35], turns: 6, down: [[0, 0], [0.55, 1], [4.45, 1], [5, 0]] as Keys, tuck: [[0, 0], [0.4, 0.4], [0.7, 1], [4.3, 1], [5, 0]] as Keys };
 /**
- * The running man: one knee lifted as the other foot slides back along the floor, then the other way round, `beat`
- * times a second each way, the elbows bent and the arms pumping down as each knee comes up, with a bounce.
+ * The running man: running on the spot. Each leg in turn has its knee driven up high, steps down well out in front,
+ * and is then dragged back along the floor to behind the body while the other knee comes up; the legs are half a
+ * step apart. `thigh` and `shin` are one leg's swing (forward is below 0) and knee bend, keyed to how far through its
+ * own step it is, 0 to 1; `push` is how far the arms are driven down, keyed the same way. `beat` is whole steps
+ * (both legs) a second.
  */
-const RUNNING = { over: 5, beat: 1.1, up: [[0, 0], [0.25, 1], [4.7, 1], [5, 0]] as Keys };
+const RUNNING = {
+  over: 5,
+  beat: 0.95,
+  up: [[0, 0], [0.3, 1], [4.7, 1], [5, 0]] as Keys,
+  thigh: [[0, 0.75], [0.22, -1.65], [0.36, -0.8], [1, 0.75]] as Keys,
+  shin: [[0, 0.35], [0.1, 1.5], [0.22, 2.1], [0.36, 0.05], [0.7, 0.1], [1, 0.35]] as Keys,
+  push: [[0, 0], [0.2, 1], [0.36, 0.15], [0.5, 0]] as Keys,
+};
 /** The point of the body a backspin turns about, in the figure's own frame (about the hips): where it lies when on its back. */
 const SPIN_AT = new THREE.Vector3(0, 6, 0);
 const spinning = { at: new THREE.Vector3(), q: new THREE.Quaternion(), up: new THREE.Vector3(0, 1, 0) };
-const EMOTE_OVER: Record<Emote, number> = { wave: WAVE.over, cheer: CHEER.over, bow: BOW.over, dance: DANCE.over, runningman: RUNNING.over, breakdance: BREAK.over };
+/**
+ * The dab: snapped into it and held a moment. The right arm flung straight up and out to the side, the left bent
+ * across below the chin with its elbow raised, and the head turned down toward the crook of it. `up` is how far into it.
+ */
+const DAB = { over: 1.6, up: [[0, 0], [0.16, 1], [1.3, 1], [1.6, 0]] as Keys };
+const EMOTE_OVER: Record<Emote, number> = { wave: WAVE.over, cheer: CHEER.over, bow: BOW.over, dab: DAB.over, dance: DANCE.over, runningman: RUNNING.over, breakdance: BREAK.over };
 /**
  * A jump from one tile to another. The figure only makes the shapes of it; whoever jumps it carries it through
  * the air (see WorldRenderer.leapUnit). A crouch with the arms drawn back (`coil`), and at `spring` the legs
@@ -2622,6 +2637,32 @@ function biped(top: THREE.Group, parts: Part[], elbow = ELBOW) {
       top.position.y += 0.9 * hop;
       return;
     }
+    if (act.kind === "dab") {
+      const up = along(DAB.up, t);
+      bow(0.18 * up, 0.25 * up);
+      // The right arm straight up and out, reaching well past where it can go so it is held straight.
+      sweep.grip.copy(armR.joint.position).add(sweep.side.set(-8, 6, 2.5));
+      sweep.lead.set(0, -1, -0.3);
+      reach(armR.joint, foreR.joint, -elbow, elbow - fist, sweep.grip, sweep.lead, up);
+      // The left fist across before the chin to the far side, below the brim (the head is too big for an arm across
+      // the face), the elbow up and out.
+      sweep.grip.set(-2.6, 5.4, 4);
+      sweep.lead.set(1, 0.7, 0);
+      reach(armL.joint, foreL.joint, -elbow, elbow - fist, sweep.grip, sweep.lead, up);
+      // The head tipped a little down and turned toward the crook of the left arm, not into it.
+      head.joint.rotation.x += 0.15 * up;
+      head.joint.rotation.y += 0.35 * up;
+      head.joint.rotation.z -= 0.12 * up;
+      // What the flung hand holds points straight on out along the arm's line, past the fist (the line from the
+      // shoulder to where the arm reaches); what the other holds stays upright.
+      sweep.dir.set(-8, 6, 2.5).normalize();
+      sweep.want.setFromUnitVectors(scratch.up, sweep.dir);
+      sweep.hold.copy(armR.joint.quaternion).multiply(foreR.joint.quaternion).invert().multiply(sweep.want);
+      heldR.joint.quaternion.slerp(sweep.hold, up);
+      sweep.hold.copy(armL.joint.quaternion).multiply(foreL.joint.quaternion).invert();
+      heldL.joint.quaternion.slerp(sweep.hold, up);
+      return;
+    }
     if (act.kind === "bow") {
       // The right hand to the chest, the left swept back, and a bend at the waist with the head down.
       const down = along(BOW.down, t);
@@ -2659,26 +2700,35 @@ function biped(top: THREE.Group, parts: Part[], elbow = ELBOW) {
       return;
     }
     if (act.kind === "runningman") {
-      // Each leg in turn: its knee lifted high while the other, planted, slides from ahead of the body to behind it.
       const up = along(RUNNING.up, t);
-      const ph = t * RUNNING.beat * Math.PI * 2;
-      const s = Math.sin(ph);
-      const c = Math.cos(ph);
-      const liftL = Math.max(0, s) * up;
-      const liftR = Math.max(0, -s) * up;
-      thighL.joint.rotation.x -= 1.7 * liftL - 0.6 * c * up * (1 - Math.max(0, s));
-      shinL.joint.rotation.x += 2.1 * liftL;
-      thighR.joint.rotation.x -= 1.7 * liftR + 0.6 * c * up * (1 - Math.max(0, -s));
-      shinR.joint.rotation.x += 2.1 * liftR;
-      // A bounce on each step, leant a little back.
-      top.position.y += 0.35 * Math.abs(s) * up;
-      bow(-0.08 * up, 0);
-      // Elbows bent, the arms pumped down as each knee comes up.
-      armL.joint.rotation.x -= (0.35 + 0.45 * s) * up;
-      armR.joint.rotation.x -= (0.35 - 0.45 * s) * up;
-      foreL.joint.rotation.x -= 1.45 * up;
-      foreR.joint.rotation.x -= 1.45 * up;
-      // Whatever is held stays upright, not swung round with the pumping arm.
+      const step = t * RUNNING.beat;
+      const legs = [
+        { thigh: thighL, shin: shinL, foot: footL, u: step % 1 },
+        { thigh: thighR, shin: shinR, foot: footR, u: (step + 0.5) % 1 },
+      ];
+      // How far each foot reaches below the hips; the hips come down to whichever is planted (the longer), so a foot
+      // stays on the floor however the legs are split.
+      let reachDown = 0;
+      let push = 0;
+      for (const leg of legs) {
+        const a = along(RUNNING.thigh, leg.u) * up;
+        const b = along(RUNNING.shin, leg.u) * up;
+        leg.thigh.joint.rotation.x += a;
+        leg.shin.joint.rotation.x += b;
+        // The foot kept flat to the floor.
+        leg.foot.joint.rotation.x -= a + b;
+        reachDown = Math.max(reachDown, shank * (Math.cos(a) + Math.cos(a + b)));
+        push = Math.max(push, along(RUNNING.push, leg.u));
+      }
+      top.position.y -= (2 * shank - reachDown);
+      bow(-0.06 * up, 0);
+      // Both arms driven down together as each knee comes up, elbows bent and fists ahead, then brought back up.
+      push *= up;
+      for (const [arm, fore] of [[armL, foreL], [armR, foreR]] as const) {
+        arm.joint.rotation.x -= (1.0 - 0.75 * push) * up;
+        fore.joint.rotation.x -= (1.5 - 0.6 * push) * up;
+      }
+      // Whatever is held stays upright, not swung round with the pumping arms.
       for (const [arm, fore, held] of [[armL, foreL, heldL], [armR, foreR, heldR]] as const) {
         sweep.hold.copy(arm.joint.quaternion).multiply(fore.joint.quaternion).invert();
         held.joint.quaternion.slerp(sweep.hold, up);
