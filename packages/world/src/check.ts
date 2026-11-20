@@ -1,6 +1,7 @@
-// The one roll mechanic. A check is N independent rolls against a
-// percentage derived from one stat. Weapon attacks, persuasion, movement and
-// overworld actions all resolve through rollCheck.
+// The roll behind gathering. A check is N independent rolls against a
+// percentage derived from one stat: a cast on a fishing outing (gather.ts)
+// and the logs a felled tree gives (felling.ts) resolve through rollCheck. A
+// fight on the tiles rolls its own dice (zone/rules.ts).
 
 import type { StatKey } from "@gantt-quest/core";
 import type { Rng } from "./rng";

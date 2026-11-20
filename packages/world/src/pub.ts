@@ -5,9 +5,8 @@
 // PubRoom Durable Object checks each request against what is here: the room,
 // the fittings that are walked around, and the menu.
 //
-// Food and drink are small one-voyage boosts. A hero carries at most one
-// drink and one meal; ordering another of the same kind replaces it. They are
-// used up when that hero's next voyage begins.
+// The menu is meals. A meal gives back one of the day's gathering outings,
+// once a day (the server's orderAtPub); nothing is carried away from the bar.
 
 import type { HexGrid, HexPos } from "@gantt-quest/core";
 import type { CrewRequest, CrewView } from "./crew";
@@ -15,7 +14,7 @@ import type { DiceRequest, DiceView } from "./dice";
 import type { ShoalsRequest, ShoalsView } from "./shoals";
 import type { TideRequest, TideView } from "./tide";
 import { harborPoi, type HarborPlayer, type LookMessage, type LookRequest, type XpMessage } from "./harbor";
-import { SEATS, type Perk } from "./hut";
+import { SEATS } from "./hut";
 import { HEX_DIRS, buildRoom, hutPath, wallFaces } from "./hutroom";
 import type { WorldMap } from "./map";
 
@@ -43,13 +42,13 @@ export const PUB_SALESMAN_POS: HexPos = at(10, 4);
 /** Where a customer stands to trade with the salesman. */
 export const PUB_TRADER: HexPos = at(9, 4);
 /**
- * The contract dealer: the crew's goal for the week and the contracts a hero
- * takes aboard a ship (see contracts.ts). They lean on the pillar at the end
- * of the bar (the "pillar" fitting); a customer walks up to the hex in front.
+ * The dealer: he has word of the regulars' errands (see regulars.ts). They
+ * lean on the pillar at the end of the bar (the "pillar" fitting); a customer
+ * walks up to the hex in front.
  */
-export const PUB_DEALER = { id: "dealer", name: "Hollis Crane", short: "Hollis", trade: "the contract dealer", look: "dealer", hello: "Work for the brave, pay for the lucky." } as const;
+export const PUB_DEALER = { id: "dealer", name: "Hollis Crane", short: "Hollis", trade: "the errand broker", look: "dealer", hello: "Work for the brave, pay for the lucky." } as const;
 export const PUB_DEALER_POS: HexPos = at(6, 2);
-/** Where a customer stands to deal with the contract dealer. */
+/** Where a customer stands to deal with the dealer. */
 export const PUB_DEALER_STAND: HexPos = at(6, 3);
 /**
  * Where the day's regulars (see regulars.ts) stand, in the order they take
@@ -101,7 +100,7 @@ export const PUB_FITTINGS: PubFitting[] = [
   fit(14, "chair", 8, 6, 1),
   // The salesmen's sea chest, beside the corner they take.
   fit(15, "chest", 10, 6, 5),
-  // A timber pillar at the end of the bar, holding up the roof, with contracts pinned to it. The contract dealer leans on it.
+  // A timber pillar at the end of the bar, holding up the roof, with notices pinned to it. The dealer leans on it.
   fit(16, "pillar", 5, 2),
 ];
 
@@ -121,59 +120,20 @@ export function pubPath(room: WorldMap, from: HexPos, to: HexPos, taken: HexPos[
 
 // ---------- the menu ----------
 
-export type PubKind = "drink" | "food";
-
+/** A meal on the board. Every one does the same for whoever eats it; they differ in name and price. */
 export interface PubItem {
   id: string;
   name: string;
-  kind: PubKind;
   price: number;
   blurb: string;
-  /** What it adds on the next voyage. */
-  buff: Perk;
 }
 
 export const PUB_MENU: PubItem[] = [
-  { id: "ale", name: "Harbor Ale", kind: "drink", price: 8, blurb: "Flat, warm and dependable.", buff: { maxHp: 2 } },
-  { id: "rum", name: "Spiced Rum", kind: "drink", price: 14, blurb: "Clears the head, briefly.", buff: { focus: 1 } },
-  { id: "stew", name: "Fish Stew", kind: "food", price: 12, blurb: "Mostly fish.", buff: { maxHp: 4 } },
-  { id: "pie", name: "Sailor's Pie", kind: "food", price: 18, blurb: "Eaten slowly, with stories.", buff: { xpPct: 5 } },
+  { id: "stew", name: "Fish Stew", price: 12, blurb: "Mostly fish." },
+  { id: "pie", name: "Sailor's Pie", price: 18, blurb: "Eaten slowly, with stories." },
 ];
 
 export const pubItem = (id: string): PubItem | undefined => PUB_MENU.find((i) => i.id === id);
-
-/**
- * What a hero's food and drink add up to. At most one of each kind counts,
- * whatever is passed in, so the most a pub can give is one drink plus one meal.
- */
-export function pubBuff(itemIds: readonly string[]): Required<Perk> {
-  const total: Required<Perk> = { focus: 0, potions: 0, maxHp: 0, xpPct: 0 };
-  const had = new Set<PubKind>();
-  for (const id of itemIds) {
-    const item = pubItem(id);
-    if (!item || had.has(item.kind)) continue;
-    had.add(item.kind);
-    for (const key of Object.keys(total) as (keyof Perk)[]) total[key] += item.buff[key] ?? 0;
-  }
-  return total;
-}
-
-/** The most any pub order can give, used to bound whatever a caller sends. */
-export const PUB_BUFF_CAPS: Required<Perk> = (() => {
-  const cap: Required<Perk> = { focus: 0, potions: 0, maxHp: 0, xpPct: 0 };
-  for (const kind of ["drink", "food"] as PubKind[]) {
-    for (const key of Object.keys(cap) as (keyof Perk)[]) {
-      cap[key] += Math.max(0, ...PUB_MENU.filter((i) => i.kind === kind).map((i) => i.buff[key] ?? 0));
-    }
-  }
-  return cap;
-})();
-
-export function capPubBuff(buff: Perk | undefined): Required<Perk> {
-  const out: Required<Perk> = { focus: 0, potions: 0, maxHp: 0, xpPct: 0 };
-  for (const key of Object.keys(out) as (keyof Perk)[]) out[key] = Math.max(0, Math.min(PUB_BUFF_CAPS[key], Math.floor(buff?.[key] ?? 0)));
-  return out;
-}
 
 /** Longest thing a customer may say to the barkeep. */
 export const PUB_MAX_TALK = 200;

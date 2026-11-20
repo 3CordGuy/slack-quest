@@ -1,5 +1,4 @@
 node_modules
-lib/icons
 .wrangler
 .dev.vars
 .env
@@ -8,7 +7,9 @@ dist
 *.log
 .DS_Store
 .claude/
-# Local-only assets uploaded to R2 (R2 is the source of truth, no need to commit binaries).
-assets/
-# .dev.vars holds actual secrets (tokens, keys) — keep ignored.
-# wrangler.jsonc only has resource names/IDs (not credentials) so it's committed.
+# .dev.vars holds actual secrets (tokens, keys): keep ignored.
+# What is left on disk of the original Gantt Quest after its code was removed (local databases, R2 assets).
+/apps/web/
+/apps/slack/
+/packages/db/
+/public/

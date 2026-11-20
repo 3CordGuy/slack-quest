@@ -1,5 +1,5 @@
 // Whether the camera keeps your own hero centred as they walk. One setting
-// for every view (the Harbor, huts, the pub, voyages), remembered on this
+// for every view (the Harbor, huts, the pub, maps), remembered on this
 // device. On unless the player has turned it off.
 
 const KEY = "gq.camera.follow";

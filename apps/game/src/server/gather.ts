@@ -243,9 +243,9 @@ function timed(state: GatherState, choice: GatherChoice, now: number): GatherCho
 
 /** Apply one choice to the outing in progress. A finished outing is paid and cleared in the same batch. */
 export async function stepOuting(db: D1Database, playerId: string, choice: unknown): Promise<(GatherStatus & { paid?: Resources; xp?: XpResult; sitting?: SittingPaid }) | string> {
-  const stats = await gatherStats(db, playerId);
+  // Neither read needs the other's answer, so they are asked for together.
+  const [stats, row] = await Promise.all([gatherStats(db, playerId), readRow(db, playerId)]);
   if (!stats) return "Create a character first.";
-  const row = await readRow(db, playerId);
   if (!row?.session_json) return "You are not out gathering.";
   const idle = await settleIdle(db, playerId, row);
   if (idle) return { ...(await status(db, playerId, stats, idle.ended)), paid: idle.paid.paid, xp: idle.paid.xp, sitting: idle.paid };

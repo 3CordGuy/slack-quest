@@ -2,46 +2,25 @@
 // asked for (the walk it made, or that it made none), and the client holds each answer against what it showed.
 
 import { beforeEach, describe, expect, it } from "vitest";
-import { HARBOR_SPAWN, generateHarbor, harborPath, type HarborPlayer, type HarborServerMessage } from "@gantt-quest/world";
+import { HARBOR_SPAWN, generateHarbor, harborPath } from "@gantt-quest/world";
 import { answeredWalk } from "../src/client/harborAhead";
-
-(globalThis as Record<string, unknown>).WebSocketRequestResponsePair = class {
-  constructor(
-    public request: string,
-    public response: string,
-  ) {}
-};
+import { HarborSocket } from "./rooms";
 
 const { HarborRoom } = await import("../src/server/harbor-room");
-
-class FakeSocket {
-  sent: HarborServerMessage[] = [];
-  constructor(private attachment: HarborPlayer | null) {}
-  deserializeAttachment() {
-    return this.attachment;
-  }
-  serializeAttachment(next: HarborPlayer | null) {
-    this.attachment = next;
-  }
-  send(data: string) {
-    this.sent.push(JSON.parse(data));
-  }
-  close() {}
-}
 
 const MAP = generateHarbor();
 // Three hexes east along the High Street: always open ground.
 const along = { q: HARBOR_SPAWN.q + 3, r: HARBOR_SPAWN.r };
 
 describe("HarborRoom walks", () => {
-  let mine: FakeSocket;
-  let theirs: FakeSocket;
+  let mine: HarborSocket;
+  let theirs: HarborSocket;
   let room: InstanceType<typeof HarborRoom>;
-  const move = (ws: FakeSocket, to: unknown) => room.webSocketMessage(ws as unknown as WebSocket, JSON.stringify({ type: "move", to }));
+  const move = (ws: HarborSocket, to: unknown) => room.webSocketMessage(ws as unknown as WebSocket, JSON.stringify({ type: "move", to }));
 
   beforeEach(() => {
-    mine = new FakeSocket({ id: "me", name: "me", classId: "fighter", level: 1, pos: HARBOR_SPAWN });
-    theirs = new FakeSocket({ id: "them", name: "them", classId: "fighter", level: 1, pos: along });
+    mine = new HarborSocket({ id: "me", name: "me", classId: "fighter", level: 1, pos: HARBOR_SPAWN });
+    theirs = new HarborSocket({ id: "them", name: "them", classId: "fighter", level: 1, pos: along });
     const sockets = [mine, theirs];
     const ctx = { setWebSocketAutoResponse() {}, getWebSockets: () => sockets };
     room = new HarborRoom(ctx as never, {} as never);

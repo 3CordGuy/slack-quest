@@ -123,6 +123,11 @@ export interface Overlay {
 /** A signature no list of marks has: set after the map changes, so the next list is drawn whatever it is. */
 const STALE = "\u0000stale";
 const SQRT3 = Math.sqrt(3);
+/** What tickSky works in each frame, and how a streak of wind is tipped: made once, not every frame. */
+const SKY_M = new THREE.Matrix4();
+const SKY_AT = new THREE.Vector3();
+const SKY_SIZE = new THREE.Vector3();
+const WIND_TILT = new THREE.Quaternion().setFromEuler(new THREE.Euler(-0.35, 0, 0));
 /** Corner `i` of a hex of this size around the origin (pointy end up the map). */
 const corner = (i: number, size: number): [number, number] => [Math.sin((i * Math.PI) / 3) * size, Math.cos((i * Math.PI) / 3) * size];
 
@@ -162,6 +167,14 @@ export class TacticsLayer {
   private winds: THREE.InstancedMesh[] = [];
   /** Each rain cloud over the ground, its drops, and when it was first drawn (it grows in from nothing). */
   private clouds: { cloud: THREE.Group; drops: THREE.InstancedMesh; base: Float32Array; floor: Float32Array; born: number; veil: { material: THREE.Material; full: number }[] }[] = [];
+  /**
+   * Materials kept from one drawing to the next, so their shaders are compiled once and not again each time the
+   * ground or the marks change: the moving sheet of each kind of surface, and the marks' fills and outlines by
+   * colour and solidity (none is changed once made, so marks alike share one). `clear` leaves them be; freed in dispose.
+   */
+  private sheets = new Map<SurfaceKind, THREE.ShaderMaterial>();
+  private inks = new Map<string, THREE.Material>();
+  private kept = new Set<THREE.Material>();
 
   constructor(private renderer: WorldRenderer) {
     this.group.add(this.ground, this.sky, this.overlays, this.charts, this.path);
@@ -201,7 +214,22 @@ export class TacticsLayer {
     this.clear(this.charts);
     this.setArc(null);
     this.setTurnMarkers([]);
+    for (const m of this.kept) m.dispose();
+    this.kept.clear();
+    this.sheets.clear();
+    this.inks.clear();
     this.renderer.removeObject(this.group);
+  }
+
+  /** The material kept under `key` in `store`, made the first time it is asked for. */
+  private keep<K, M extends THREE.Material>(store: Map<K, M>, key: K, make: () => M): M {
+    let m = store.get(key);
+    if (!m) {
+      m = make();
+      store.set(key, m);
+      this.kept.add(m);
+    }
+    return m;
   }
 
   setMap(map: WorldMap) {
@@ -219,7 +247,7 @@ export class TacticsLayer {
       if (o instanceof THREE.Sprite) return o.material.dispose();
       if (o === group || !(o instanceof THREE.Mesh || o instanceof THREE.Line || o instanceof THREE.Points)) return;
       o.geometry.dispose();
-      for (const m of Array.isArray(o.material) ? o.material : [o.material]) m.dispose();
+      for (const m of Array.isArray(o.material) ? o.material : [o.material]) if (!this.kept.has(m)) m.dispose();
     });
     group.clear();
   }
@@ -277,15 +305,18 @@ export class TacticsLayer {
     list.forEach((o, i) => {
       if (o.hexes.length === 0) return;
       if (o.fill) {
-        const mesh = new THREE.Mesh(this.fill(o.hexes, 0.05 + i * 0.004, 0.94), new THREE.MeshBasicMaterial({ color: o.color, transparent: true, opacity: o.fill, depthWrite: false, side: THREE.DoubleSide }));
+        const { color, fill } = o;
+        const material = this.keep(this.inks, `fill|${color}|${fill}`, () => new THREE.MeshBasicMaterial({ color, transparent: true, opacity: fill, depthWrite: false, side: THREE.DoubleSide }));
+        const mesh = new THREE.Mesh(this.fill(o.hexes, 0.05 + i * 0.004, 0.94), material);
         mesh.renderOrder = 2;
         this.overlays.add(mesh);
       }
       if (o.line) {
+        const { color, line } = o;
         // Each edge of the outline is its own segment, a hex side long: dashes measured along it start afresh at each corner.
         const material = o.dashed
-          ? new THREE.LineDashedMaterial({ color: o.color, transparent: true, opacity: o.line, depthTest: false, dashSize: 0.22, gapSize: 0.16 })
-          : new THREE.LineBasicMaterial({ color: o.color, transparent: true, opacity: o.line, depthTest: false });
+          ? this.keep(this.inks, `dashed|${color}|${line}`, () => new THREE.LineDashedMaterial({ color, transparent: true, opacity: line, depthTest: false, dashSize: 0.22, gapSize: 0.16 }))
+          : this.keep(this.inks, `line|${color}|${line}`, () => new THREE.LineBasicMaterial({ color, transparent: true, opacity: line, depthTest: false }));
         const lines = new THREE.LineSegments(this.outline(o.hexes, 0.07 + i * 0.004), material);
         if (o.dashed) lines.computeLineDistances();
         lines.renderOrder = 3;
@@ -440,12 +471,12 @@ export class TacticsLayer {
       let material: THREE.Material;
       if (kind === "oil" || kind === "slime") {
         // Goo: a gloss that rolls and gleams.
-        const goo = gooMaterial(kind, SURFACE_INFO[kind].color);
+        const goo = this.keep(this.sheets, kind, () => gooMaterial(kind, SURFACE_INFO[kind].color));
         this.goo.push(goo);
         material = goo;
       } else if (kind === "poison") {
         // Poison: churning, bubbling and fuming (groundFx.ts).
-        const poison = poisonMaterial(SURFACE_INFO.poison.color);
+        const poison = this.keep(this.sheets, kind, () => poisonMaterial(SURFACE_INFO.poison.color));
         this.goo.push(poison);
         material = poison;
         const fumes = poisonFumes(hexes, (p) => ({ ...hexToWorld(p), y: this.top(p) }), SURFACE_INFO.poison.color);
@@ -453,7 +484,7 @@ export class TacticsLayer {
         this.fumes.push(fumes);
       } else if (kind === "water") {
         // Water: wet, rippling, catching the sky (groundFx.ts).
-        const water = waterMaterial(SURFACE_INFO.water.color);
+        const water = this.keep(this.sheets, kind, () => waterMaterial(SURFACE_INFO.water.color));
         this.goo.push(water);
         material = water;
       } else {
@@ -712,7 +743,7 @@ export class TacticsLayer {
 
   /** Rain clouds grow in and bob, and their rain falls and starts again at the top; wind blows its motes along and round again. */
   private tickSky(clock: number) {
-    const m = new THREE.Matrix4();
+    const m = SKY_M;
     for (const c of this.clouds) {
       if (c.born < 0) c.born = clock;
       // Growing in from nothing as the rain begins, then bobbing, each puff swelling and settling on its own.
@@ -737,13 +768,16 @@ export class TacticsLayer {
       c.drops.instanceMatrix.needsUpdate = true;
     }
     // Each streak runs along the wind over its hex, swelling in and thinning away, and round again.
-    const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(-0.35, 0, 0));
-    const at = new THREE.Vector3();
-    const size = new THREE.Vector3();
+    const q = WIND_TILT;
+    const at = SKY_AT;
+    const size = SKY_SIZE;
     for (const mesh of this.winds) {
       const base = mesh.userData.wind as number[];
       for (let i = 0; i < mesh.count; i++) {
-        const [x, y, z, phase] = base.slice(i * 4, i * 4 + 4);
+        const x = base[i * 4];
+        const y = base[i * 4 + 1];
+        const z = base[i * 4 + 2];
+        const phase = base[i * 4 + 3];
         const t = (clock * 0.7 + phase) % 1;
         const swell = Math.sin(Math.PI * t);
         at.set(x - 0.6 + 1.2 * t, y + Math.sin(clock * 2 + phase * 9) * 0.05, z);

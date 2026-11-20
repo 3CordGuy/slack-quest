@@ -58,7 +58,8 @@ import {
 } from "@gantt-quest/world";
 import type { Env } from "./db";
 import { prepareXp, relayXp, xpMessage, xpOutcome } from "./harbor-xp";
-import { scoreStatements } from "./pub-scores";
+import { scoreStatements, type PubGame } from "./pub-scores";
+import { attended, sendTo } from "./walk-room";
 
 /** What every table game's state has in common. */
 interface StakeGame {
@@ -73,8 +74,8 @@ type Outcome<G> = { ok: true; state: G } | { ok: false; error: string };
 
 /** One game, as the table needs to know it. */
 interface Rules<G extends StakeGame, R extends { type: string }> {
-  /** Storage key, and the `type` of the messages that carry the table to clients. */
-  name: "dice" | "shoals" | "crew" | "tide";
+  /** Storage key, and the `type` of the messages that reach the table and that carry it to clients. */
+  name: PubGame;
   /** Where a player stands to be at this table. */
   spot: HexPos;
   maxPlayers: number;
@@ -190,7 +191,34 @@ export const TIDE_RULES: Rules<TideGame, TideRequest> = {
   isOut: (game, seatId) => !!game.seats.find((s) => s.id === seatId)?.forfeited,
 };
 
-export class StakeTable<G extends StakeGame, R extends { type: string }> {
+/**
+ * A table as the pub's room drives it, whatever game is played at it. What `handle` is given is whatever a
+ * client sent under the game's name: anything that is not one of the game's requests is dropped there.
+ */
+export interface PubTable {
+  /** The game: the `type` of the messages that reach this table and that carry it to clients. */
+  readonly name: PubGame;
+  handle(ws: WebSocket, player: HarborPlayer, request: unknown): Promise<void>;
+  reconcile(gone?: WebSocket): Promise<void>;
+  welcome(ws: WebSocket, player: HarborPlayer): Promise<void>;
+}
+
+/**
+ * The pub's tables by the name of their game, in the order they are welcomed and reconciled (each sends
+ * messages as it is, so the order is part of what a client sees). A new table game is its rules above and one
+ * line here, with its messages in packages/world/src/pub.ts.
+ */
+export function pubTables(ctx: DurableObjectState, env: Env, crewId: () => string | null): Map<PubGame, PubTable> {
+  const tables: PubTable[] = [
+    new StakeTable(ctx, env, DICE_RULES, crewId),
+    new StakeTable(ctx, env, SHOALS_RULES, crewId),
+    new StakeTable(ctx, env, CREW_RULES, crewId),
+    new StakeTable(ctx, env, TIDE_RULES, crewId),
+  ];
+  return new Map(tables.map((table): [PubGame, PubTable] => [table.name, table]));
+}
+
+export class StakeTable<G extends StakeGame, R extends { type: string }> implements PubTable {
   /** undefined: not read from storage yet. null: no table. */
   private game: G | null | undefined;
   /** D1 calls let other messages in, so everything that touches the table runs one at a time. */
@@ -203,6 +231,10 @@ export class StakeTable<G extends StakeGame, R extends { type: string }> {
     /** The crew whose pub this is, for the leaderboard; null until someone has come in since it was recorded. */
     private crewId: () => string | null = () => null,
   ) {}
+
+  get name(): PubGame {
+    return this.rules.name;
+  }
 
   private locked<T>(fn: () => Promise<T>): Promise<T> {
     const run = this.queue.then(fn, fn);
@@ -221,32 +253,18 @@ export class StakeTable<G extends StakeGame, R extends { type: string }> {
     else await this.ctx.storage.delete(this.rules.name);
   }
 
-  private send(ws: WebSocket, message: object) {
-    try {
-      ws.send(JSON.stringify(message));
-    } catch {
-      // Socket is closing.
-    }
-  }
-
   private at(player: HarborPlayer): boolean {
     return player.pos.q === this.rules.spot.q && player.pos.r === this.rules.spot.r;
   }
 
   /** Everyone connected, and whether they are standing at the table. */
   private sockets(except?: WebSocket): { ws: WebSocket; player: HarborPlayer; atTable: boolean }[] {
-    const out = [];
-    for (const ws of this.ctx.getWebSockets()) {
-      if (ws === except) continue;
-      const player = ws.deserializeAttachment() as HarborPlayer | null;
-      if (player) out.push({ ws, player, atTable: this.at(player) });
-    }
-    return out;
+    return attended(this.ctx, except).map((here) => ({ ...here, atTable: this.at(here.player) }));
   }
 
   /** Tell everyone in the pub what they may see of the table. */
   private publish(game: G | null, except?: WebSocket) {
-    for (const { ws, player } of this.sockets(except)) this.send(ws, { type: this.rules.name, table: game && this.rules.view(game, player.id) });
+    for (const { ws, player } of this.sockets(except)) sendTo(ws, { type: this.rules.name, table: game && this.rules.view(game, player.id) });
   }
 
   private async gold(playerId: string): Promise<number> {
@@ -303,7 +321,7 @@ export class StakeTable<G extends StakeGame, R extends { type: string }> {
   }
 
   private publishRaw(message: object) {
-    for (const { ws } of this.sockets()) this.send(ws, message);
+    for (const { ws } of this.sockets()) sendTo(ws, message);
   }
 
   /**
@@ -341,7 +359,7 @@ export class StakeTable<G extends StakeGame, R extends { type: string }> {
       const error = await this.request((ws.deserializeAttachment() as HarborPlayer | null) ?? player, request);
       this.publish(await this.load());
       // After the table, which clears any earlier refusal on the client.
-      if (error) this.send(ws, { type: `${this.rules.name}Error`, text: error });
+      if (error) sendTo(ws, { type: `${this.rules.name}Error`, text: error });
     });
   }
 
@@ -390,7 +408,7 @@ export class StakeTable<G extends StakeGame, R extends { type: string }> {
     await this.reconcile();
     await this.locked(async () => {
       const game = await this.load();
-      this.send(ws, { type: this.rules.name, table: game && this.rules.view(game, player.id) });
+      sendTo(ws, { type: this.rules.name, table: game && this.rules.view(game, player.id) });
     });
   }
 }

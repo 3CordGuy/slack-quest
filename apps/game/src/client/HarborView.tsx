@@ -1,16 +1,17 @@
 // The crew's shared Harbor: a walkable place where everyone present sees
-// each other. Ships are moored and boarded at the docks, each member has a
-// hut, and the notice board carries the news of each release of the game (with
+// each other. Each member has a hut, the waygate opens onto the crew's atlas,
+// and the notice board carries the news of each release of the game (with
 // a bouncing "!" over it until you have read the newest).
 
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useAudioScene } from "./audio/useAudioScene";
 import type { HexPos } from "@gantt-quest/core";
-import { GATHER_SPOTS, GATHER_SPOT_IDS, HARBOR_APOTHECARY, HARBOR_LAPIDARY, HARBOR_BOARD, HARBOR_BUILDINGS, footing, HARBOR_CAVE, HARBOR_WAYGATE, HARBOR_CHEST, HARBOR_GALLEY, HARBOR_LIGHTHOUSE, HARBOR_SMITHY, HARBOR_GATHER, HARBOR_NAME, HARBOR_PIERS, HARBOR_PLOTS, HARBOR_PLOT_FACING, HARBOR_PUB, HARBOR_RING, HARBOR_SHOP, HARBOR_SPAWN, HARBOR_WORKS, MAX_PARTY, PLOT_PRICE, RESOURCE_KINDS, SHACK_COST, binFill, binNeeds, builtProjects, BOOK_TITLE, fishSpotAt, harborDoor, seaEdge, tileAt, waterSpotAt, type FishSpot, FISH_SPOTS, generateHarbor, projectById, projectProgress, harborPoi, hutTier, poiAt, salesman, type GatherSpot, type HarborShip, type Resources } from "@gantt-quest/world";
+import { GATHER_SPOTS, GATHER_SPOT_IDS, HARBOR_APOTHECARY, HARBOR_LAPIDARY, HARBOR_BOARD, HARBOR_BUILDINGS, footing, HARBOR_CAVE, HARBOR_WAYGATE, HARBOR_CHEST, HARBOR_GALLEY, HARBOR_LIGHTHOUSE, HARBOR_SMITHY, HARBOR_GATHER, HARBOR_NAME, HARBOR_PLOTS, HARBOR_PLOT_FACING, HARBOR_PUB, HARBOR_RING, HARBOR_SHOP, HARBOR_SPAWN, HARBOR_WORKS, PLOT_PRICE, RESOURCE_KINDS, SHACK_COST, binFill, binNeeds, builtProjects, BOOK_TITLE, fishSpotAt, harborDoor, seaEdge, tileAt, waterSpotAt, type FishSpot, FISH_SPOTS, generateHarbor, projectById, projectProgress, harborPoi, hutTier, poiAt, salesman, type GatherSpot, type Resources } from "@gantt-quest/world";
 import type { Poi } from "@gantt-quest/world";
 import { MusterPanel, useMuster } from "./atlas/Muster";
 import { api, type Me } from "./api";
 import { CatchPanel } from "./CatchPanel";
+import { ChatInput } from "./ChatInput";
 import { AccountPanel } from "./Account";
 import { CrewRoster, type RosterMember } from "./CrewRoster";
 import { NoticeBoard } from "./board/NoticeBoard";
@@ -76,11 +77,10 @@ function placeUnder(pois: Poi[], at: HexPos, model?: string | null): Poi | undef
 
 /**
  * Every place in the Harbor is a structure to be used (it lights up under the pointer, and a click on it walks the
- * hero to its door and, see `goIn`, in) but these: the rocks and the wreck, which are scenery; a moored ship, laid
- * up; and a plot for sale or being built on, which lights up only for whoever has something to do there (see
+ * hero to its door and, see `goIn`, in) but these: the rocks and the wreck, which are scenery; and a plot for sale or being built on, which lights up only for whoever has something to do there (see
  * `lights`, in the view). A new kind of place lights up without being added anywhere.
  */
-const NO_STRUCTURE = new Set<Poi["kind"]>(["rocks", "wreck", "pier", "lot", "site"]);
+const NO_STRUCTURE = new Set<Poi["kind"]>(["rocks", "wreck", "lot", "site"]);
 
 /**
  * The place a hero stands at and what there is to do there: `run` is its main button, in the bar along the
@@ -107,8 +107,15 @@ interface Here {
 /** What walking up to a place by clicking it does on arriving, if anything: its way in. The one rule for every place. */
 const goIn = (here: Here | null): (() => void) | null => (!here || here.closed || here.quiet ? null : here.enter ?? (here.press ? null : here.run));
 
-export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown> }) {
-  useAudioScene("harbor");
+/**
+ * `resting`: the player is somewhere else (inside one of the Harbor's buildings, out on a map, at the atlas), and
+ * the Harbor is kept behind it, built but put away: not drawn, not connected, none of its panels up. Coming back
+ * to it is then at once.
+ */
+export function HarborView({ me, refresh, resting = false }: { me: Me; refresh(): Promise<unknown>; resting?: boolean }) {
+  useAudioScene("harbor", !resting);
+  /** Whether the Harbor was made put away (the game was opened somewhere else: on a map, in a building). */
+  const born = useRef(resting);
   const mount = useRef<HTMLDivElement>(null);
   const renderer = useRef<WorldRenderer | null>(null);
   const [hover, setHover] = useState<HexPos | null>(null);
@@ -131,13 +138,13 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
   const [account, setAccount] = useState(false);
   const [tradeWith, setTradeWith] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
-  const [text, setText] = useState("");
   const chatEnd = useRef<HTMLDivElement>(null);
 
   const harbor = useHarbor(
     (id, path) => renderer.current?.playEvents([{ t: "moved", heroId: id, path }]),
     (m) => renderer.current?.playEvents(xpEvents(m)),
     (id, text) => renderer.current?.say(id, text),
+    !resting,
   );
   // The crew's muster, told down the Harbor's socket: whoever says they are ready is taken to the map when it starts.
   const muster = useMuster(harbor.you ?? me.player.id, { pushed: harbor.muster, onStart: () => void refresh() });
@@ -170,7 +177,6 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
     return { id: m.id, name: m.name, classId: m.classId, level: p?.level ?? m.level, here: !!p && !m.zone, outfit: p?.outfit, tags: m.zone ? [m.zone.fighting ? "in a fight" : "on a map"] : undefined };
   }), [board.members, players]);
   const hereCount = roster.filter((m) => m.here).length;
-  const moored = board.ships.filter((s) => s.pier !== null);
   const built = builtProjects(board.works);
   const lit = built.includes("lighthouse");
   const apothecaryBuilt = built.includes("apothecary");
@@ -184,7 +190,7 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
   };
   const lighthouseFill = projectFill("lighthouse");
 
-  // The Harbor as the renderer sees it: the fixed map plus a hut per member and a ship per moored voyage.
+  // The Harbor as the renderer sees it: the fixed map plus a hut per member.
   const scene = useMemo<RenderState | null>(() => {
     if (!you) return null;
     const pois = [
@@ -198,18 +204,12 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
         if (owner.bin) return { ...harborPoi(`site:${owner.id}`, "site", pos, facing), fill: binFill(owner.bin) };
         return { ...harborPoi(`plot:${owner.id}`, "plot", pos, facing), tier: owner.hutTier ?? 1 };
       }),
-      ...moored.map((s) => harborPoi(`ship:${s.code}`, "pier", HARBOR_PIERS[s.pier!])),
     ];
     return {
       code: "harbor",
       you,
-      phase: "overworld",
-      round: 0,
       map: { ...base, pois },
       heroes: players.map((p) => ({ id: p.id, classId: p.classId, pos: p.pos, label: p.name, outfit: p.id === you ? ownOutfit : p.outfit, asleep: !!p.bedroll && same(p.bedroll, p.pos), rod: p.fishing ? (p.gilded ? "gilded" : true) : false, boat: tileAt(base, p.pos)?.biome === "water" ? p.vessel ?? "barrel" : undefined, level: p.level, xp: p.xp })),
-      turn: null,
-      story: null,
-      npcs: {},
       freeRoam: true,
       homeYaw: HARBOR_VIEW_YAW,
       // Bedrolls laid out by whoever is resting.
@@ -233,7 +233,7 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
       },
       onHover: setHover,
       onHoverPlace: setHoverPlace,
-    });
+    }, { resting: born.current });
     renderer.current = r;
     if (latest.current) r.setState(latest.current);
     return () => {
@@ -244,6 +244,22 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
   useEffect(() => {
     if (scene) renderer.current?.setState(scene);
   }, [scene]);
+  // Put away while a building has the screen. (A layout effect: before the building's own view is made, in the same pass.)
+  useLayoutEffect(() => {
+    if (!resting) return;
+    renderer.current?.setResting(true);
+    // Whatever was open or under way out here is over.
+    setWant(null);
+    setHover(null);
+    setHoverPlace(null);
+    setGather(null);
+    for (const close of [setSheet, setBook, setShop, setNotices, setFishmonger, setWorks, setChest, setAccount]) close(false);
+    setTradeWith(null);
+  }, [resting]);
+  // And brought back on stepping out of it, fading in over the building's last picture (render/handover.ts).
+  useEffect(() => {
+    if (!resting) renderer.current?.setResting(false);
+  }, [resting]);
   // With the bag open your hero turns to face you, so you can see what they are wearing.
   useEffect(() => {
     renderer.current?.setFacingFront(sheet);
@@ -255,7 +271,6 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
   // Dev-only handle for driving the Harbor from the console or a test script.
   if (import.meta.env.DEV) (window as unknown as { __harbor: unknown }).__harbor = { harbor, view: renderer.current };
   const self = players.find((p) => p.id === you);
-  const shipHere = self ? moored.find((s) => same(HARBOR_PIERS[s.pier!], self.pos)) : undefined;
   const plotIndex = self ? HARBOR_PLOTS.findIndex((p) => same(p, self.pos)) : -1;
   const hutOwner = plotIndex >= 0 ? board.members.find((m) => m.plot === plotIndex) : undefined;
   const myPlot = board.members.find((m) => m.id === you)?.plot ?? null;
@@ -286,11 +301,10 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
     : hoverPoi.kind === "apothecary" ? (apothecaryBuilt ? "The apothecary: potions and flasks, bought or brewed, and a keeper to haggle with" : "The apothecary's building site: a crew project at the works")
     : hoverPoi.kind === "lapidary" ? "The Lapidary: lodestones cut and worked for the atlas, and gems bought"
     : hoverPoi.kind === "smithy" ? (smithyBuilt ? "The smithy: arms and armour off the rack, your own sharpened or reinforced, and a smith to haggle with" : "The smithy's building site: a crew project at the works")
-    : hoverPoi.kind === "galley" ? (galleyBuilt ? "The galley: go in to cook chowder and stores into the crew's larder" : "The galley's building site: a crew project at the works")
+    : hoverPoi.kind === "galley" ? (galleyBuilt ? "The galley: the cook is in, with nothing to sell" : "The galley's building site: a crew project at the works")
     : hoverPoi.kind === "lot" ? (myPlot === null ? `A plot for sale: ${PLOT_PRICE} gold` : "An empty plot")
     : hoverPoi.kind === "site" ? (hoverPoi.id === `site:${you}` ? "Your plot: fill the bin and the shack goes up" : `${board.members.find((m) => `site:${m.id}` === hoverPoi.id)?.name ?? "Someone"}'s plot: building a shack`)
     : hoverPoi.kind === "plot" ? `${board.members.find((m) => `plot:${m.id}` === hoverPoi.id)?.name ?? "Someone"}'s ${hutTier(hoverPoi.tier ?? 1).name.toLowerCase()}`
-    : hoverPoi.kind === "pier" ? `${moored.find((s) => `ship:${s.code}` === hoverPoi.id)?.captain ?? "A"}'s ship`
     : null;
 
   /** The place's name alone, hung over it on a plate while it is pointed at (the tip says what it is for). */
@@ -316,7 +330,6 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
     : hoverPoi.kind === "lot" ? "Plot for Sale"
     : hoverPoi.kind === "site" ? (hoverPoi.id === `site:${you}` ? "Your Plot" : `${ownerOf("site")?.name ?? "Someone"}'s Plot`)
     : hoverPoi.kind === "plot" ? (hoverPoi.id === `plot:${you}` ? `Your ${hutTier(hoverPoi.tier ?? 1).name}` : `${ownerOf("plot")?.name ?? "Someone"}'s ${hutTier(hoverPoi.tier ?? 1).name}`)
-    : hoverPoi.kind === "pier" ? `${moored.find((s) => `ship:${s.code}` === hoverPoi.id)?.captain ?? "A"}'s Ship`
     : null;
   const invite = harbor.crew ? `${location.origin}${location.pathname}#crew/${harbor.crew.id}` : "";
   const copy = async () => {
@@ -327,11 +340,6 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
     } catch {
       prompt("Copy this invite link:", invite);
     }
-  };
-  const say = () => {
-    if (!text.trim()) return;
-    harbor.send({ type: "say", text });
-    setText("");
   };
   // After a change of gear, have the Harbor show everyone the new look.
   const refreshAll = async () => {
@@ -490,8 +498,8 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
   const goDown = () => {
     api.caves().then(({ code }) => goInside(`${HARBOR_CAVE.q},${HARBOR_CAVE.r}`, `zone/${code}`), (e: Error) => setNote(e.message));
   };
-  // Voyages and sparring are shut while they are rebuilt on the new combat (fights on the tiles
-  // themselves): each place says so and offers nothing to do.
+  // The sparring ring is shut while it is rebuilt on the new combat (fights on the tiles themselves):
+  // it says so and offers nothing to do.
   const shut = (title: ReactNode) => ({ title, label: "", run: () => {}, closed: true });
   // The place under your feet and the one thing to do there, shown in the bar below. A hero who walked here by
   // clicking the place has it done for them on arriving (`goIn`); where it must be pressed (`press`), its button
@@ -512,7 +520,6 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
     // The Lapidary was never a building site: it is open from a crew's first day, for nobody goes out without a lodestone.
     : atLapidary ? { title: <>The Lapidary <span className="muted">· lodestones for the atlas are cut and worked here, and gems bought</span></>, label: "Go in", run: () => goInside(`${HARBOR_LAPIDARY.q},${HARBOR_LAPIDARY.r}`, "lapidary") }
     : atCave ? { title: <>The Haunted Caverns <span className="muted">· something lurks in the dark</span></>, label: "Go down", run: goDown }
-    : shipHere ? { ...shut(<>{shipHere.captain}'s ship <span className="muted">· laid up while voyages are rebuilt</span></>), also: pierHere ? { label: "Cast a line", run: () => setGather("fishing") } : undefined }
     : atShop ? { title: "The market stall", label: "Browse the wares", run: () => setShop(true) }
     : atRing ? shut(<>The sparring ring <span className="muted">· being rebuilt for a new way of fighting. Coming soon.</span></>)
     : gatherHere ? {
@@ -588,11 +595,14 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
   }, [glowId]);
   const error = harbor.error;
 
+  // Put away: only the stage is kept, with the view built on it. No panel, bar or key of the Harbor's is up.
+  // (The stage is keyed, here and below, so it is the same element either way and keeps its canvas.)
+  if (resting) return <div className="run harbor-view" style={{ display: "none" }}><div key="stage" className="stage" ref={mount} /></div>;
   return (
     <div className="run harbor-view">
       {/* Someone of the crew is setting out for a place on the atlas, and asks who is coming. */}
       {muster.muster && <MusterPanel muster={muster.muster} me={harbor.you ?? me.player.id} onSay={muster.say} busy={muster.busy} error={muster.error} />}
-      <div className="stage" ref={mount} />
+      <div key="stage" className="stage" ref={mount} />
       {/* Down the left-hand side: the docks at the top, the crew's cards in the middle (the talk sits under them). */}
       <div className="hud-left">
         <DragPanel id="harbor.docks" title="Docks" foldOnPhone className="story panel docks">
@@ -600,16 +610,6 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
           <p>
             <button className="small" onClick={() => renderer.current?.lookAt(HARBOR_WAYGATE)}>Show me the waygate</button> <button className="small" onClick={() => renderer.current?.lookAt(HARBOR_LAPIDARY)}>Show me the Lapidary</button> <button className="small" onClick={() => renderer.current?.lookAt(HARBOR_CHEST)}>Show me the town chest</button>
           </p>
-          <h3>Voyage log</h3>
-          {board.log.length === 0 && <p className="muted">No voyages yet.</p>}
-          <ul className="log">
-            {board.log.map((v) => (
-              <li key={v.code}>
-                <span className={v.outcome === "victory" ? "good" : "bad"}>{v.outcome === "victory" ? "Won" : "Lost"}</span> <strong>{v.title}</strong>
-                <span className="muted"> · {v.crew.join(", ")}</span>
-              </li>
-            ))}
-          </ul>
         </DragPanel>
 
         <div className="crew roster-panel crew-cards">
@@ -637,10 +637,7 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
           {harbor.chat.map((l, i) => <div key={i} className="line hero"><strong>{l.name}: </strong>{l.text}</div>)}
           <div ref={chatEnd} />
         </div>
-        <div className="row">
-          <input value={text} maxLength={200} placeholder="Say something to the crew…" onChange={(e) => setText(e.target.value)} onKeyDown={(e) => e.key === "Enter" && say()} />
-          <button disabled={!text.trim()} onClick={say}>Say</button>
-        </div>
+        <ChatInput placeholder="Say something to the crew…" onSay={(text) => harbor.send({ type: "say", text })} />
       </DragPanel>
 
       {/* Put away while a gathering outing (fishing, felling, the quarry) has the view: nothing on it is any use
@@ -695,7 +692,7 @@ export function HarborView({ me, refresh }: { me: Me; refresh(): Promise<unknown
       {unseen && !panelOpen && !atBoard && <AttentionMark renderer={renderer} pos={BOARD_STANDS} lift={2.35} label="Something new on the notice board" />}
       {works && <WorksPanel works={board.works} refresh={refresh} onClose={() => setWorks(false)} />}
       {chest && me.character && <TownChest me={me} refresh={refresh} onClose={() => setChest(false)} />}
-      {gather && me.character && <GatherPanel spot={gather} onRod={(on) => harbor.send({ type: "fishing", on })} pier={pierHere ?? undefined} at={self?.pos} vessel={self?.vessel ?? null} gilded={me.character?.title === BOOK_TITLE} shipBeside={!!shipHere} renderer={renderer} onClose={() => setGather(null)} onStamina={setStamina} onPaid={() => void refresh()} />}
+      {gather && me.character && <GatherPanel spot={gather} onRod={(on) => harbor.send({ type: "fishing", on })} pier={pierHere ?? undefined} at={self?.pos} vessel={self?.vessel ?? null} gilded={me.character?.title === BOOK_TITLE} renderer={renderer} onClose={() => setGather(null)} onStamina={setStamina} onPaid={() => void refresh()} />}
       {fishmonger && me.character && <CatchPanel buyer="market" onGold={() => void refresh()} onClose={() => setFishmonger(false)} />}
       {shop && me.character && <ShopScreen me={me} refresh={refreshAll} onClose={() => setShop(false)} />}
       {me.character && <Trading me={me} partners={board.members.filter((m) => m.id !== you)} withId={tradeWith} onWith={setTradeWith} refresh={refresh} nudge={harbor.trades} />}

@@ -1,8 +1,8 @@
 # The Harbor of Heylets (`apps/game`)
 
-The rewrite described in [`docs/overworld-revamp.md`](../../docs/overworld-revamp.md): a live, turn-based co-op game. A crew shares **the Harbor** (a walkable place where you see each other), up to four of them board a ship and sail to **an Island** (one seeded hex map with one generated story), talks to Workers AI characters, fights line-up battles, and brings XP and loot home.
+A live co-op game. A crew shares **the Harbor** (a walkable town where you see each other). From the waygate they open **the atlas**, the crew's chart of places, and step through to **a map** (a zone: one seeded hex map), where they walk freely, fight turn by turn on the tiles, and bring XP and loot home.
 
-This app is separate from `apps/web` (the original game), with its own Worker, Durable Objects and D1 database. It's live at https://harbor.heylets.party, with staging at https://harbor-staging.heylets.party. For setting up and deploying production, see [`docs/game-production-checklist.md`](../../docs/game-production-checklist.md); the [root README](../../README.md) has the deploy steps for both.
+It's live at https://harbor.heylets.party, with staging at https://harbor-staging.heylets.party. For setting up and deploying production, see [`docs/game-production-checklist.md`](../../docs/game-production-checklist.md); the [root README](../../README.md) has the deploy steps for both.
 
 ## Run it locally
 
@@ -27,7 +27,7 @@ To send real mail (staging does), the environment needs a `send_email` binding n
 
 `AI_MODE` in `wrangler.jsonc` controls the model calls.
 
-- `"mock"` (the default in the example): a scripted stand-in. Stories come from the canned fills in `packages/world/src/story.ts`; the NPC is a deliberately gullible script that proposes whatever your words suggest, so you can watch the server-side guard rails refuse it.
+- `"mock"` (the default in the example): a scripted stand-in. The barkeep answers from a few canned lines, and a new hero's name comes from a stock list.
 - `"live"`: real Workers AI. Requires `wrangler login`. AI bindings always call the remote service, so this uses your account's Workers AI allocation.
 
 ## Staging
@@ -72,51 +72,48 @@ A tab left open on an older build is told when a newer one is out (`src/client/N
 | Path | What |
 |---|---|
 | `packages/world/src/` | All game rules. Pure and deterministic, no I/O. Start here. |
-| `…/world.ts` | The world reducer: `stepWorld(state, action)` → new state, events, effects |
-| `…/battle.ts` | Line-up combat reducer |
-| `…/check.ts` | The one roll mechanic (`rollCheck`) used by attacks, persuasion, searching and movement |
-| `…/map.ts` | Island generation and weighted pathfinding |
-| `…/story.ts` | Story frames, the story bible, and its validators |
-| `…/npc.ts` | Parsing and validating what the model proposes |
-| `…/view.ts` | What a client is allowed to see (hides the lair, NPC secrets, RNG) |
+| `…/zone/` | Fights and walking on a map's tiles. `zone.ts` is the reducer: `stepZone(state, action)` → new state and events. `combat.ts` and `kit.ts` are what units can do, `rules.ts` the dice, `ai.ts` the enemy's turn, `geometry.ts` and `light.ts` where things are and what can be seen, `surfaces.ts` and `weather.ts` the ground and the air, `loot.ts` and `spoils.ts` what there is to take |
+| `…/zone/gen.ts`, `lay.ts`, `indoors.ts`, `sites.ts`, `props.ts`, `mods.ts` | Making a map from a seed and options: its site, its ground and what stands on it, the bands that hold it, and a lodestone's modifiers. `delve.ts` (with `…/caverns.ts`) lays the caverns under the Harbor |
+| `…/atlas.ts`, `atlasMap.ts`, `muster.ts` | The crew's chart of places, how it is drawn as a map of its own, and asking the crew who is coming |
+| `…/lodestone.ts`, `stonecraft.ts`, `lapidary.ts`, `townchest.ts` | Lodestones, working them at the Lapidary, what its keeper pays for gems, and the crew's shared chest |
+| `…/map.ts` | Tiles, places (`Poi`) and weighted pathfinding, shared by every map |
 | `…/harbor.ts` | The Harbor map, path check and message types |
-| `…/gear.ts` | Slots, rarities, item generation, armor, prices and the stall's stock |
-| `…/hut.ts`, `…/hutroom.ts` | Hut materials, furnishings, tiers and perks; the walk-in room, placement and its message types |
-| `…/drops.ts` | Materials, blueprints, decor and trophies paid out by fights, caches and a won story |
-| `…/contracts.ts` | The contract dealer's contracts (in the pub) and the crew's weekly goal |
-| `…/hero.ts` | A hero as the battle rules see one; shared by voyages and the sparring ring |
+| `…/hero.ts`, `progression.ts`, `classabilities.ts`, `content.ts` | A hero as a fight sees one, levelling, class abilities, and the tables of weapons, abilities and enemies |
+| `…/gear.ts`, `carry.ts` | Slots, rarities, item generation, armor, prices and the stall's stock; the pack and what fits in it |
+| `…/hut.ts`, `…/hutroom.ts` | Hut materials, furnishings and tiers; the walk-in room, placement and its message types |
+| `…/drops.ts` | What a searched cache gives for the hut |
 | `…/gather.ts` | Fishing, felling and the quarry: outings, timing, payouts, stamina and resting |
-| `…/felling.ts` | Felling's two rounds: trees, chops, regrowth, the marker over each log, and replaying a round's report |
-| `…/timing.ts` | The timed stop shared by fishing, the quarry and the splitting block: markers, grades and how a stat eases them |
-| `…/projects.ts` | Crew projects (the lighthouse and those still to open) |
-| `…/pub.ts` | The pub's room, menu and food-and-drink boosts |
-| `…/keepers.ts`, `…/lapidary.ts` | The rooms you walk into with a keeper inside (smithy, apothecary, galley, and the Lapidary, which is open from a crew's first day), their keepers, stock and haggling; and what the Lapidary's keeper pays for gems. Lodestones are cut and worked there (`…/lodestone.ts`, `…/stonecraft.ts`) |
-| `…/dice.ts`, `…/shoals.ts` | The pub's two table games, each a pure reducer with a per-player view |
+| `…/fishing.ts`, `fishfight.ts`, `sitting.ts`, `fishcatalog.ts`, `fishmarket.ts`, `catchbook.ts` | Fishing: a sitting at a pier, the fight with one fish, the catalogue of what can be caught, selling it, and the Catch Book |
+| `…/felling.ts`, `mine.ts` | Felling's two rounds, and the quarry's rock face |
+| `…/timing.ts` | The timed stop used on the splitting block (and by the older gathering outings): markers, grades and how a stat eases them |
+| `…/projects.ts` | Crew projects |
+| `…/pub.ts`, `regulars.ts`, `salesman.ts` | The pub's room and its menu of meals; its regulars and their errands; the traveling salesmen |
+| `…/keepers.ts`, `apothecary.ts`, `smithy.ts`, `galley.ts` | The rooms you walk into with a keeper inside (smithy, apothecary, galley, Lapidary), their keepers, stock and haggling |
+| `…/dice.ts`, `shoals.ts`, `tide.ts`, `crew.ts`, `stakes.ts` | The pub's table games, each a pure reducer with a per-player view, and the stake they are played for |
 | `…/trade.ts` | Offers between crewmates and their validation |
 | `apps/game/src/releases.ts`, `scripts/release-notes.ts` | Release notes on the Harbor's notice board, read out of git at build time |
-| `apps/game/src/worker.ts` | Harbor HTTP API and the WebSocket route |
-| `apps/game/src/server/run-room.ts` | One Durable Object per voyage: persist, broadcast, timers |
-| `apps/game/src/server/harbor-room.ts` | One Durable Object per crew: presence, walking, chat, dock board |
+| `apps/game/src/worker.ts`, `server/routes/` | The HTTP API and the WebSocket routes: a module to each feature in `routes/` (`pub.ts`, `huts.ts`, `atlas.ts` and so on), each registering its own routes, called in order by `worker.ts`. A middleware covers only what is registered after it, so the order matters |
+| `apps/game/src/server/zone-room.ts`, `zones.ts`, `atlas.ts` | One Durable Object per map: persist, broadcast, timers; maps and the crew's chart in D1 |
+| `apps/game/src/server/walk-room.ts` | What every walk-in room shares: who is here, walking, looking, chat, taking over an older tab. A new room builds on it |
+| `apps/game/src/server/harbor-room.ts` | One Durable Object per crew: presence, walking, chat and the muster |
 | `apps/game/src/server/hut-room.ts` | One Durable Object per hut owner: presence, walking, chat and furniture |
 | `apps/game/src/server/pub-room.ts` | One Durable Object per crew for the pub: presence, walking, chat and the game tables |
 | `apps/game/src/server/stake-table.ts` | A game table for any stake game: antes, prize, per-player views, forfeits |
-| `apps/game/src/server/gather.ts`, `projects.ts`, `trade.ts` | D1 work for gathering and resting, crew projects, and trading |
-| `apps/game/src/server/board.ts` | Contract results and crew-goal progress in D1 |
-| `apps/game/src/server/ai.ts` | Prompts and the Workers AI calls (and the mock) |
-| `apps/game/src/server/db.ts` | D1 access |
+| `apps/game/src/server/gather.ts`, `fishing.ts`, `projects.ts`, `trade.ts`, `workshops.ts`, `lapidary.ts`, `townchest.ts`, `lodestones.ts` | D1 work for each of those |
+| `apps/game/src/server/ai.ts` | Prompts and the Workers AI calls (and the mock): the barkeep, and naming a hero |
+| `apps/game/src/server/db/`, `db.ts` | D1 access, a module to each domain: players and sign-in, characters, inventory, the market stall, crews, plots, huts and their containers, spending, rewards. `db.ts` only passes on what they export, so everything is still imported from `./db` |
 | `apps/game/src/server/email.ts` | Sending sign-in codes |
-| `apps/game/src/client/render/` | Three.js renderer, placeholder sprites, furniture models (`props.ts`), the sky, weather, shadows and moving decoration (`ambience.ts`), felling (`fellingScene.ts`, a `WorldMinigame`: the renderer swings its camera into the hero's eyes and hands it the input while it runs), and a battle map's combat view (`cutaway.ts`: on by itself in a fight, or with its button or V, walls and rock in the way sink to a kerb and trees thin to ghosts, all in the scenery's own shaders) |
-| `apps/game/src/client/*.tsx` | Character creation, crew gate, shared Harbor, huts, the pub, notice board (`board/`), works (`works/`), sparring, gathering, trading, inventory, market stall, the crossing, fight pacing (`BattleBeats.tsx`) and the in-voyage HUD (React) |
-| `apps/game/src/client/itemArt.ts` | Pixel-art item icons drawn in code, in the style of the hero sprites; the accent colour is the item's rarity |
+| `apps/game/src/client/render/` | Three.js renderer (`WorldRenderer.ts`), the model of every kind of place on a map, a function to each kind (`places/`: `index.ts` lists them and says how to add one, `placing.ts` says how big each is drawn), the heroes and enemies as figures (`figures.ts`, `gearModels.ts`), a map's scenery and backdrop (`zoneScenery.ts`, `backdrop.ts`), spell effects (`SpellFx.ts`), furniture models (`props.ts`), the sky, weather, shadows and moving decoration (`ambience.ts`), the gathering stages (`FishingStage.ts`, `MineStage.ts`, `fellingScene.ts`), the pub's tables (`TableStage.ts`), and a map's combat view (`cutaway.ts`: on by itself in a fight, or with its button or V, walls and rock in the way sink to a kerb and trees thin to ghosts, all in the scenery's own shaders) |
+| `apps/game/src/client/*.tsx` | Character creation, crew gate, the Harbor, huts, the pub, keeper rooms, notice board (`board/`), works (`works/`), the atlas (`atlas/`), the town chest (`chest/`), gathering, trading, inventory, market stall, and a map and its fights (`ZoneView.tsx`, `zone/`) |
+| `apps/game/src/client/itemArt.ts` | Pixel-art item icons drawn in code; the accent colour is the item's rarity |
 
 ## Rules worth knowing before changing things
 
-- **The model never changes the game.** It returns words plus a *proposed* intent. `validateIntent` checks that intent against the NPC's capability list in the story bible; anything else is dropped. New NPC powers are added as capabilities and verbs in `packages/world`, not as prompt text.
-- **What an NPC asks for is a fixed list too.** Demands live on the story frame (`packages/world/src/story.ts`) so the game can always tell whether one is met. Don't let prompt text introduce new requests.
-- **The reducer is the authority.** Clients send intents; the Durable Object runs `stepWorld`. The acting hero is taken from the socket, never from the message.
-- **Everything random goes through the seeded RNG in `WorldState`.** No `Math.random` in `packages/world`; a run must replay from its seed and action log.
-- **D1 is the system of record.** The Durable Object caches state and reloads it after hibernation. Persist before broadcast. Timers are DO Alarms.
-- **Rewards are written as they are earned**, so a dropped run never loses loot. Defeat costs a capped amount of gold and nothing else.
+- **The model never changes the game.** It only produces words: the barkeep's talk and a name for a new hero. Both are cleaned and capped on the server, and fall back to canned text.
+- **The reducer is the authority.** Clients send intents; the Durable Object runs `stepZone`. The acting hero is taken from the socket, never from the message.
+- **Everything random goes through a seeded RNG.** No `Math.random` in `packages/world`: a map is laid from its seed and options, and a zone's dice come from the RNG state it carries.
+- **D1 is the system of record.** A Durable Object caches state and reloads it after hibernation. Persist before broadcast. Timers are DO Alarms.
+- **Rewards are written as they are earned**, so a dropped connection never loses loot.
 - **Hut furniture is in one catalogue.** `FURNISHINGS` (`packages/world/src/hut.ts`) says what each piece is: `size: "small"` for things that go anywhere in a hex or on a top, `surface` for a top small things can stand on, `light` for a candle, lamp or fire, and `storage` for how many slots a container has. The server checks placement with `placeProblem` and `smallPlaceProblem`, and the client uses the same rules to tint the ghost of the piece being carried. A model in `render/props.ts` must match its catalogue `surface`. Indoors there is one shadow-casting fire light and four plain lights, shared by whichever lit pieces are nearest the camera, so the light count never changes.
 
 ## Tests
@@ -128,18 +125,18 @@ pnpm --filter @gantt-quest/game typecheck
 pnpm --filter @gantt-quest/game test
 ```
 
-The game's own tests (`apps/game/test/`) run the trading server code against SQLite with the migrations applied, using Node's built-in `node:sqlite` as a stand-in for D1.
+The game's own tests (`apps/game/test/`) run the server code and the rooms against SQLite with the migrations applied, using Node's built-in `node:sqlite` as a stand-in for D1.
 
-In dev builds the page exposes `window.__gq` (`state`, `send`, and the `World` module) on a voyage and `window.__harbor` in the Harbor, for driving either from the console. Set `window.__gqTime` to a number from 0 to 1 to pin the time of day (0 is midnight, 0.5 is noon), and `window.__gqWeather` from 0 (clear) to 1 (heavy rain) to pin the weather. The pub and huts expose `window.__pub` and `window.__hut` the same way. `window.__gqWorld` is the world renderer (`renderer.info.render.calls` for draw calls).
+In dev builds the page exposes `window.__harbor` in the Harbor and `window.__gqZone` (`state`, `send`, `click`) on a map, for driving either from the console. Set `window.__gqTime` to a number from 0 to 1 to pin the time of day (0 is midnight, 0.5 is noon), and `window.__gqWeather` from 0 (clear) to 1 (heavy rain) to pin the weather. The pub and huts expose `window.__pub` and `window.__hut` the same way. `window.__gqWorld` is the world renderer (`renderer.info.render.calls` for draw calls).
 
 ## Known gaps
 
-- Art is drawn in code: sprites in `render/sprites.ts`, props from simple shapes. Admins can recolour sprites and swap item icons from `#admin`.
-- Four story frames, with one talkable islander per story.
-- Balance has a seeded simulation (`packages/world/src/balance.ts`), but real play will still need tuning.
+- Art is drawn in code: figures and props from simple shapes, icons as pixel art. Admins can recolour and swap icons from `#admin`.
+- A voyage is a trip to a place on the atlas. The island voyages the game began with are gone, and so is what only they used: boosts from pub fare, brews and hut furniture, the galley's larder, class traits, the dealer's contracts and the crew's weekly goal. Their tables are still in D1, unread. The galley and the lighthouse stand in the Harbor with nothing to do yet, and the sparring ring is shut.
+- Trading is not held back while one of the two is in a fight on a map.
+- Balance on the maps has had no tuning pass: Action Points, band sizes and lodestone modifiers are first numbers.
 - The Harbor has twelve plots: a crew larger than that can't all own one.
-- The Galley project is still locked. Crew chat isn't stored.
-- The doom clock doesn't allow for time lost to fog and roaming bands.
+- Crew chat isn't stored.
 - Timing in fishing and the quarry trusts the client's reported moment within a round trip, so a script can always hit dead centre (capped at +20% a roll). Felling's report is replayed against what an axe could do (swing speed, regrowth, the round's length by the server's clock), but a script can still chop at the fastest swing and strike every log dead centre: at most the payout cap.
 - Gear has no affixes, uniques, sets or elements.
 - Felling's sounds are synth stand-ins until recordings are added under `sfx/gather/` (see `audio/manifest.ts`).

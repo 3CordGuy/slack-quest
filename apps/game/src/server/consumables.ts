@@ -1,6 +1,6 @@
 // What a hero carries to drink or throw, in D1: so many of each kind, in
 // stacks in the pack beside the materials (and counted with them toward what
-// the pack holds, see carriedSql in db.ts). A map's room reads them when the
+// the pack holds, see carriedSql in db/inventory.ts). A map's room reads them when the
 // hero walks in and before each one is used, and takes away what was used.
 
 import { STARTING_ITEMS, THROWABLE_KINDS, cleanItems, type Throwable } from "@gantt-quest/world";

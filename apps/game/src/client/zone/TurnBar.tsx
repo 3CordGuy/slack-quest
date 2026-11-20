@@ -29,6 +29,7 @@
 // Nothing here knows the rules: it draws what it is handed.
 
 import { useRef, type CSSProperties, type ReactNode } from "react";
+import { useCountdown } from "../ui/useCountdown";
 import "./fight.css";
 
 export interface TurnBarProps {
@@ -190,4 +191,12 @@ export function TurnBar({ myTurn, actor, waitingFor, round, ap, apMax, apTurn, a
       </div>
     </div>
   );
+}
+
+/**
+ * The turn bar with its clock counted down from the turn's `deadline` (epoch ms; none: no clock). The seconds
+ * tick in here, so one going by draws the bar again and not the whole of the view it sits in.
+ */
+export function TimedTurnBar({ deadline, ...bar }: Omit<TurnBarProps, "seconds"> & { deadline: number | null | undefined }) {
+  return <TurnBar {...bar} seconds={useCountdown(deadline)} />;
 }

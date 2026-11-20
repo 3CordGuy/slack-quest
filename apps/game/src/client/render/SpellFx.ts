@@ -353,9 +353,10 @@ class Ribbon {
 
   /** Lay it along `points` (the last repeated if there are fewer than it has), `width(t)` across at `t` of the way along. */
   lay(points: THREE.Vector3[], width: (t: number) => number, eye: THREE.Vector3) {
-    const along = new THREE.Vector3();
-    const toEye = new THREE.Vector3();
-    const side = new THREE.Vector3();
+    const along = LAY_ALONG;
+    const toEye = LAY_TO_EYE;
+    const side = LAY_SIDE;
+    const pos = this.pos;
     const last = points.length - 1;
     for (let i = 0; i < this.n; i++) {
       const j = Math.min(i, last);
@@ -365,11 +366,21 @@ class Ribbon {
       side.crossVectors(along, toEye.subVectors(eye, p));
       if (side.lengthSq() < 1e-10) side.set(0, 1, 0);
       side.normalize().multiplyScalar(width(i / (this.n - 1)) / 2);
-      this.pos.set([p.x - side.x, p.y - side.y, p.z - side.z, p.x + side.x, p.y + side.y, p.z + side.z], i * 6);
+      const o = i * 6;
+      pos[o] = p.x - side.x;
+      pos[o + 1] = p.y - side.y;
+      pos[o + 2] = p.z - side.z;
+      pos[o + 3] = p.x + side.x;
+      pos[o + 4] = p.y + side.y;
+      pos[o + 5] = p.z + side.z;
     }
     this.attr.needsUpdate = true;
   }
 }
+/** What `Ribbon.lay` works its sums in: one set for every ribbon, since no two are laid at once. */
+const LAY_ALONG = new THREE.Vector3();
+const LAY_TO_EYE = new THREE.Vector3();
+const LAY_SIDE = new THREE.Vector3();
 
 /** `n` points back along `trail` (newest first), spread evenly over `length` of it. */
 function behind(trail: THREE.Vector3[], length: number, n: number): THREE.Vector3[] {
@@ -416,6 +427,8 @@ export class SpellFx {
       this.eye.copy(camera.position);
       const step = Math.min(dt, 0.05) * this.speed;
       this.clock += step;
+      // Nothing running: nothing to step, and no lists to make.
+      if (this.live.length === 0) return;
       // An effect may start others as it steps (a bolt landing throws sparks and a ring): those go on the fresh list,
       // and are kept with whatever is still running. Filtering the list in place would lose them, left in the scene for good.
       const stepping = this.live;
@@ -446,7 +459,9 @@ export class SpellFx {
       this.group.remove(o);
       o.traverse((c) => {
         const mesh = c as THREE.Mesh;
-        if (mesh.material) (mesh.material as THREE.Material).dispose();
+        // Its materials are left to be collected, not disposed: all are three's own kinds, and disposing the last of a
+        // kind (a toon material, say) throws its shader away, to be compiled again in the middle of the next cast.
+        // The shaders go with the renderer (WorldRenderer.dispose).
         // Shared shapes are kept; one made for this piece alone (a ribbon, a flame's tongues) goes with it.
         if (c.userData.ownGeometry) mesh.geometry?.dispose();
       });

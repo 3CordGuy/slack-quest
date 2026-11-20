@@ -4,7 +4,7 @@ import { ATLAS_HOME, ATLAS_LANDS, ATLAS_SPACING, LAND_GROUND, atlasCell, atlasCl
 import { atlasGround } from "./atlasMap";
 import { CLIMES, MOVE_COST, type Biome, type Clime } from "./map";
 import { ENEMIES } from "./content";
-import { SITES, SITE_IDS, ZONE_MODS, backdropOf, createZone, factionsOf, generateZone, modEffect, siteFor, siteInside, siteOpen, standInHero, stepZone, zoneOptions, zoneReach, FACTIONS, type SiteGround, type SiteId, type ZoneBiome } from "./zone";
+import { SITES, SITE_IDS, backdropOf, createZone, factionsOf, generateZone, modEffect, siteFor, siteInside, siteOpen, standInHero, stepZone, zoneOptions, zoneReach, FACTIONS, type SiteGround, type SiteId, type ZoneBiome } from "./zone";
 
 const SEEDS = ["CREWAA", "CREWBB", "ZGHPQH"];
 const ring = (c: AtlasCell) => (Math.abs(c.q) + Math.abs(c.r) + Math.abs(c.q + c.r)) / 2;

@@ -1,38 +1,14 @@
-// Buying from the smith, the apothecary and the galley's cook in their shops,
-// and haggling with them, against a real SQLite database with the game's migrations applied
-// (the same stand-in for D1 as apothecary.test.ts).
+// The keepers' shops against a real SQLite database with the game's migrations applied (the stand-in for D1 in
+// d1.ts): brewing potions and flasks for the pack at the apothecary, buying from the smith and the apothecary,
+// haggling with them, a meal at the pub, and the galley, which is only a room.
 
-import { readFileSync, readdirSync } from "node:fs";
-import { DatabaseSync } from "node:sqlite";
+import type { DatabaseSync } from "node:sqlite";
 import { beforeEach, describe, expect, it } from "vitest";
-import { APOTHECARY_PROJECT, DISHES, GALLEY_PROJECT, POT_PRICES, SHELF_DAILY, SHELF_PRICES, SMITHY_PROJECT, potKey, shelfKey, workKey } from "@gantt-quest/world";
+import { APOTHECARY_PROJECT, CARRY_BASE, GALLEY_PROJECT, SHELF_DAILY, SHELF_PRICES, SMITHY_PROJECT, gatherDay, shelfKey, workKey } from "@gantt-quest/world";
 import { consumablesOf } from "../src/server/consumables";
-import { cook, larderOf } from "../src/server/galley";
-import { apothecaryView, buyFromKeeper, galleyKeeperView, haggle, smithItem, smithyView } from "../src/server/workshops";
-
-type Row = Record<string, unknown>;
-
-class Stmt {
-  constructor(private sql: DatabaseSync, private text: string, private args: unknown[] = []) {}
-  bind(...args: unknown[]) {
-    return new Stmt(this.sql, this.text, args);
-  }
-  exec() {
-    const stmt = this.sql.prepare(this.text);
-    if (/^\s*(SELECT|WITH)/i.test(this.text)) return { results: stmt.all(...(this.args as never[])) as Row[], meta: { changes: 0, last_row_id: 0 } };
-    const res = stmt.run(...(this.args as never[]));
-    return { results: [] as Row[], meta: { changes: Number(res.changes), last_row_id: Number(res.lastInsertRowid) } };
-  }
-  async run() {
-    return this.exec();
-  }
-  async all() {
-    return this.exec();
-  }
-  async first() {
-    return this.exec().results[0] ?? null;
-  }
-}
+import { carryState, orderAtPub } from "../src/server/db";
+import { apothecaryView, brewFlask, buyFromKeeper, galleyView, haggle, smithItem, smithyView } from "../src/server/workshops";
+import { addHero, openDb } from "./d1";
 
 let sql: DatabaseSync;
 let db: D1Database;
@@ -44,28 +20,59 @@ const holds = (kind: string) => (sql.prepare("SELECT qty FROM resources WHERE pl
 const build = (project = APOTHECARY_PROJECT) => sql.prepare("INSERT INTO crew_projects (crew_id, project_id, built_at) VALUES ('CREWAA', ?, ?)").run(project, Date.now());
 
 beforeEach(() => {
-  sql = new DatabaseSync(":memory:");
-  const dir = new URL("../migrations/", import.meta.url);
-  for (const file of readdirSync(dir).sort()) sql.exec(readFileSync(new URL(file, dir), "utf8"));
-  db = {
-    prepare: (text: string) => new Stmt(sql, text),
-    async batch(stmts: Stmt[]) {
-      sql.exec("BEGIN");
-      try {
-        const out = stmts.map((s) => s.exec());
-        sql.exec("COMMIT");
-        return out;
-      } catch (err) {
-        sql.exec("ROLLBACK");
-        throw err;
-      }
-    },
-  } as unknown as D1Database;
-  const at = Date.now();
-  sql.prepare("INSERT INTO players (id, name, created_at) VALUES ('ann', 'Ann', ?)").run(at);
-  sql.prepare("INSERT INTO characters (player_id, name, class_id, status, str, int_stat, vit, agi, dex, gold, created_at) VALUES ('ann', 'Ann', 'qa_paladin', 'active', 5, 5, 5, 5, 5, 100, ?)").run(at);
-  sql.prepare("INSERT INTO crews (id, name, created_by, created_at) VALUES ('CREWAA', 'Crew', 'ann', ?)").run(at);
-  sql.prepare("INSERT INTO crew_members (crew_id, player_id, joined_at) VALUES ('CREWAA', 'ann', ?)").run(at);
+  ({ sql, db } = openDb());
+  addHero(sql, { id: "ann", name: "Ann", crew: "CREWAA" });
+});
+
+describe("brewing for the pack", () => {
+  it("turns what it takes into one more in the pack, each time, for as long as the materials last", async () => {
+    build();
+    give("herbs", 7);
+    expect(await brewFlask(db, "ann", "healing")).not.toBeTypeOf("string");
+    expect(await brewFlask(db, "ann", "healing")).not.toBeTypeOf("string");
+    expect(await consumablesOf(db, "ann")).toEqual({ healing: 2 });
+    expect(holds("herbs")).toBe(1);
+    // A stack of them is one square of the pack, however many are in it.
+    expect((await carryState(db, "ann"))!.carried).toBe(2);
+    expect(await brewFlask(db, "ann", "healing")).toMatch(/3 herbs/);
+    expect(await consumablesOf(db, "ann")).toEqual({ healing: 2 });
+    expect((await apothecaryView(db, "ann")).carried).toEqual({ healing: 2 });
+  });
+
+  it("makes torches two at a time from a piece of wood and a fur", async () => {
+    build();
+    give("wood", 1);
+    give("fur", 1);
+    expect(await brewFlask(db, "ann", "torch")).not.toBeTypeOf("string");
+    expect(await consumablesOf(db, "ann")).toEqual({ torch: 2 });
+    expect(holds("wood")).toBe(0);
+    expect(await brewFlask(db, "ann", "torch")).toMatch(/1 wood, 1 fur/);
+  });
+
+  it("needs the apothecary built, and makes only what there is a recipe for", async () => {
+    give("fur", 5);
+    expect(await brewFlask(db, "ann", "water")).toMatch(/not built/);
+    build();
+    expect(await brewFlask(db, "ann", "elixir")).toMatch(/does not make/);
+    expect(await brewFlask(db, "ann", "water")).not.toBeTypeOf("string");
+    expect(await consumablesOf(db, "ann")).toEqual({ water: 1 });
+    expect(holds("fur")).toBe(4);
+  });
+
+  it("needs a free square of the pack for the first of a kind, and none for one more of a kind already carried", async () => {
+    build();
+    give("fur", 5);
+    give("bone", 9);
+    // Fill the pack to the brim with rings, less the two squares the materials take.
+    const ring = sql.prepare("INSERT INTO inventory (player_id, kind, ref, name, rarity, slot, equipped, created_at) VALUES ('ann', 'trinket', 'ring', ?, 'common', 'ring', 0, ?)");
+    for (let i = 0; i < CARRY_BASE - 3; i++) ring.run(`Ring ${i}`, Date.now());
+    expect(await brewFlask(db, "ann", "water")).not.toBeTypeOf("string");
+    expect((await carryState(db, "ann"))!.carried).toBe(CARRY_BASE);
+    expect(await brewFlask(db, "ann", "oil")).toMatch(/pack is full/);
+    expect(holds("bone")).toBe(9);
+    expect(await brewFlask(db, "ann", "water")).not.toBeTypeOf("string");
+    expect(await consumablesOf(db, "ann")).toEqual({ water: 2 });
+  });
 });
 
 describe("the apothecary's shelf", () => {
@@ -146,36 +153,44 @@ describe("haggling", () => {
   });
 });
 
-describe("the galley's cook", () => {
-  const stores = DISHES.find((d) => d.id === "stores")!;
-
-  it("sells a dish ready-made into the crew's larder, one of each a day, at the haggled price", async () => {
+describe("the galley", () => {
+  it("is a room once it is built, with nothing to buy or haggle over", async () => {
+    expect(await galleyView(db, "ann")).toEqual({ built: false });
     build(GALLEY_PROJECT);
-    setGold(1000);
-    const key = potKey("chowder");
-    expect(await haggle(db, "ann", "galley", key, "push", 0)).toMatchObject({ won: true, list: POT_PRICES.chowder, price: Math.ceil(POT_PRICES.chowder * 0.8) });
-    expect(await buyFromKeeper(db, "ann", "galley", key)).toEqual({ got: "Fish Chowder" });
-    expect(gold()).toBe(1000 - Math.ceil(POT_PRICES.chowder * 0.8));
-    expect(await larderOf(db, "CREWAA")).toEqual({ chowder: 1, stores: 0 });
-    expect(await buyFromKeeper(db, "ann", "galley", key)).toMatch(/all the chowders/);
-    expect((await galleyKeeperView(db, "ann")).wares.find((w) => w.key === key)).toMatchObject({ left: 0, price: Math.ceil(POT_PRICES.chowder * 0.8) });
-    expect(gold()).toBe(1000 - Math.ceil(POT_PRICES.chowder * 0.8));
+    expect(await galleyView(db, "ann")).toEqual({ built: true });
+    expect(await haggle(db, "ann", "galley", "dish:chowder", "nudge", 0)).toMatch(/nobody there/);
+  });
+});
+
+describe("a meal at the pub", () => {
+  const used = () => (sql.prepare("SELECT used FROM gathering WHERE player_id = 'ann'").get() as { used: number }).used;
+  const out = (n: number) => sql.prepare("INSERT INTO gathering (player_id, day, used) VALUES ('ann', ?, ?)").run(gatherDay(Date.now()), n);
+
+  it("costs the menu's price and gives back one of today's outings, once a day", async () => {
+    setGold(100);
+    out(3);
+    expect(await orderAtPub(db, "ann", "stew")).toEqual({ rested: true });
+    expect(gold()).toBe(88);
+    expect(used()).toBe(2);
+    // A second meal the same day is paid for, and gives nothing back.
+    expect(await orderAtPub(db, "ann", "pie")).toEqual({ rested: false });
+    expect(gold()).toBe(70);
+    expect(used()).toBe(2);
   });
 
-  it("sells nothing into a full larder, before the galley is built, or without the gold", async () => {
-    setGold(1000);
-    expect(await buyFromKeeper(db, "ann", "galley", potKey("stores"))).toMatch(/not built/);
-    expect(await haggle(db, "ann", "galley", potKey("stores"), "nudge", 0)).toMatch(/not built/);
-    build(GALLEY_PROJECT);
-    expect(await buyFromKeeper(db, "ann", "galley", "dish:gruel")).toMatch(/nothing like that/);
-    // Cooked full by the crew: there is no room for one bought.
-    give("fur", 2 * stores.cap);
-    give("mushrooms", 3 * stores.cap);
-    for (let i = 0; i < stores.cap; i++) expect(await cook(db, "ann", "stores")).not.toBeTypeOf("string");
-    expect(await buyFromKeeper(db, "ann", "galley", potKey("stores"))).toMatch(/already holds/);
-    expect(gold()).toBe(1000);
+  it("gives nothing back to someone who has not been out, takes nothing without the gold, and sells no drink", async () => {
+    setGold(100);
+    out(0);
+    expect(await orderAtPub(db, "ann", "stew")).toEqual({ rested: false });
+    expect(gold()).toBe(88);
+    expect(used()).toBe(0);
+    sql.prepare("UPDATE gathering SET used = 2").run();
     setGold(5);
-    expect(await buyFromKeeper(db, "ann", "galley", potKey("chowder"))).toMatch(/Not enough gold/);
-    expect(await larderOf(db, "CREWAA")).toEqual({ chowder: 0, stores: stores.cap });
+    expect(await orderAtPub(db, "ann", "stew")).toMatch(/cannot afford/);
+    expect(gold()).toBe(5);
+    expect(used()).toBe(2);
+    expect(await orderAtPub(db, "ann", "ale")).toMatch(/not on the menu/);
+    // Nothing is kept of what was eaten.
+    expect(sql.prepare("SELECT COUNT(*) AS n FROM pub_buffs").get()).toEqual({ n: 0 });
   });
 });

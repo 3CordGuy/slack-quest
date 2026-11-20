@@ -45,11 +45,10 @@ export function workDoor(ctx: Ctx, unit: Unit, door: Poi): { forced: boolean; op
   ctx.events.push({ t: "door", id: unit.id, poi: door.id, how });
   if (how !== "held") {
     door.cleared = true;
+    // The doorway is cave floor now. The tiles are shared with the state before this step (zone.ts stepZone) and what is
+    // reckoned from them is kept by the array, so the tile is not changed where it lies: the map gets a new array with a new tile in it.
     const tile = tileAt(state.map, door.pos);
-    if (tile) {
-      tile.biome = "cave";
-      tile.h = BASE_HEIGHT.cave;
-    }
+    if (tile) state.map.tiles = state.map.tiles.map((t) => (t === tile ? { ...t, biome: "cave", h: BASE_HEIGHT.cave } : t));
   }
   return { forced: how !== "key", opened: how !== "held" };
 }

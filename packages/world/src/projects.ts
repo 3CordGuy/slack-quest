@@ -2,9 +2,8 @@
 //
 // A project has a cost in gold and hut materials. Any crew member can give
 // toward it from their own stock; when every cost is met it is built, for
-// good, and its benefit applies to every voyage the crew launches after
-// that. This file holds the catalogue, the check a contribution must pass,
-// and what built projects give a voyage. The server stores the progress.
+// good. This file holds the catalogue and the check a contribution must
+// pass. The server stores the progress.
 
 import { RESOURCE_KINDS, RESOURCE_LABEL, type ResourceKind } from "./hut";
 
@@ -26,12 +25,6 @@ export interface ProjectDef {
   open: boolean;
   /** Projects the crew must have built before this one can be paid into. */
   requires?: string[];
-  /** Extra days on the doom clock of every voyage. */
-  doomDays?: number;
-  /** Every voyage opens with the island's whole coast already seen (see `coastHexes` in world.ts). */
-  chartsCoast?: boolean;
-  /** Line shown as a voyage opens, saying what the project did for it. */
-  voyageLine?: string;
 }
 
 // The Apothecary and the Smithy are the Harbor's first buildings and open from
@@ -42,7 +35,7 @@ export const PROJECTS: ProjectDef[] = [
     id: "apothecary",
     name: "Apothecary",
     blurb: "A narrow shop by the market stall, hung with drying herbs.",
-    benefit: "Brew herbs and mushrooms into draughts, tonics and salves for your next voyage.",
+    benefit: "Make potions, flasks and bombs for your pack from what you gather, or buy them ready-made.",
     cost: { gold: 250, wood: 25, stone: 15, herbs: 20, mushrooms: 20 },
     open: true,
   },
@@ -58,19 +51,16 @@ export const PROJECTS: ProjectDef[] = [
     id: "lighthouse",
     name: "Lighthouse",
     blurb: "A lamp on a stone tower, to see ships out past the shoals and home again.",
-    benefit: "Every voyage gets one more day on its clock, and opens with the island's coast charted through the fog.",
+    benefit: "A lit tower on the point, its lamp turning over the Harbor. It is there to be seen: it does nothing else yet.",
     cost: { gold: 300, wood: 30, stone: 30, iron: 10 },
     open: true,
     requires: ["apothecary", "smithy"],
-    doomDays: 1,
-    chartsCoast: true,
-    voyageLine: "The Harbor's lighthouse saw you out past the shoals before dawn, and its keeper's chart shows the island's whole coast: one more day on the clock.",
   },
   {
     id: "galley",
     name: "Galley",
     blurb: "A cookhouse that provisions ships before they sail.",
-    benefit: "Cook chowder and ship's stores into a larder the whole crew sails with.",
+    benefit: "A room to walk into, with the cook at his block. He has nothing to sell or cook for you yet.",
     cost: { gold: 250, wood: 30, fur: 15, bone: 10 },
     open: true,
     requires: ["apothecary", "smithy"],
@@ -209,30 +199,6 @@ export function checkContribution(
 /** "20 gold, 5 wood", in catalogue order. */
 export function projectAmountsText(amounts: ProjectAmounts): string {
   return PROJECT_COST_KINDS.filter((k) => amounts[k]).map((k) => `${amounts[k]} ${PROJECT_COST_LABEL[k].toLowerCase()}`).join(", ");
-}
-
-// ---------- what built projects give a voyage ----------
-
-export interface VoyageBoons {
-  /** Days added to the doom clock. */
-  doomDays: number;
-  /** The island's coast starts out seen, fog lifted all the way round. */
-  chartCoast: boolean;
-  /** One line per project that did something, for the voyage's opening feed. */
-  lines: { projectId: string; text: string }[];
-}
-
-/** The benefits of a crew's built projects. Unknown and unopened ids give nothing. */
-export function voyageBoons(built: readonly string[] | undefined): VoyageBoons {
-  const boons: VoyageBoons = { doomDays: 0, chartCoast: false, lines: [] };
-  for (const id of new Set(built ?? [])) {
-    const def = projectById(id);
-    if (!def?.open) continue;
-    boons.doomDays += def.doomDays ?? 0;
-    if (def.chartsCoast) boons.chartCoast = true;
-    if (def.voyageLine) boons.lines.push({ projectId: def.id, text: def.voyageLine });
-  }
-  return boons;
 }
 
 // ---------- wire types ----------

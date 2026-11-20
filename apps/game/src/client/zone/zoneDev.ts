@@ -38,8 +38,6 @@ export function setZoneDev(next: Partial<ZoneDevState>): void {
   for (const tell of listeners) tell();
 }
 
-export const zoneDev = (): ZoneDevState => state;
-
 export function useZoneDev(): ZoneDevState {
   return useSyncExternalStore(
     (tell) => {

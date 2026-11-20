@@ -921,11 +921,13 @@ export class MineStage implements WorldMinigame {
     }
     const free = now !== null && now >= this.freeAt();
     this.charge = this.held && now !== null ? Math.min(1, Math.max(0, now - Math.max(this.held.downAt, this.freeAt())) / this.chargeMs) : 0;
-    this.cb.onCharge?.(this.charge, free);
 
     // The rock under the pointer lights up, more as the swing charges.
     const hovered = this.pointer.inside && close > 0.95 && this.running ? this.rockAt(this.pointer.x, this.pointer.y) : null;
     this.hovered = hovered;
+    // Told after the pick, not before it: the pick measures the canvas, and what this writes to the page (the charge
+    // bar, laid over the view) would have the browser lay the page out again there and then, every frame.
+    this.cb.onCharge?.(this.charge, free);
     for (const rock of this.rocks) {
       const u = rock.mat.uniforms;
       u.uHover.value = rock.id === hovered ? 0.6 + this.charge * 1.4 : 0;

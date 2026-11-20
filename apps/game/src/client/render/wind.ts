@@ -48,6 +48,9 @@ const PART_REACH = 0.85;
 const FIELD = { fieldCalm: { value: 0 }, fieldWalkers: { value: Array.from({ length: PARTINGS }, () => new THREE.Vector4()) } };
 /** Where each walker was a moment ago: it trails after them, so the grass they have passed through closes behind them, not at their heels. */
 const trails = new WeakMap<object, { x: number; z: number }>();
+/** The walkers nearest the view and how far off each is, while setFieldWalkers picks them out: scratch, emptied again as it ends. */
+const NEAREST: ({ x: number; z: number } | undefined)[] = [];
+const NEAREST_FAR: number[] = [];
 
 /**
  * Once a frame: where everyone on the map is standing, so the fields of grass part round them (tall grass a
@@ -55,11 +58,31 @@ const trails = new WeakMap<object, { x: number; z: number }>();
  * happens in the fields' shader, so nothing is worked out per blade here.
  */
 export function setFieldWalkers(walkers: Iterable<{ x: number; z: number }>, near: { x: number; z: number }, dt: number) {
-  const nearest = [...walkers].sort((a, b) => Math.hypot(a.x - near.x, a.z - near.z) - Math.hypot(b.x - near.x, b.z - near.z)).slice(0, PARTINGS / 2);
+  // The nearest few, nearest first, and of two as near as each other the one given first: what sorting them all by
+  // how far off they are and taking the first few gives, without sorting them all.
+  const nearest = NEAREST;
+  const far = NEAREST_FAR;
+  let found = 0;
+  for (const w of walkers) {
+    const d = Math.hypot(w.x - near.x, w.z - near.z);
+    // It goes after everyone no further off than it is.
+    let at = found;
+    while (at > 0 && far[at - 1] > d) at--;
+    if (at >= PARTINGS / 2) continue;
+    for (let k = Math.min(found, PARTINGS / 2 - 1); k > at; k--) {
+      nearest[k] = nearest[k - 1];
+      far[k] = far[k - 1];
+    }
+    nearest[at] = w;
+    far[at] = d;
+    if (found < PARTINGS / 2) found++;
+  }
   const slots = FIELD.fieldWalkers.value;
   const ease = Math.min(1, dt * 2.2);
   for (let i = 0; i < PARTINGS / 2; i++) {
-    const w = nearest[i];
+    const w = i < found ? nearest[i] : undefined;
+    // (Not held on to past this call.)
+    nearest[i] = undefined;
     if (!w) {
       slots[i * 2].set(0, 0, 0, 0);
       slots[i * 2 + 1].set(0, 0, 0, 0);

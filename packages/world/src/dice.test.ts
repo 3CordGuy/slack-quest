@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { DICE_START, PUB_DICE, createDiceGame, diceSplit, diceView, pubPath, pubRoom, poiAt, stepDice, type DiceAction, type DiceGame } from "./index";
+import { DICE_START, PUB_DICE, createDiceGame, diceView, pubPath, pubRoom, poiAt, stepDice, type DiceAction, type DiceGame } from "./index";
 
 const A = { id: "a", name: "Ada" };
 const B = { id: "b", name: "Bo" };
@@ -160,13 +160,6 @@ describe("dice table", () => {
     expect(g.winner).toBe("b");
     expect(err(g, "b", { type: "leave" })).toMatch(/over/);
     expect(err(g, "b", { type: "bid", count: 1, face: 1 })).toMatch(/No game/);
-  });
-
-  it("keeps a tenth of the pot for the house, rounded down", () => {
-    expect(diceSplit(10)).toEqual({ house: 1, prize: 9 });
-    expect(diceSplit(15)).toEqual({ house: 1, prize: 14 });
-    expect(diceSplit(40)).toEqual({ house: 4, prize: 36 });
-    expect(diceSplit(80)).toEqual({ house: 8, prize: 72 });
   });
 
   it("never shows a player anyone else's hidden dice", () => {

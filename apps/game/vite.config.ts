@@ -34,6 +34,12 @@ function buildId(): string {
 // first time and kept on the process, so both halves are stamped alike.
 const BUILD = (process.env.GQ_BUILD_ID ??= buildId());
 
+/** The file a module of a library is built into: three.js in one, React (with its scheduler) in another. Anything else: left to the bundler. */
+function vendorChunk(id: string): string | undefined {
+  const lib = /[\\/]node_modules[\\/](three|react|react-dom|scheduler)[\\/]/.exec(id)?.[1];
+  return lib === undefined ? undefined : lib === "three" ? "three" : "react";
+}
+
 export default defineConfig(({ mode, command }) => ({
   // The dev server is always "dev" on both sides, so restarting it never looks like a new version.
   define: { __GQ_BUILD__: JSON.stringify(command === "serve" ? "dev" : BUILD) },
@@ -43,5 +49,9 @@ export default defineConfig(({ mode, command }) => ({
   // and every placeholder (the battle music among them) would be silent.
   // releaseNotes reads the notice board's release notes out of git (see src/releases.ts).
   plugins: [react(), cloudflare({ remoteBindings: mode !== "offline" }), audioDev(fileURLToPath(new URL("./audio", import.meta.url))), releaseNotes()],
+  // The two big libraries go in files of their own, apart from the game's code: their names carry a hash of what
+  // is in them, so a release that only changes the game leaves them as they were and a returning player's browser
+  // does not fetch them again. Only the browser's half of the build is split; the Worker stays one file.
+  environments: { client: { build: { rollupOptions: { output: { manualChunks: vendorChunk } } } } },
   server: { port: 5180, strictPort: true },
 }));

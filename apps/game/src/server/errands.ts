@@ -104,8 +104,6 @@ async function handedInSince(db: D1Database, playerId: string, since: number): P
 interface FactTimes {
   rested_at: number | null;
   gave_at: number | null;
-  won_at: number | null;
-  contract_at: number | null;
 }
 
 async function factTimes(db: D1Database, playerId: string): Promise<FactTimes> {
@@ -113,19 +111,17 @@ async function factTimes(db: D1Database, playerId: string): Promise<FactTimes> {
     .prepare(
       `SELECT
          (SELECT rested_at FROM gathering WHERE player_id = ?1) AS rested_at,
-         (SELECT MAX(created_at) FROM crew_project_gifts WHERE player_id = ?1) AS gave_at,
-         (SELECT MAX(r.updated_at) FROM runs r JOIN run_players rp ON rp.code = r.code WHERE rp.player_id = ?1 AND r.status = 'victory') AS won_at,
-         (SELECT MAX(r.updated_at) FROM runs r JOIN run_contracts rc ON rc.code = r.code WHERE rc.player_id = ?1 AND rc.done = 1) AS contract_at`,
+         (SELECT MAX(created_at) FROM crew_project_gifts WHERE player_id = ?1) AS gave_at`,
     )
     .bind(playerId)
     .first<FactTimes>();
-  return row ?? { rested_at: null, gave_at: null, won_at: null, contract_at: null };
+  return row ?? { rested_at: null, gave_at: null };
 }
 
 /** The deeds done after a job was taken. */
 function factsSince(t: FactTimes, since: number): QuestFacts {
   const after = (at: number | null) => at !== null && at > since;
-  return { rested: after(t.rested_at), gave: after(t.gave_at), wonVoyage: after(t.won_at), metContract: after(t.contract_at) };
+  return { rested: after(t.rested_at), gave: after(t.gave_at) };
 }
 
 export async function regularsView(db: D1Database, playerId: string, now = Date.now()): Promise<RegularsView | string> {
@@ -184,6 +180,9 @@ export async function takeErrand(db: D1Database, playerId: string, regularId: un
   const today = rows.find((r) => r.regular === found.who.id && r.day === day);
   const problem = acceptProblem(found.offer, held ? toRecord(held) : null, today ? toRecord(today) : null);
   if (problem) return problem;
+  // A job held from before its kind was retired (it asked for a voyage or a contract) can no longer be read or
+  // handed in, and would block every job from them after it: it is let go as a new one is taken.
+  if (held && !toRecord(held)) await db.prepare("DELETE FROM errands WHERE player_id = ? AND regular = ? AND day = ? AND done_at IS NULL").bind(playerId, found.who.id, held.day).run();
   try {
     // The primary key stops a second take of today's offer; the open index, a second job held with them.
     await db

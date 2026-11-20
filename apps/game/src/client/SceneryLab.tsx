@@ -422,15 +422,9 @@ export default function SceneryLab() {
   useEffect(() => {
     const scene: RenderState = {
       code: `lab:scenery:${place}:${clime}`,
-      kind: "voyage",
       you: "lab",
-      phase: "overworld",
-      round: 0,
       map,
       heroes: [{ id: "lab", classId: HERO_CLASSES[0].id, pos: at, label: "Scale" }],
-      turn: null,
-      story: null,
-      npcs: {},
       freeRoam: true,
       backdrop,
     };

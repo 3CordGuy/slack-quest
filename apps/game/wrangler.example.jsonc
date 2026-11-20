@@ -16,8 +16,8 @@
 //   3. pnpm --filter @gantt-quest/game dev
 //
 // AI_MODE "mock" swaps Workers AI for a scripted stand-in so the game runs
-// offline and for free. "live" uses real models for the story, NPC replies,
-// the barkeep and the epilogue, billed to the account's Workers AI allocation.
+// offline and for free. "live" uses real models for the barkeep's replies and
+// for naming a new hero, billed to the account's Workers AI allocation.
 //
 // ENVIRONMENT "dev" (local and staging) puts the dev toolbox in the top-right
 // corner of every screen: a held time of day and weather, the audio engine's
@@ -27,9 +27,6 @@
 // Admin side (content overrides): put ADMIN_EMAILS=you@example.com in
 // apps/game/.dev.vars locally, and `wrangler secret put ADMIN_EMAILS --name <worker>`
 // for a deployed Worker. Comma-separate several. Unset means nobody is an admin.
-//
-// This worker has its own D1 databases. They are not the legacy gantt-quest
-// database used by apps/web and apps/slack.
 {
   "$schema": "../../node_modules/wrangler/config-schema.json",
   "name": "gantt-quest-game",
@@ -56,7 +53,6 @@
   "vars": { "AI_MODE": "mock", "ENVIRONMENT": "dev" },
   "durable_objects": {
     "bindings": [
-      { "name": "RUN_ROOM", "class_name": "RunRoom" },
       { "name": "HARBOR_ROOM", "class_name": "HarborRoom" },
       { "name": "HUT_ROOM", "class_name": "HutRoom" },
       { "name": "PUB_ROOM", "class_name": "PubRoom" },
@@ -70,7 +66,9 @@
     { "tag": "v2", "new_sqlite_classes": ["HarborRoom"] },
     { "tag": "v3", "new_sqlite_classes": ["HutRoom"] },
     { "tag": "v4", "new_sqlite_classes": ["PubRoom"] },
-    { "tag": "v5", "new_sqlite_classes": ["ZoneRoom"] }
+    { "tag": "v5", "new_sqlite_classes": ["ZoneRoom"] },
+    // Voyages are gone: this deletes the RunRoom class and everything its objects stored.
+    { "tag": "v6", "deleted_classes": ["RunRoom"] }
   ],
   // Environments do not inherit bindings or vars, so each one repeats them.
   "env": {
@@ -94,7 +92,6 @@
       "vars": { "AI_MODE": "live", "ENVIRONMENT": "dev", "MAIL_FROM_ADDRESS": "noreply@heylets.party", "MAIL_FROM_NAME": "The Harbor of Heylets" },
       "durable_objects": {
         "bindings": [
-          { "name": "RUN_ROOM", "class_name": "RunRoom" },
           { "name": "HARBOR_ROOM", "class_name": "HarborRoom" },
           { "name": "HUT_ROOM", "class_name": "HutRoom" },
           { "name": "PUB_ROOM", "class_name": "PubRoom" },
@@ -124,7 +121,6 @@
       "vars": { "AI_MODE": "live", "MAIL_FROM_ADDRESS": "noreply@heylets.party", "MAIL_FROM_NAME": "The Harbor of Heylets" },
       "durable_objects": {
         "bindings": [
-          { "name": "RUN_ROOM", "class_name": "RunRoom" },
           { "name": "HARBOR_ROOM", "class_name": "HarborRoom" },
           { "name": "HUT_ROOM", "class_name": "HutRoom" },
           { "name": "PUB_ROOM", "class_name": "PubRoom" },

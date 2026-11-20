@@ -32,7 +32,7 @@ const UNIFORMS = {
   waterRipples: { value: Array.from({ length: RIPPLES }, () => new THREE.Vector3(0, 0, -99)) },
 };
 
-/** Something standing in the water for the sea to foam round: rocks, a wreck, a moored ship. */
+/** Something standing in the water for the sea to foam round: rocks, a wreck. */
 export type Standing = { x: number; z: number; /** Half its length along x; 0 for something round. */ half: number; /** How far from its middle line its edge is. */ radius: number };
 
 /** Tells the water what stands in it on this map. Anything past the first dozen is left without foam. */

@@ -1,9 +1,8 @@
 // Admin content overrides: the allow-list, every validator, and the D1
 // store (history, revert, version bumps) against a real SQLite database with
-// the game's migrations applied, using the same D1 stand-in as trade.test.ts.
+// the game's migrations applied (the stand-in for D1 in d1.ts).
 
-import { readFileSync, readdirSync } from "node:fs";
-import { DatabaseSync } from "node:sqlite";
+import type { DatabaseSync } from "node:sqlite";
 import { beforeEach, describe, expect, it } from "vitest";
 import { ENEMIES } from "@gantt-quest/world";
 import {
@@ -21,52 +20,7 @@ import {
   recentLog,
   validTarget,
 } from "../src/server/content";
-
-type Row = Record<string, unknown>;
-
-class Stmt {
-  constructor(private sql: DatabaseSync, private text: string, private args: unknown[] = []) {}
-  bind(...args: unknown[]) {
-    return new Stmt(this.sql, this.text, args);
-  }
-  exec() {
-    const stmt = this.sql.prepare(this.text);
-    if (/^\s*(SELECT|WITH)/i.test(this.text)) return { results: stmt.all(...(this.args as never[])) as Row[], meta: { changes: 0, last_row_id: 0 } };
-    const res = stmt.run(...(this.args as never[]));
-    return { results: [] as Row[], meta: { changes: Number(res.changes), last_row_id: Number(res.lastInsertRowid) } };
-  }
-  async run() {
-    return this.exec();
-  }
-  async all() {
-    return this.exec();
-  }
-  async first() {
-    return this.exec().results[0] ?? null;
-  }
-}
-
-function openDb() {
-  const sql = new DatabaseSync(":memory:");
-  const dir = new URL("../migrations/", import.meta.url);
-  for (const file of readdirSync(dir).sort()) sql.exec(readFileSync(new URL(file, dir), "utf8"));
-  const db = {
-    prepare: (text: string) => new Stmt(sql, text),
-    async batch(stmts: Stmt[]) {
-      sql.exec("BEGIN");
-      try {
-        const out = stmts.map((s) => s.exec());
-        sql.exec("COMMIT");
-        return out;
-      } catch (err) {
-        sql.exec("ROLLBACK");
-        throw err;
-      }
-    },
-  };
-  return { sql, db: db as unknown as D1Database };
-}
-
+import { openDb } from "./d1";
 
 /** Just enough of a PNG for the size check: signature and an IHDR chunk header, padded to `bytes`. */
 function fakePng(w: number, h: number, bytes = 40): string {
@@ -200,14 +154,14 @@ describe("the override store", () => {
     const v = await putOverrides(
       db,
       [
-        { kind: "name", target: "pub:ale", value: { name: "Ale" } },
+        { kind: "name", target: "pub:stew", value: { name: "Stew" } },
         { kind: "icon", target: "chest-armor", value: { png: fakePng(16, 16) } },
       ],
       "ann",
     );
     expect(v).toBe(1);
     const bundle = await contentBundle(db);
-    expect(Object.keys(bundle.names)).toEqual(["pub:ale"]);
+    expect(Object.keys(bundle.names)).toEqual(["pub:stew"]);
     expect(Object.keys(bundle.icons)).toEqual(["chest-armor"]);
   });
 

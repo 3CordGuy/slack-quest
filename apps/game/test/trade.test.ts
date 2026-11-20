@@ -1,59 +1,11 @@
-// Trading against a real SQLite database with the game's migrations applied.
-//
-// D1 is stood in for by Node's built-in SQLite behind the few D1 methods the
-// trade code uses; a batch is one transaction, as it is on D1. This file
-// lives outside src/ because the app's tsconfig has no Node types.
+// Trading against a real SQLite database with the game's migrations applied
+// (the stand-in for D1 in d1.ts, where a batch is one transaction, as it is on D1).
 
-import { readFileSync, readdirSync } from "node:fs";
-import { DatabaseSync } from "node:sqlite";
+import type { DatabaseSync } from "node:sqlite";
 import { beforeEach, describe, expect, it } from "vitest";
 import { PACK_CELLS, TRADE_TTL_MS, type TradeSide } from "@gantt-quest/world";
 import { acceptTrade, closeTrade, listTrades, openTrade, setTradeSide, settleStatements } from "../src/server/trade";
-
-type Row = Record<string, unknown>;
-
-class Stmt {
-  constructor(private sql: DatabaseSync, private text: string, private args: unknown[] = []) {}
-  bind(...args: unknown[]) {
-    return new Stmt(this.sql, this.text, args);
-  }
-  exec() {
-    const stmt = this.sql.prepare(this.text);
-    if (/^\s*(SELECT|WITH)/i.test(this.text)) return { results: stmt.all(...(this.args as never[])) as Row[], meta: { changes: 0, last_row_id: 0 } };
-    const res = stmt.run(...(this.args as never[]));
-    return { results: [] as Row[], meta: { changes: Number(res.changes), last_row_id: Number(res.lastInsertRowid) } };
-  }
-  async run() {
-    return this.exec();
-  }
-  async all() {
-    return this.exec();
-  }
-  async first() {
-    return this.exec().results[0] ?? null;
-  }
-}
-
-function openDb() {
-  const sql = new DatabaseSync(":memory:");
-  const dir = new URL("../migrations/", import.meta.url);
-  for (const file of readdirSync(dir).sort()) sql.exec(readFileSync(new URL(file, dir), "utf8"));
-  const db = {
-    prepare: (text: string) => new Stmt(sql, text),
-    async batch(stmts: Stmt[]) {
-      sql.exec("BEGIN");
-      try {
-        const out = stmts.map((s) => s.exec());
-        sql.exec("COMMIT");
-        return out;
-      } catch (err) {
-        sql.exec("ROLLBACK");
-        throw err;
-      }
-    },
-  };
-  return { sql, db: db as unknown as D1Database };
-}
+import { addHero, openDb, type Row } from "./d1";
 
 let sql: DatabaseSync;
 let db: D1Database;
@@ -75,18 +27,12 @@ const snapshot = () => ({
   inventory: sql.prepare("SELECT id, player_id, equipped FROM inventory ORDER BY id").all(),
 });
 
-function addRun(code: string, status: string, heroes: string[], updatedAt = Date.now()) {
-  sql
-    .prepare("INSERT OR REPLACE INTO runs (code, seed, status, state_json, created_by, crew_id, created_at, updated_at) VALUES (?, 's', ?, ?, 'ann', 'CREWAA', ?, ?)")
-    .run(code, status, JSON.stringify({ phase: status, heroes: heroes.map((id) => ({ id, name: id })) }), updatedAt, updatedAt);
-}
-
 const side = (s: Partial<TradeSide> = {}): TradeSide => ({ items: [], gold: 0, resources: {}, ...s });
 const errorOf = (res: object) => ("error" in res ? (res.error as string) : null);
 
 /** Open the table between two players; returns the trade's id. */
-async function open(from: string, to: string, run: string | null = null): Promise<number> {
-  const res = await openTrade(db, from, to, run);
+async function open(from: string, to: string): Promise<number> {
+  const res = await openTrade(db, from, to);
   if ("error" in res) throw new Error(res.error);
   return res.id;
 }
@@ -106,12 +52,7 @@ async function shake(id: number, first = "ann", second = "bo") {
 beforeEach(() => {
   ({ sql, db } = openDb());
   const at = Date.now();
-  for (const [id, name, crew] of [["ann", "Ann", "CREWAA"], ["bo", "Bo", "CREWAA"], ["cy", "Cy", "CREWBB"]]) {
-    sql.prepare("INSERT INTO players (id, name, created_at) VALUES (?, ?, ?)").run(id, name, at);
-    sql.prepare("INSERT INTO characters (player_id, name, class_id, status, str, int_stat, vit, agi, dex, gold, created_at) VALUES (?, ?, 'cleric', 'active', 5, 5, 5, 5, 5, 100, ?)").run(id, name, at);
-    sql.prepare("INSERT OR IGNORE INTO crews (id, name, created_by, created_at) VALUES (?, ?, ?, ?)").run(crew, crew, id, at);
-    sql.prepare("INSERT INTO crew_members (crew_id, player_id, joined_at) VALUES (?, ?, ?)").run(crew, id, at);
-  }
+  for (const [id, name, crew] of [["ann", "Ann", "CREWAA"], ["bo", "Bo", "CREWAA"], ["cy", "Cy", "CREWBB"]]) addHero(sql, { id, name, classId: "cleric", crew, at });
   const item = sql.prepare("INSERT INTO inventory (player_id, kind, ref, name, rarity, slot, equipped, created_at) VALUES (?, ?, ?, ?, 'common', ?, ?, ?)");
   item.run("ann", "weapon", "mace", "Mace", "main_hand", 1, at);
   item.run("ann", "trinket", "ring", "Old Ring", "ring", 0, at);
@@ -271,15 +212,15 @@ describe("room in the pack", () => {
 describe("the settling batch on its own", () => {
   const swap = { give: side({ items: [RING, CAP], gold: 10, resources: { wood: 2 } }), ask: side({ items: [BOOTS], resources: { stone: 3 } }) };
   /** A table both have accepted, as the batch would find it. */
-  const agreed = async (run: string | null = null) => {
-    const id = await open("ann", "bo", run);
+  const agreed = async () => {
+    const id = await open("ann", "bo");
     await lay("ann", id, swap.give);
     await lay("bo", id, swap.ask);
     sql.prepare("UPDATE trades SET from_ok = 1, to_ok = 1 WHERE id = ?").run(id);
     return id;
   };
-  const settle = async (id: number, run: string | null = null) => {
-    const res = await db.batch(settleStatements(db, { id, crew_id: "CREWAA", from_id: "ann", to_id: "bo", run_code: run, rev: trade(id).rev }, swap, `token-${Math.random()}`, Date.now()));
+  const settle = async (id: number) => {
+    const res = await db.batch(settleStatements(db, { id, crew_id: "CREWAA", from_id: "ann", to_id: "bo", rev: trade(id).rev }, swap, `token-${Math.random()}`, Date.now()));
     return res.map((r) => r.meta.changes);
   };
 
@@ -303,8 +244,6 @@ describe("the settling batch on its own", () => {
     ["the other's stone row is gone", () => sql.prepare("DELETE FROM resources WHERE player_id = 'bo' AND kind = 'stone'").run()],
     ["one of them left the crew", () => sql.prepare("DELETE FROM crew_members WHERE player_id = 'bo'").run()],
     ["one of them re-rolled their character", () => sql.prepare("UPDATE characters SET status = 'draft' WHERE player_id = 'ann'").run()],
-    ["one walked into a fight", () => addRun("FGHT", "battle", ["ann"])],
-    ["the other walked into a fight", () => addRun("FGHT", "battle", ["bo", "cy"])],
     ["one took their acceptance back", () => sql.prepare("UPDATE trades SET to_ok = 0").run()],
     ["a side changed since", () => sql.prepare("UPDATE trades SET rev = rev + 1").run()],
     ["the trade was cancelled", () => sql.prepare("UPDATE trades SET status = 'withdrawn'").run()],
@@ -315,23 +254,9 @@ describe("the settling batch on its own", () => {
     const rev = trade(id).rev;
     change();
     const before = snapshot();
-    const res = await db.batch(settleStatements(db, { id, crew_id: "CREWAA", from_id: "ann", to_id: "bo", run_code: null, rev }, swap, "token", Date.now()));
+    const res = await db.batch(settleStatements(db, { id, crew_id: "CREWAA", from_id: "ann", to_id: "bo", rev }, swap, "token", Date.now()));
     expect(res.map((r) => r.meta.changes).every((n) => n === 0)).toBe(true);
     expect(snapshot()).toEqual(before);
-  });
-
-  it("holds an island trade to its voyage: both aboard, and ashore", async () => {
-    addRun("ISLE", "overworld", ["ann", "bo"]);
-    const id = await agreed("ISLE");
-    addRun("ISLE", "battle", ["ann", "bo"]);
-    expect((await settle(id, "ISLE"))[0]).toBe(0);
-    addRun("ISLE", "victory", ["ann", "bo"]);
-    expect((await settle(id, "ISLE"))[0]).toBe(0);
-    addRun("ISLE", "overworld", ["ann", "cy"]);
-    expect((await settle(id, "ISLE"))[0]).toBe(0);
-    addRun("ISLE", "overworld", ["ann", "bo"]);
-    expect((await settle(id, "ISLE"))[0]).toBe(1);
-    expect(owner(CAP).player_id).toBe("bo");
   });
 });
 
@@ -355,10 +280,10 @@ describe("what cannot be laid on the table", () => {
 
 describe("the table", () => {
   it("is not opened with yourself, a stranger, or another crew", async () => {
-    expect(errorOf(await openTrade(db, "ann", "ann", null))).toMatch(/yourself/);
-    expect(errorOf(await openTrade(db, "ann", "nobody", null))).toMatch(/no such crewmate/);
-    expect(errorOf(await openTrade(db, "ann", "cy", null))).toMatch(/same crew/);
-    expect(errorOf(await openTrade(db, "ann", 7, null))).toMatch(/Name the crewmate/);
+    expect(errorOf(await openTrade(db, "ann", "ann"))).toMatch(/yourself/);
+    expect(errorOf(await openTrade(db, "ann", "nobody"))).toMatch(/no such crewmate/);
+    expect(errorOf(await openTrade(db, "ann", "cy"))).toMatch(/same crew/);
+    expect(errorOf(await openTrade(db, "ann", 7))).toMatch(/Name the crewmate/);
   });
 
   it("is one between two players, whoever opens it, until one walks away", async () => {
@@ -383,77 +308,16 @@ describe("the table", () => {
     expect(await open("bo", "ann")).not.toBe(id);
     expect(trade(id).status).toBe("expired");
   });
-});
 
-describe("fights", () => {
-  it("keep the table shut while either player is in one", async () => {
-    addRun("FGHT", "battle", ["bo"]);
-    expect(errorOf(await openTrade(db, "ann", "bo", null))).toBe("Bo is in a fight. Trading waits until the fight is over.");
-    expect(errorOf(await openTrade(db, "bo", "ann", null))).toBe("You are in a fight. Trading waits until the fight is over.");
-  });
-
-  it("refuse an acceptance, move nothing, and leave the trade open for afterwards", async () => {
+  it("is closed, with nothing moved, once one of the two has left the crew", async () => {
     const id = await open("ann", "bo");
-    await lay("ann", id, { items: [RING] });
-    const rev = await lay("bo", id, { gold: 20 });
-    await acceptTrade(db, "ann", id, rev);
-    addRun("FGHT", "battle", ["ann"]);
-    const before = snapshot();
-    expect(errorOf(await acceptTrade(db, "bo", id, rev))).toBe("Ann is in a fight. Trading waits until the fight is over.");
-    expect(snapshot()).toEqual(before);
-    expect(trade(id).status).toBe("open");
-    addRun("FGHT", "overworld", ["ann"]);
-    expect(await acceptTrade(db, "bo", id, rev)).toMatchObject({ settled: true });
-    expect([owner(RING).player_id, gold("ann")]).toEqual(["bo", 120]);
-  });
-
-  it("do not count once the voyage is long abandoned", async () => {
-    addRun("FGHT", "battle", ["bo"], Date.now() - 13 * 60 * 60_000);
-    const id = await open("ann", "bo");
-    await lay("ann", id, { gold: 1 });
-    expect(await shake(id)).toMatchObject({ settled: true });
-  });
-});
-
-describe("on an island", () => {
-  it("allows a trade between two heroes of a voyage that is ashore", async () => {
-    addRun("ISLE", "overworld", ["ann", "bo"]);
-    const id = await open("ann", "bo", "ISLE");
-    await lay("ann", id, { items: [CAP] });
-    expect((await listTrades(db, "bo")).open[0].runCode).toBe("ISLE");
-    expect(await shake(id)).toMatchObject({ settled: true });
-    expect(owner(CAP)).toEqual({ player_id: "bo", equipped: 0 });
-  });
-
-  it("opens a fresh table when the two meet somewhere else", async () => {
-    const harbor = await open("ann", "bo");
-    addRun("ISLE", "overworld", ["ann", "bo"]);
-    const island = await open("bo", "ann", "ISLE");
-    expect(island).not.toBe(harbor);
-    expect(trade(harbor).status).toBe("expired");
-  });
-
-  it.each(["lobby", "generating", "battle", "victory", "defeat"])("refuses while the voyage is in %s", async (status) => {
-    addRun("ISLE", status, ["ann", "bo"]);
-    expect(errorOf(await openTrade(db, "ann", "bo", "ISLE"))).toBeTruthy();
-  });
-
-  it("refuses a hero who is not aboard, and a voyage that does not exist", async () => {
-    addRun("ISLE", "overworld", ["ann"]);
-    expect(errorOf(await openTrade(db, "ann", "bo", "ISLE"))).toMatch(/same voyage/);
-    expect(errorOf(await openTrade(db, "ann", "bo", "NOPE"))).toMatch(/voyage is over/);
-  });
-
-  it("refuses an acceptance once a fight has begun, and closes the trade once the voyage has ended", async () => {
-    addRun("ISLE", "overworld", ["ann", "bo"]);
-    const id = await open("ann", "bo", "ISLE");
     const rev = await lay("ann", id, { gold: 5 });
-    addRun("ISLE", "battle", ["ann", "bo"]);
-    expect(errorOf(await acceptTrade(db, "bo", id, rev))).toMatch(/in a fight/);
-    expect(trade(id).status).toBe("open");
-    addRun("ISLE", "defeat", ["ann", "bo"]);
-    expect(errorOf(await acceptTrade(db, "bo", id, rev))).toMatch(/voyage is over.*trade is closed/);
-    expect(trade(id).status).toBe("failed");
+    await acceptTrade(db, "ann", id, rev);
+    sql.prepare("DELETE FROM crew_members WHERE player_id = 'bo'").run();
+    expect(errorOf(await acceptTrade(db, "bo", id, rev))).toMatch(/same crew.*trade is closed/);
+    expect(trade(id)).toMatchObject({ status: "failed", reason: "Trading is between members of the same crew." });
     expect([gold("ann"), gold("bo")]).toEqual([100, 100]);
+    // Both hear how it ended.
+    expect((await listTrades(db, "ann")).recent).toMatchObject([{ id, status: "failed", mine: true }]);
   });
 });

@@ -1,6 +1,6 @@
 # Notes for agents working on this repo
 
-The live game is **The Harbor of Heylets** in `apps/game`, with its rules in `packages/world` and `packages/core`. `apps/web` and `apps/slack` are the original game and are not being worked on. The [root README](README.md) says how to run it, test it and ship a change; [`apps/game/README.md`](apps/game/README.md) says where each piece of code lives. Read those before changing things. This file only holds what agents have got wrong before.
+The game is **The Harbor of Heylets** in `apps/game`, with its rules in `packages/world` and `packages/core`. The [root README](README.md) says how to run it, test it and ship a change; [`apps/game/README.md`](apps/game/README.md) says where each piece of code lives. Read those before changing things. This file only holds what agents have got wrong before.
 
 ## Release notes for the notice board
 

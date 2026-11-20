@@ -16,7 +16,7 @@ import anchorSvg from "../../../public/favicon.svg?raw";
 /** The dark the veil is made of: the page's own background, so the panels over it sit as they always do. */
 export const NIGHT = "#23304f";
 /** Seconds the veil takes to clear once the place is ready. */
-export const VEIL_CLEAR_S = 0.4;
+export const VEIL_CLEAR_S = 0.25;
 
 /** The anchor from the favicon, without its tile: sixteen pixels square, one texel a pixel. */
 function anchorTexture(): THREE.CanvasTexture {

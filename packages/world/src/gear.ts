@@ -403,15 +403,12 @@ export function outfitKey(outfit: Outfit | undefined): string {
   return SLOTS.map((s) => (outfit[s] ? `${outfit[s]!.icon}:${outfit[s]!.rarity[0]}` : "-")).join(",") + (outfit.appearance ? `|${appearanceKey(outfit.appearance)}` : "");
 }
 
-/** Damage taken off each enemy hit by this much armor, before the half-the-hit cap. */
+/**
+ * A third of this much armor, which the client quotes as what armor blocks. No fight takes it off a hit:
+ * on the tiles armor counts toward Defence instead (zone/rules.ts heroDefence).
+ */
 export function armorBlock(armor: number): number {
   return Math.floor(armor / 3);
-}
-
-/** A hit of `raw` damage against `armor`: armor never blocks more than half, and a hit always does at least 1. */
-export function afterArmor(raw: number, armor: number): number {
-  if (raw <= 0) return 0;
-  return Math.max(1, raw - Math.min(armorBlock(armor), Math.floor(raw / 2)));
 }
 
 /** Why a hero cannot equip an item, or null if they can. */

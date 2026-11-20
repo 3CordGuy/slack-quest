@@ -1,8 +1,8 @@
 // The logbook: your hero, written up in an open book. The left-hand page is
 // who they are (level, experience, what their gear adds up to); the
 // right-hand page turns with the ribbons down its edge: Stats, where points
-// are spent; Traits, one of two picked at each trait level, for keeps; and
-// Skills, what the weapon in hand can do. A fourth ribbon opens the Catch Book.
+// are spent, and Skills, what the weapon in hand can do and the class
+// abilities slotted on top. A third ribbon opens the Catch Book.
 
 import { useEffect, useMemo, useState } from "react";
 import {
@@ -12,7 +12,6 @@ import {
   STAT_KEYS,
   STAT_LABEL,
   ABILITY_SLOTS,
-  TRAIT_LEVELS,
   abilitiesFor,
   classAbilitiesOf,
   parseAbilityLoadout,
@@ -22,10 +21,7 @@ import {
   maxFocusFor,
   maxHpFor,
   outfitOf,
-  parseTraits,
-  pendingTraitTiers,
   statPct,
-  traitsFor,
   unlockedFor,
   xpToNext,
 } from "@gantt-quest/world";
@@ -37,17 +33,16 @@ import { blurb, label } from "./labels";
 import { spriteDataUrl, withLook } from "./render/sprites";
 import "./book.css";
 
-type Page = "stats" | "traits" | "skills";
+type Page = "stats" | "skills";
 
 type Hero = NonNullable<Me["character"]>;
 
 /**
- * Whether the logbook has something waiting: points to spend, a trait to pick, or a class ability slot
- * left empty while there is an opened ability to put in it. Marks every way into the logbook.
+ * Whether the logbook has something waiting: points to spend, or a class ability slot left empty while
+ * there is an opened ability to put in it. Marks every way into the logbook.
  */
 export function logbookNews(c: Hero): boolean {
   if (c.unspent_points > 0) return true;
-  if (pendingTraitTiers(c.class_id, c.level, parseTraits(c.traits)).length > 0) return true;
   return abilitySlotOpen(c);
 }
 
@@ -71,16 +66,14 @@ interface Props {
   me: Me;
   refresh(): Promise<unknown>;
   onClose(): void;
-  /** Opened during a voyage: the hero cannot be re-rolled or leave the crew from here. */
+  /** Opened away from the Harbor: the hero cannot be re-rolled or leave the crew from here, and the ability slots stay as they are. No view opens it so now. */
   onIsland?: boolean;
 }
 
 export function Logbook({ me, refresh, onClose, onIsland = false }: Props) {
   const c = me.character!;
   const { busy, error, act } = useAct(refresh);
-  const picked = parseTraits(c.traits);
-  const waiting = pendingTraitTiers(c.class_id, c.level, picked);
-  const [page, setPage] = useState<Page>(waiting.length > 0 && c.unspent_points === 0 ? "traits" : "stats");
+  const [page, setPage] = useState<Page>("stats");
   const [catches, setCatches] = useState(false);
 
   useEffect(() => {
@@ -120,15 +113,15 @@ export function Logbook({ me, refresh, onClose, onIsland = false }: Props) {
             <span>{c.xp} / {next} experience</span>
           </div>
           {me.harborXp && (
-            <p className="book-note" title="Gathering, the pub's tables, the sparring ring, crafting, the Apothecary, the Smithy and crew projects each give a few XP. Voyages are not capped.">
+            <p className="book-note" title="Gathering, the pub's tables, crafting, the Apothecary, the Smithy and crew projects each give a few XP. XP from the maps is not capped.">
               From Harbor pastimes today: {me.harborXp.cap - me.harborXp.left} of {me.harborXp.cap}.
             </p>
           )}
           <dl className="book-totals">
-            <div title="Hit points at the start of a voyage"><dt>Hit points</dt><dd>{maxHpFor(stats, c.level)}</dd></div>
+            <div title="Hit points when you set out"><dt>Hit points</dt><dd>{maxHpFor(stats, c.level)}</dd></div>
             <div title={`Each enemy hit is reduced by ${armorBlock(loadout.armor)}, up to half the hit`}><dt>Armor</dt><dd>{loadout.armor} <small>blocks {armorBlock(loadout.armor)}</small></dd></div>
             <div title="Added to the damage of every ability"><dt>Weapon power</dt><dd>+{loadout.weaponPower}</dd></div>
-            <div title="Focus points at the start of a voyage"><dt>Focus</dt><dd>{maxFocusFor(c.level)}</dd></div>
+            <div title="Focus points when you set out"><dt>Focus</dt><dd>{maxFocusFor(c.level)}</dd></div>
           </dl>
           {cls && <p className="book-note"><em>{cls.blurb}</em></p>}
           {error && <p className="book-error">{error}</p>}
@@ -153,32 +146,6 @@ export function Logbook({ me, refresh, onClose, onIsland = false }: Props) {
                   <p>{STAT_BLURB[k]}</p>
                 </div>
               ))}
-            </>
-          )}
-          {page === "traits" && (
-            <>
-              <h3>Traits {waiting.length > 0 && <span className="book-new">a pick is waiting</span>}</h3>
-              {TRAIT_LEVELS.map((at, i) => {
-                const tier = (i + 1) as 1 | 2;
-                const open = waiting.includes(tier);
-                const locked = c.level < at;
-                return (
-                  <div key={tier} className={`book-tier ${locked ? "locked" : ""}`}>
-                    <p className="book-tier-at">Level {at}{locked ? " · not yet" : open ? " · pick one, for keeps" : ""}</p>
-                    <div className="book-traits">
-                      {traitsFor(c.class_id).filter((t) => t.tier === tier).map((t) => {
-                        const mine = picked.includes(t.id);
-                        return (
-                          <button key={t.id} className={`book-trait ${mine ? "mine" : ""} ${!open && !mine ? "passed" : ""}`} disabled={!open || busy} onClick={() => act(() => api.pickTrait(t.id))}>
-                            <strong>{t.name}</strong>
-                            <span>{t.blurb}</span>
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </div>
-                );
-              })}
             </>
           )}
           {page === "skills" && (
@@ -239,7 +206,7 @@ export function Logbook({ me, refresh, onClose, onIsland = false }: Props) {
         </section>
 
         <nav className="book-ribbons" aria-label="Pages">
-          {([["stats", "Stats", c.unspent_points > 0], ["traits", "Traits", waiting.length > 0], ["skills", "Skills", slotOpen]] as const).map(([id, name, news]) => (
+          {([["stats", "Stats", c.unspent_points > 0], ["skills", "Skills", slotOpen]] as const).map(([id, name, news]) => (
             <button key={id} className={`ribbon ${id} ${page === id ? "on" : ""}`} aria-pressed={page === id} onClick={() => setPage(id)}>
               {name}{news && <i aria-label="something waiting" />}
             </button>

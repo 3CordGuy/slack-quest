@@ -2,7 +2,6 @@
 // a foot landing, a blow setting off and landing, someone going down. Each
 // asks the engine for the names in names.ts, most specific first.
 
-import type { WorldEvent } from "@gantt-quest/world";
 import { audio, type SeaArea, type StartedTake } from "./engine";
 import { soundName, type AttackStyle, type Fighter, type TableSound, type ZoneSound } from "./names";
 
@@ -29,9 +28,6 @@ export const sounds = {
   heal(ability: string, at: At) {
     audio.play(soundName.heal(ability), { at });
   },
-  healFailed(at: At) {
-    audio.play(soundName.healFailed(), { at });
-  },
   tick(effect: string, at: At) {
     audio.play(soundName.tick(effect), { at });
   },
@@ -43,9 +39,6 @@ export const sounds = {
   },
   flee(ok: boolean, at: At) {
     audio.play(soundName.flee(ok), { at });
-  },
-  trait(name: string, at: At) {
-    audio.play(soundName.trait(name), { at });
   },
   yourTurn() {
     audio.play(soundName.yourTurn());
@@ -61,10 +54,6 @@ export const sounds = {
   /** A musical sting: a fight starting, won or lost. */
   stinger(which: "battle_start" | "victory" | "defeat") {
     audio.play([`stinger.${which}`]);
-  },
-  /** A boss has turned up: heard as the battle's opening card goes up. */
-  boss() {
-    audio.play(soundName.boss());
   },
   levelUp() {
     audio.play(soundName.levelUp());
@@ -84,10 +73,6 @@ export const sounds = {
   tableWin() {
     audio.play(soundName.tableWin());
   },
-  world(ev: WorldEvent, you: string) {
-    const names = soundName.world(ev, you);
-    if (names) audio.play(names);
-  },
 };
 
 type Point = { x: number; z: number };
@@ -99,9 +84,8 @@ let heard: object | null = null;
 
 /**
  * A map's place in the sound: where you stand on it, its sky, its fires and
- * its water. Each renderer opens one. When one map is drawn over another (the
- * crossing over the ship's deck), the one on top is heard, and the one under
- * it takes over again when that closes.
+ * its water. Each renderer opens one. When one map is drawn over another, the
+ * one on top is heard, and the one under it takes over again when that closes.
  */
 export function openEar() {
   const me = {};

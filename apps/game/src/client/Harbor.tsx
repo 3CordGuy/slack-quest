@@ -70,7 +70,7 @@ export function Harbor({ me, refresh, invite }: Props) {
         <header className="harbor-hero">
           <AnchorMark />
           <HarborTitle name={GAME_TITLE} />
-          <p className="harbor-tagline">Your crew's base between voyages. Every island is a new story.</p>
+          <p className="harbor-tagline">Your crew's base between outings. Every place on the atlas is a new map.</p>
           {!me.player.email && !hasCharacter && (
             <p className="harbor-returning-hint">
               Played before? <button className="link" onClick={showSignIn}>Sign in to pick up your character</button>
@@ -102,7 +102,7 @@ function CrewGate({ busy, act, invite }: { busy: boolean; act: Act; invite: stri
     <div className="harbor-grid">
       <section className="panel">
         <h2>Join a crew</h2>
-        <p className="muted">A crew shares one Harbor: you see each other there, moor ships at the same docks and keep one voyage log. Paste the invite code a crewmate sent you.</p>
+        <p className="muted">A crew shares one Harbor: you see each other there, and share one atlas and one town chest. Paste the invite code a crewmate sent you.</p>
         <div className="row">
           <input value={code} maxLength={6} placeholder="INVITE" onChange={(e) => setCode(e.target.value.toUpperCase().replace(/[^A-Z]/g, ""))} />
           <button className="primary" disabled={busy || code.length !== 6} onClick={() => act(() => api.joinCrew(code))}>

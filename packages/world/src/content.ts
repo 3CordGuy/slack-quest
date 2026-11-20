@@ -1,10 +1,9 @@
-// Static game content for the overworld game: hero classes, weapons and
-// their abilities, enemies, and loot. Data only; the reducers in battle.ts
-// and world.ts give it meaning.
+// Static game content: hero classes, weapons and their abilities, and
+// enemies. Data only; the fights on the tiles (zone/) give it meaning.
 
-import type { StatKey, Stats } from "@gantt-quest/core";
+import type { StatKey } from "@gantt-quest/core";
 
-/** Effect names match EFFECT_META in packages/core/src/flavor.ts, plus `guarded`, `taunting` and the timeline effects (`slowed`, `hasted`, `glitched`, `exposed`). */
+/** What an ability or an enemy's attack can leave on whoever it lands on. A fight on the tiles has more conditions of its own (zone/types.ts). */
 export type EffectKind = "bleeding" | "burning" | "stunned" | "guarded" | "taunting" | "slowed" | "hasted" | "glitched" | "exposed" | "prone" | "sundered";
 
 export const EFFECT_INFO: Record<EffectKind, { name: string; blurb: string; color: string }> = {
@@ -21,13 +20,8 @@ export const EFFECT_INFO: Record<EffectKind, { name: string; blurb: string; colo
   sundered: { name: "Sundered", blurb: "Its armor is dented: 2 less Defence.", color: "#b0a48a" },
 };
 
-/** Exposed targets take this much more from each direct hit. */
-export const EXPOSED_BONUS = 3;
 /** Sundered targets have this much less Defence. */
 export const SUNDERED_DEFENCE = 2;
-/** A hasted combatant's wait between turns is multiplied by this; a slowed one's by SLOW_FACTOR. */
-export const HASTE_FACTOR = 2 / 3;
-export const SLOW_FACTOR = 1.5;
 
 export const EFFECT_TICK: Partial<Record<EffectKind, number>> = { bleeding: 2, burning: 3 };
 
@@ -49,8 +43,6 @@ export interface HeroClass {
 export const DRUID_REGEN = 1;
 /** Extra damage on every other hero's attacks while a Shanty Bard is standing. One Bard's worth, however many there are. */
 export const BARD_AURA = 2;
-/** Turns of bleeding the Wreck Warlock's perfect hits leave behind. */
-export const WARLOCK_BLEED_TURNS = 2;
 
 export const HERO_CLASSES: HeroClass[] = [
   {
@@ -129,15 +121,15 @@ export interface AbilityDef {
   stat: StatKey;
   rolls: number;
   target: AbilityTarget;
-  /** Damage at a perfect result, before the level bonus. Scales with successes. */
+  /** How hard it hits. A fight rolls dice sized from this (zone/kit.ts abilityDice) and adds the hero's stat, weapon and level. */
   damage?: number;
-  /** Healing at a perfect result. Scales with successes. */
+  /** How much it heals, turned into dice the same way (healDice). */
   heal?: number;
-  /** Applied to the user when at least one roll succeeds. */
+  /** Applied to the user when the ability lands. */
   selfEffect?: { effect: EffectKind; turns: number };
-  /** Applied to the target only on a perfect result. */
+  /** Applied to a target it gets through to, unless the target makes its save (where the ability allows one). */
   perfect?: { effect: EffectKind; turns: number };
-  /** Applied to each target when at least one roll succeeds. */
+  /** Applied to each target it gets through to, with no save. */
   targetEffect?: { effect: EffectKind; turns: number };
   /** Heals the user this share of the damage it deals. */
   drain?: number;
@@ -216,7 +208,7 @@ export const ABILITIES: Record<string, AbilityDef> = {
   hex: { id: "hex", name: "Hex", stat: "int_stat", rolls: 3, target: "enemy", damage: 8, perfect: { effect: "glitched", turns: 1 }, blurb: "A slow curse on the target. On a hit, it must save or be Fumbling: its next attack is rolled with disadvantage." },
   soul_drain: { id: "soul_drain", name: "Soul Drain", stat: "int_stat", rolls: 3, target: "enemy", damage: 11, drain: 0.34, blurb: "Takes some of their life for yours: heals you a third of the damage dealt. 2 turns to wait." },
   // Class abilities: chosen for a hero's slots from their class's pool (classabilities.ts), not given by a weapon.
-  // Paladin. The two auras are conditions on the Paladin in a zone fight (zone/kit.ts AURAS); a voyage battle has no tiles for them to reach across.
+  // Paladin. The two auras are conditions on the Paladin in a fight (zone/kit.ts AURAS).
   beacon_aura: { id: "beacon_aura", name: "Beacon Aura", stat: "vit", rolls: 1, target: "self", blurb: "For 4 turns you shine: you light the dark around you, and you and allies within 2 hexes have advantage on your attacks." },
   healing_aura: { id: "healing_aura", name: "Healing Aura", stat: "vit", rolls: 1, target: "self", blurb: "For 4 turns, at the start of each of your turns, you and every ally within 2 hexes heal a little." },
   branding_strike: { id: "branding_strike", name: "Branding Strike", stat: "str", rolls: 3, target: "enemy", damage: 11, targetEffect: { effect: "burning", turns: 2 }, blurb: "A searing blow that hits harder than most, and sets the target Burning." },
@@ -341,11 +333,8 @@ export interface EnemyDef {
 /** HP a troll grows back at the start of each of its turns, when it is not Burning. */
 export const TROLL_REGEN = 3;
 
-/** The sparring ring's stand-in opponent. Practice only: no story or map may field it. */
-export const DUMMY_KIND = "dummy";
-
 export const ENEMIES: Record<string, EnemyDef> = {
-  // Soaks up a whole rotation of abilities and barely hits back.
+  // A training dummy, for a practice map: it soaks up a whole rotation of abilities, barely hits back and never moves.
   dummy: {
     kind: "dummy", name: "Training Dummy", hp: 60, speed: 0, xp: 0,
     attacks: [{ name: "Wobble", rolls: 2, pct: 29, damage: 1, target: "hero", weight: 1 }],
@@ -467,7 +456,7 @@ export const ENEMIES: Record<string, EnemyDef> = {
       { name: "Acid Splash", rolls: 2, pct: 49, damage: 4, target: "hero", perfect: { effect: "exposed", turns: 2 }, weight: 2 },
     ],
   },
-  // What is bound in the deep chamber: named after the story's villain, like every boss.
+  // What is bound in the caverns' deepest chamber, guarding the hoard.
   haunt: {
     kind: "haunt", name: "Haunt", hp: 30, speed: 55, xp: 44, boss: true,
     attacks: [
@@ -543,9 +532,9 @@ export const CAVERN_LEADS = ["shade", "bat", "skeleton", "slime"] as const;
 export type CavernLead = (typeof CAVERN_LEADS)[number];
 
 /**
- * A band in the caverns for a crew of `party` heroes, sized like one on an
- * island: one enemy for a lone hero, a pair for a party, a third for a full
- * ship. Bats are half an enemy each and come as a swarm.
+ * A band in the caverns for a party of `party` heroes: one enemy for a lone
+ * hero, a pair for a party, a third for a full one. Bats are half an enemy
+ * each and come as a swarm.
  */
 export function cavernBand(lead: CavernLead, party: number): string[] {
   if (lead === "bat") return ["bat", "bat", ...(party >= 2 ? ["bat"] : []), ...(party >= 4 ? ["bat", "bat"] : [])];
@@ -553,30 +542,17 @@ export function cavernBand(lead: CavernLead, party: number): string[] {
   return [lead, ...(party >= 2 ? [second] : []), ...(party >= 4 ? [lead] : [])];
 }
 
-/** What leads a roaming band ashore, as an even pick: wolves and bandits twice as often as a bear or an ogre. */
-export const ROAMER_LEADS = ["wolf", "bandit", "wolf", "bandit", "bear", "ogre"] as const;
-export type RoamerLead = (typeof ROAMER_LEADS)[number];
+/** What can lead a roaming band. */
+export type RoamerLead = "wolf" | "bandit" | "bear" | "ogre";
 
 /**
- * A roaming band for a crew of `party` heroes: a lone hero meets one enemy, a
- * party a pair, a full ship a third. A bear is a pair's worth on its own, so
- * it comes alone until the ship is full, and then with a second. So does an ogre, and what comes with it
- * to a full ship is the bandit who keeps it fed.
+ * A roaming band for a party of `party` heroes: a lone hero meets one enemy, a
+ * party a pair, a full party a third. A bear is a pair's worth on its own, so
+ * it comes alone until the party is full, and then with a second. So does an ogre, and what comes with it
+ * to a full party is the bandit who keeps it fed.
  */
 export function bandKinds(lead: RoamerLead, party: number): string[] {
   if (lead === "bear") return party >= 4 ? ["bear", "bear"] : ["bear"];
   if (lead === "ogre") return party >= 4 ? ["ogre", "bandit"] : ["ogre"];
   return [lead, ...(party >= 2 ? [lead === "bandit" ? "archer" : "wolf"] : []), ...(party >= 4 ? [lead] : [])];
 }
-
-// ---------- run-scoped key items ----------
-
-export interface KeyItemDef {
-  id: string;
-  /** What holding it does, applied once when received. */
-  grant: { maxFocus?: number; potions?: number };
-}
-
-export const KEY_ITEMS: Record<string, KeyItemDef> = {
-  charm: { id: "charm", grant: { maxFocus: 2 } },
-};

@@ -52,7 +52,7 @@ The big changes from today:
 | Materials | `resources(player_id, kind, qty)` | counts only; no per-item attributes |
 | Wall decor | `mounted_fish` furnishing (`hut.ts:205-213`, model `props.ts:573`) | `furnishings.meta_json` exists but `getHut` never selects it |
 | Pub | per-crew DO; `PUB_BARKEEP` Old Tam only talks; fittings fixed, nothing stored | "Fish Stew" on the menu is flavour |
-| Records | none in apps/game | `fish_best_ms`, `fisher_100` are in legacy apps/web only |
+| Records | none in apps/game | |
 
 Today's fishing is the main source of **bone** and one of the sources of **copper**. Bone feeds galley chowder, the galley project, Stoneskin, wall-piece recipes and Gretta's errands. The haul table below keeps both flowing (see *Hauls*).
 

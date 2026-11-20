@@ -1,20 +1,15 @@
-// A little XP from the Harbor's pastimes: gathering, the pub's tables, the
-// sparring ring, crafting, the Apothecary, the Smithy and crew projects.
+// A little XP from the Harbor's pastimes: gathering, the pub's tables,
+// crafting, the Apothecary, the Smithy and crew projects.
 //
-// Voyages stay the way to level up. Each pastime pays a few XP, and a daily
-// cap (counted per UTC day, like gathering stamina) stops grinding them from
-// replacing a voyage: the whole day's Harbor XP is about a fifth of a won
-// voyage. The hut's XP perk is a voyage perk and does not apply here (on
-// awards this small it would round to nothing anyway).
+// Going out on the maps stays the way to level up. Each pastime pays a few
+// XP, and a daily cap (counted per UTC day, like gathering stamina) stops
+// grinding them from replacing that.
 
 import { applyXp, type Progress } from "./progression";
 import { gatherDay, gatherResetAt, type GatherState } from "./gather";
 
 /** The most XP the Harbor's pastimes can give one hero in a UTC day. */
 export const HARBOR_XP_DAILY_CAP = 30;
-
-/** Sparring bouts per day that count for XP. A bout is fought in the browser, so this keeps it from being farmed. */
-export const SPAR_XP_DAILY_BOUTS = 3;
 
 /** What each pastime pays, before the cap. */
 export const HARBOR_XP = {
@@ -24,21 +19,15 @@ export const HARBOR_XP = {
   gatherBanked: 4,
   /** Winning a game at one of the pub's tables: dice, Shoals, or Cargo and Krakens. */
   pubWin: 5,
-  /** Finishing a bout at the sparring ring, won or lost. */
-  spar: 3,
   /** Crafting a furnishing. */
   craft: 5,
-  /** A brew at the Apothecary. */
+  /** Making a potion, flask or bomb at the Apothecary. */
   brew: 3,
   /** A step at the Smithy's forge. */
   smith: 4,
-  /** A dish cooked into the Galley's larder. */
-  cook: 3,
   /** Giving to a crew project. */
   project: 4,
 } as const;
-
-export type HarborXpSource = keyof typeof HARBOR_XP;
 
 /** XP for each perfect split at the chopping block: not a pastime of its own, and not held to the daily cap, nor to a full pile. */
 export const PERFECT_SPLIT_XP = 1;
@@ -71,19 +60,12 @@ export function sittingXp(state: Pick<GatherState, "status" | "sitting">): numbe
 export interface HarborXpRecord {
   day: string;
   used: number;
-  spars: number;
 }
 
 /** Harbor XP a hero may still earn today. */
 export function harborXpLeft(record: Pick<HarborXpRecord, "day" | "used"> | null | undefined, now: number): number {
   if (!record || record.day !== gatherDay(now)) return HARBOR_XP_DAILY_CAP;
   return Math.max(0, HARBOR_XP_DAILY_CAP - Math.max(0, record.used));
-}
-
-/** Sparring bouts that still count for XP today. */
-export function sparBoutsLeft(record: Pick<HarborXpRecord, "day" | "spars"> | null | undefined, now: number): number {
-  if (!record || record.day !== gatherDay(now)) return SPAR_XP_DAILY_BOUTS;
-  return Math.max(0, SPAR_XP_DAILY_BOUTS - Math.max(0, record.spars));
 }
 
 export interface HarborXpStatus {
@@ -111,24 +93,22 @@ export interface HarborXpAward {
 }
 
 /**
- * Work out an award: cap it, then level the hero up as a voyage would
- * (class auto-allocation plus a free point per level). `spar` counts a bout
- * against the day's sparring allowance; a bout past it pays nothing. `bonus`
- * is given whatever the cap, and does not use any of it.
+ * Work out an award: cap it, then level the hero up as any XP does (class
+ * auto-allocation plus a free point per level). `bonus` is given whatever
+ * the cap, and does not use any of it.
  */
-export function harborXpAward(hero: Progress, record: HarborXpRecord | null | undefined, amount: number, now: number, spar = false, bonus = 0): HarborXpAward {
+export function harborXpAward(hero: Progress, record: HarborXpRecord | null | undefined, amount: number, now: number, bonus = 0): HarborXpAward {
   const today = gatherDay(now);
-  const current: HarborXpRecord = record && record.day === today ? record : { day: today, used: 0, spars: 0 };
+  const current: HarborXpRecord = record && record.day === today ? record : { day: today, used: 0 };
   const asked = Math.max(0, Math.floor(Number.isFinite(amount) ? amount : 0));
-  const allowed = spar && sparBoutsLeft(current, now) === 0 ? 0 : asked;
-  const granted = Math.min(allowed, harborXpLeft(current, now));
+  const granted = Math.min(asked, harborXpLeft(current, now));
   const extra = Math.max(0, Math.floor(Number.isFinite(bonus) ? bonus : 0));
   return {
     granted,
     bonus: extra,
     asked,
     next: applyXp(hero, granted + extra),
-    record: { day: today, used: current.used + granted, spars: current.spars + (spar ? 1 : 0) },
+    record: { day: today, used: current.used + granted },
   };
 }
 

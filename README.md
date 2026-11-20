@@ -1,32 +1,37 @@
 # The Harbor of Heylets
 
-A live, turn-based co-op game in the spirit of *For the King*. Your crew shares a harbour town between voyages. Up to four of you board a ship, sail to a freshly generated island with its own story, talk your way past AI-voiced islanders, fight what lives there, and bring the loot home.
+A live co-op game. Your crew shares a harbour town. From the waygate in its square you open the crew's atlas, a chart of places that grows as you clear them, and step through to a freshly generated map: a ruin, a snowfield, a cave, a stronghold. You walk it freely, fight what lives there turn by turn on its hexes, search what they leave behind, and bring the loot home.
 
 - **Play:** https://harbor.heylets.party
 - **Staging:** https://harbor-staging.heylets.party
 
-It runs entirely on Cloudflare: Workers, Durable Objects, D1, Workers AI and Email Sending, with a React and Three.js client. Pixel-art sprites stand on low-poly hex terrain.
+It runs entirely on Cloudflare: Workers, Durable Objects, D1, Workers AI and Email Sending, with a React and Three.js client drawing low-poly figures on hex terrain.
 
-> The repo is called `slack-quest` and the packages `@gantt-quest/*` for historical reasons. The original game, **Gantt Quest**, still lives in `apps/web` and `apps/slack`; see [The original Gantt Quest](#the-original-gantt-quest) below.
+> The repo is called `slack-quest` and the packages `@gantt-quest/*` for historical reasons: the Harbor grew out of an earlier game, **Gantt Quest**, whose code was removed from this repo in November 2026 (it is in the git history before then).
 
 ---
 
 ## The game
 
 **The Harbor** is your crew's home, a shared town you all walk around in together.
-- **Gathering:** fish off the shore, fell trees, work the quarry. Fishing and the quarry are short push-your-luck timing games, swayed by your stats. Felling is played in the Harbor through your hero's eyes: thirty seconds chopping (small, medium or large trees, a race and a choice), then thirty seconds splitting the logs on a block, where a well-timed strike pays wood.
+- **Gathering:** fish off the piers and the shore, fell trees, work the quarry. Fishing is a fight with one fish at a time; the quarry is thirty seconds at a rock face, hunting for the seam; felling is played through your hero's eyes: thirty seconds chopping, then thirty seconds splitting the logs on a block.
 - **Your hut:** buy a plot, fill a resource bin to raise a shack, then furnish it, craft for it and upgrade it. Rest there to recover.
-- **The pub:** food and drink that boost your next voyage, dice and Shoals at the tables, and traveling salesmen who drop in from time to time.
-- **Crew projects:** pay together into the Apothecary (brews for the voyage) and Smithy (sharpen and reinforce gear) first; once both stand, the Lighthouse (a day more on every voyage, and the island's coast charted) and the Galley (a shared larder) unlock.
-- **Around town:** the market stall, the notice board's contracts and crew goal, the sparring ring, and trading or giving gear to crewmates.
+- **The pub:** a meal that gives back a gathering outing, table games played for a stake, the regulars and their errands, and traveling salesmen who drop in from time to time.
+- **Crew projects:** pay together into the Apothecary and Smithy first; once both stand, the Lighthouse and the Galley unlock.
+- **Around town:** the market stall, the notice board with each release's news, the Lapidary (where lodestones are cut and worked), the town chest the crew shares, and trading or giving gear to crewmates.
 
-**A voyage** is one session. The crew sails to a seeded hex island with a generated story:
-- **The island:** fog lifts as you explore, enemy bands roam, and there are herbs, mushrooms, wood and stone to pick up.
-- **Fights:** turn order follows a speed timeline, enemies show what they'll do next, and everything is resolved by stat-check rolls.
-- **Islanders:** you talk to them in free text. The AI writes what they say, but it can only change the game through a fixed, validated set of actions.
-- **Returning home:** win or lose, you come back with XP, gold, loot and hut materials. Defeat costs a capped amount of gold and nothing else.
+**The atlas** is the crew's chart of the world, opened at the waygate. Setting out for a place on it is a voyage.
+- **Places:** each node is a place to clear. Clearing one opens the ones beyond it; lookouts lift the cloud over a wide stretch, and lairs hold a boss.
+- **Lodestones:** setting out for a place takes a lodestone, put into its slot. A stone can carry modifiers that make the map harder and its bounty richer.
+- **Setting out:** when one of you sets out, everyone in town is asked whether they are coming.
 
-**Heroes:** eight classes, each with a passive, two weapons, traits chosen at levels 2 and 4, and a signature weapon. The classes are Lighthouse Paladin, Stormcall Mage, Smuggler Rogue, Reef Druid, Shanty Bard, Starchart Sage, Tidewall Warden and Wreck Warlock. Characters persist and level up, and sign-in is by email code, so guests can save their progress.
+**A map** is one place on the atlas, generated from a seed.
+- **Walking:** out of a fight, you walk where you like. A fight starts when you come close to an enemy band, and other bands that hear it join in.
+- **Fights:** turn by turn on the hexes, each hero and enemy with a turn of their own, paid for in Action Points. Height, surfaces on the ground, and shoves off ledges and into water all matter, and every roll is shown in the combat log.
+- **Loot:** bodies and chests are searched and shared first come, first served; clearing the place pays every hero a bounty of their own.
+- **The caverns** under the Harbor are played the same way, by torchlight.
+
+**Heroes:** eight classes, each with a passive, two weapons, class abilities chosen for a few slots, and a signature weapon. The classes are Lighthouse Paladin, Stormcall Mage, Smuggler Rogue, Reef Druid, Shanty Bard, Starchart Sage, Tidewall Warden and Wreck Warlock. Characters persist and level up, and sign-in is by email code, so guests can save their progress.
 
 **For admins:** an admin page (`#admin`) renames things, recolours sprites and swaps item icons without code changes. It's presentation only and never changes the rules.
 
@@ -34,10 +39,9 @@ It runs entirely on Cloudflare: Workers, Durable Objects, D1, Workers AI and Ema
 
 | Path | What |
 |---|---|
-| `apps/game` | **The game.** Hono Worker, Durable Objects (`RunRoom`, `HarborRoom`, `HutRoom`, `PubRoom`), the AI calls, and the React + Three.js client. Its own D1 database and migrations. See [`apps/game/README.md`](apps/game/README.md). |
-| `packages/world` | **The rules.** Pure and deterministic: no I/O, and no `Math.random` (everything uses a seeded RNG). The world and battle reducers, maps, stories, gear, huts, gathering, projects, the pub games and trading. Most changes start here. |
-| `packages/core` | Shared basics from the original game: hex geometry, the five stats, starting stats and levelling. |
-| `apps/web`, `apps/slack`, `packages/db` | The original Gantt Quest (legacy). |
+| `apps/game` | **The game.** Hono Worker, Durable Objects (`HarborRoom`, `HutRoom`, `PubRoom`, `ZoneRoom`), the AI calls, and the React + Three.js client. Its own D1 database and migrations. See [`apps/game/README.md`](apps/game/README.md). |
+| `packages/world` | **The rules.** Pure and deterministic: no I/O, and no `Math.random` (everything uses a seeded RNG). Fights on the tiles (`src/zone`), map generation, the atlas, gear, huts, gathering, projects, the pub games and trading. Most changes start here. |
+| `packages/core` | Shared basics: hex geometry, the five stats, starting stats and the XP curve. |
 | `docs/` | Design docs and checklists; see [Docs](#docs). |
 
 ## Run it locally
@@ -63,14 +67,14 @@ Some local defaults:
 - **New migrations:** whenever new migrations land, run `db:migrate:local` again. A local 500 error after pulling usually means one was missed.
 
 Dev builds expose a few console handles:
-- **Driving the game:** `window.__gq` (on a voyage) and `window.__harbor`.
+- **Driving the game:** `window.__harbor` in the Harbor and `window.__gqZone` on a map.
 - **Pinning the sky:** `window.__gqTime` (0 is midnight, 0.5 is noon) and `window.__gqWeather` (0 is clear, 1 is heavy rain).
 - **The renderer:** `window.__gqWorld` (`__gqWorld.renderer.info.render.calls` for draw calls).
 
 ## Tests
 
 ```bash
-pnpm --filter @gantt-quest/world test        # the rules, including a seeded fight-balance simulation
+pnpm --filter @gantt-quest/world test        # the rules
 pnpm --filter @gantt-quest/world typecheck
 pnpm --filter @gantt-quest/game typecheck
 pnpm --filter @gantt-quest/game test         # server code against SQLite with the migrations applied
@@ -121,7 +125,6 @@ npx wrangler deploy                                           # 3. deploy what w
 
 - `main` is the only long-lived branch. Feature branches open PRs into it; start them from a fresh `origin/main`.
 - A push to `main` that touches the game deploys it to **staging** (see above). Production only ever deploys from a `game-v*` tag.
-- A push to `main` also runs `.github/workflows/deploy.yml`, which deploys the **legacy** web app and Slack bot. It skips pushes that only touch the game (`apps/game`, `packages/world`) or docs, and it never deploys the game.
 
 For collaborators, a change goes out like this:
 
@@ -160,11 +163,11 @@ The first entry, `next-<sha>`, is what the board will say for the release (stagi
 
 A few rules that keep the game fair and replayable:
 
-- **The rules are pure.** Clients send intents. The Durable Object runs the reducer (`stepWorld` / `stepBattle` in `packages/world`) and broadcasts the result. The acting hero always comes from the socket, never from the message.
-- **Everything random is seeded,** so a voyage can be replayed from its seed and action log.
-- **The AI never changes the game directly.** It returns words plus a *proposed* intent, which is checked against what that islander is allowed to do in the story. New powers are added as validated verbs in `packages/world`, not as prompt text.
+- **The rules are pure.** Clients send intents. The Durable Object runs the reducer (`stepZone` in `packages/world`) and broadcasts the result. The acting hero always comes from the socket, never from the message.
+- **Everything random is seeded,** so a map is the same for everyone on it and its fights can be replayed in tests.
+- **The AI only ever produces words** (the barkeep's talk, a name for a new hero). It never changes the game.
 - **D1 is the system of record.** Durable Objects hibernate, reload from D1, and save before broadcasting. Timers are Durable Object alarms, never `setTimeout`.
-- **Rewards are written as they're earned,** so a dropped voyage never loses loot.
+- **Rewards are written as they're earned,** so a dropped connection never loses loot.
 - **Money and items move atomically,** in conditional D1 batches, so two requests at once can't spend the same gold twice.
 
 ## Docs
@@ -173,17 +176,5 @@ A few rules that keep the game fair and replayable:
 |---|---|
 | [`apps/game/README.md`](apps/game/README.md) | The game app in depth: where each piece of code lives, and more rules worth knowing |
 | [`AGENTS.md`](AGENTS.md) | For coding agents: writing release notes for the notice board, and what to check before committing |
-| [`docs/overworld-revamp.md`](docs/overworld-revamp.md) | The design behind the rewrite, and what's been built |
 | [`docs/game-production-checklist.md`](docs/game-production-checklist.md) | Taking the game to production, and rolling back |
-| [`docs/legacy-gantt-quest.md`](docs/legacy-gantt-quest.md) | The original Gantt Quest: architecture, setup and Slack app |
-
-Other files in `docs/` are design notes from the original game: tactical hex combat, the expedition map, gear affixes and uniques, multi-foe encounters, ground effects, battlefield art, and its town map and pub.
-
-## The original Gantt Quest
-
-The first version of the game is a team-comedic, engineering-themed dungeon crawl. It's still running:
-- `apps/web` is its web dashboard.
-- `apps/slack` is its Slack bot, which is deprecated.
-- Both share the `gantt-quest` D1 database through `packages/db`.
-
-It's deployed by GitHub Actions on every push to `main`. It shares no data with The Harbor of Heylets: the two have separate databases, Workers and accounts. Its full README is preserved at [`docs/legacy-gantt-quest.md`](docs/legacy-gantt-quest.md).
+| [`docs/fishing-rebuild.md`](docs/fishing-rebuild.md) | The design doc fishing was rebuilt from |

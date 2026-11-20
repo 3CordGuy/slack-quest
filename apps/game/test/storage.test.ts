@@ -1,60 +1,15 @@
 // The finite pack and the storage chest, against a real SQLite database with
-// the game's migrations applied (the same stand-in for D1 as trade.test.ts).
+// the game's migrations applied (the stand-in for D1 in d1.ts).
 
-import { readFileSync, readdirSync } from "node:fs";
-import { DatabaseSync } from "node:sqlite";
+import type { DatabaseSync } from "node:sqlite";
 import { beforeEach, describe, expect, it } from "vitest";
 import { CARRY_BASE, FURNISHINGS, itemCells, GATHER_DAILY_OUTINGS, STORAGE_CHEST, gatherDay, type ItemDef } from "@gantt-quest/world";
-import { applyGrant, buyShopItem, carryState, craftFurnishing, equipItem, getInventory, getShop, sellItem, setAbilitySlot, stashMaterial, storeItem, stowGear, unstowGear } from "../src/server/db";
+import { applyZoneGrant, buyShopItem, carryState, craftFurnishing, equipItem, getInventory, getShop, sellItem, setAbilitySlot, stashMaterial, storeItem, stowGear, unstowGear } from "../src/server/db";
 import { rest } from "../src/server/gather";
 import { setPresence } from "../src/server/zones";
 import { buyFromSalesman, getSalesman } from "../src/server/salesman";
 import { acceptTrade, openTrade, setTradeSide } from "../src/server/trade";
-
-type Row = Record<string, unknown>;
-
-class Stmt {
-  constructor(private sql: DatabaseSync, private text: string, private args: unknown[] = []) {}
-  bind(...args: unknown[]) {
-    return new Stmt(this.sql, this.text, args);
-  }
-  exec() {
-    const stmt = this.sql.prepare(this.text);
-    if (/^\s*(SELECT|WITH)/i.test(this.text)) return { results: stmt.all(...(this.args as never[])) as Row[], meta: { changes: 0, last_row_id: 0 } };
-    const res = stmt.run(...(this.args as never[]));
-    return { results: [] as Row[], meta: { changes: Number(res.changes), last_row_id: Number(res.lastInsertRowid) } };
-  }
-  async run() {
-    return this.exec();
-  }
-  async all() {
-    return this.exec();
-  }
-  async first() {
-    return this.exec().results[0] ?? null;
-  }
-}
-
-function openDb() {
-  const sql = new DatabaseSync(":memory:");
-  const dir = new URL("../migrations/", import.meta.url);
-  for (const file of readdirSync(dir).sort()) sql.exec(readFileSync(new URL(file, dir), "utf8"));
-  const db = {
-    prepare: (text: string) => new Stmt(sql, text),
-    async batch(stmts: Stmt[]) {
-      sql.exec("BEGIN");
-      try {
-        const out = stmts.map((s) => s.exec());
-        sql.exec("COMMIT");
-        return out;
-      } catch (err) {
-        sql.exec("ROLLBACK");
-        throw err;
-      }
-    },
-  };
-  return { sql, db: db as unknown as D1Database };
-}
+import { addHero, openDb, type Row } from "./d1";
 
 let sql: DatabaseSync;
 let db: D1Database;
@@ -62,7 +17,8 @@ let db: D1Database;
 const LIMIT = CARRY_BASE;
 
 const loot: ItemDef = { kind: "trinket", ref: "ring", name: "Sea Ring", rarity: "rare", slot: "ring", power: 0, statBonus: {}, levelReq: 1, icon: "ring" };
-const grant = (item: ItemDef | null = loot) => applyGrant(db, "RUNA", "ann", { xp: 0, gold: 0, item });
+/** What a map pays a hero who found `item` on it; says where the item went. */
+const grant = async (item: ItemDef | null = loot) => (await applyZoneGrant(db, "ann", { xp: 0, resources: {}, gold: 0, item })).place;
 const one = <T = Row>(text: string, ...args: (string | number)[]) => sql.prepare(text).get(...args) as T;
 const carried = () => one<{ n: number }>("SELECT COUNT(*) AS n FROM inventory WHERE player_id = 'ann' AND equipped = 0 AND stored_in IS NULL").n;
 const stored = () => one<{ n: number }>("SELECT COUNT(*) AS n FROM inventory WHERE player_id = 'ann' AND stored_in IS NOT NULL").n;
@@ -83,14 +39,7 @@ function buildShack(): number {
 beforeEach(() => {
   ({ sql, db } = openDb());
   const at = Date.now();
-  for (const [id, name, str] of [["ann", "Ann", 2], ["bo", "Bo", 9]] as const) {
-    sql.prepare("INSERT INTO players (id, name, created_at) VALUES (?, ?, ?)").run(id, name, at);
-    sql.prepare("INSERT INTO characters (player_id, name, class_id, status, str, int_stat, vit, agi, dex, gold, created_at) VALUES (?, ?, 'qa_paladin', 'active', ?, 5, 5, 5, 5, 5000, ?)").run(id, name, str, at);
-    sql.prepare("INSERT OR IGNORE INTO crews (id, name, created_by, created_at) VALUES ('CREWAA', 'Crew', ?, ?)").run(id, at);
-    sql.prepare("INSERT INTO crew_members (crew_id, player_id, joined_at) VALUES ('CREWAA', ?, ?)").run(id, at);
-  }
-  // The voyage loot is earned on.
-  sql.prepare("INSERT INTO runs (code, seed, status, created_by, crew_id, created_at, updated_at) VALUES ('RUNA', 's', 'overworld', 'ann', 'CREWAA', ?, ?)").run(at, at);
+  for (const [id, name, str] of [["ann", "Ann", 2], ["bo", "Bo", 9]] as const) addHero(sql, { id, name, str, gold: 5000, crew: "CREWAA", at });
   // Ann wears a mace; worn gear does not count against the pack.
   sql.prepare("INSERT INTO inventory (player_id, kind, ref, name, rarity, slot, equipped, created_at) VALUES ('ann', 'weapon', 'mace', 'Mace', 'common', 'main_hand', 1, ?)").run(at);
 });
@@ -279,7 +228,7 @@ describe("the storage chest", () => {
 describe("trades", () => {
   /** Bo opens the table with Ann and lays out `items`; both then try to accept. Returns what each acceptance said. */
   const give = async (items: number[]) => {
-    const made = await openTrade(db, "bo", "ann", null);
+    const made = await openTrade(db, "bo", "ann");
     if ("error" in made) throw new Error(made.error);
     const laid = await setTradeSide(db, "bo", made.id, { items });
     if ("error" in laid) throw new Error(laid.error);
@@ -308,7 +257,7 @@ describe("trades", () => {
     fillPack(1);
     const [id] = packIds();
     await storeItem(db, "ann", id);
-    const made = await openTrade(db, "ann", "bo", null);
+    const made = await openTrade(db, "ann", "bo");
     if ("error" in made) throw new Error(made.error);
     const laid = await setTradeSide(db, "ann", made.id, { items: [id] });
     expect("error" in laid && laid.error).toMatch(/in storage at home/);

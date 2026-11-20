@@ -392,6 +392,3 @@ export function fishModel(def: FishDef): THREE.Mesh[] {
     ...extras(form, def, fin),
   ];
 }
-
-/** Every shape the fish models know. */
-export const FISH_SHAPES = [...Object.keys(FORMS), ...Object.keys(BESPOKE)];

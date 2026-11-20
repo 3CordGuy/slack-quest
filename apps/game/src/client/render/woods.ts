@@ -395,12 +395,14 @@ export class Woods {
   /** The boulders, each one instance; only kept so a minigame can take the ones in its way out for a while. */
   private rocks: { mesh: THREE.InstancedMesh; index: number; x: number; z: number; size: number; base: THREE.Matrix4; cleared: boolean }[] = [];
   /** The trees by the cell of a coarse grid they stand in, for finding the ones near a walker. */
-  private cells = new Map<string, Tree[]>();
+  private cells = new Map<number, Tree[]>();
   /** Trees still swinging back upright. */
   private moving = new Set<Tree>();
   private meshes: THREE.InstancedMesh[] = [];
   private scratch = new THREE.Matrix4();
   private shear = new THREE.Matrix4();
+  /** A tree's matrix as it was before `place` set it, to tell whether it changed. */
+  private was = new Float32Array(16);
 
   constructor(trees: TreeSpot[], boulders: BoulderSpot[], sodden: boolean, plain = false) {
     // Each kind of tree is one mesh; an oak or a snag, one for each of its shapes, made only where any stand.
@@ -483,7 +485,9 @@ export class Woods {
       const cx = Math.floor(w.x / CELL), cz = Math.floor(w.z / CELL);
       for (let i = -1; i <= 1; i++)
         for (let j = -1; j <= 1; j++) {
-          for (const tree of this.cells.get(`${cx + i},${cz + j}`) ?? []) {
+          const bucket = this.cells.get(cellOf(cx + i, cz + j));
+          if (!bucket) continue;
+          for (const tree of bucket) {
             if (tree.cleared) continue;
             const ox = tree.x - w.x, oz = tree.z - w.z;
             const reach = BRUSH_REACH * Math.max(0.8, tree.size);
@@ -511,15 +515,15 @@ export class Woods {
         tree.dx = tree.dz = tree.vx = tree.vz = 0;
         this.moving.delete(tree);
       }
-      this.place(tree);
-      dirty.add(tree.mesh);
+      // A tree held over by someone standing beside it comes to rest there: its mesh is sent again only when it has moved.
+      if (this.place(tree)) dirty.add(tree.mesh);
     }
     for (const mesh of dirty) mesh.instanceMatrix.needsUpdate = true;
   }
 
-  /** Set a tree's matrix: where it stands, bent over from its foot by its push. */
-  private place(tree: Tree) {
-    if (tree.cleared) return;
+  /** Set a tree's matrix: where it stands, bent over from its foot by its push. Returns whether that changed what was stored for it. */
+  private place(tree: Tree): boolean {
+    if (tree.cleared) return false;
     // A shear in world space about the foot, which is half the tree's height under its middle.
     const h = (TREE_H / 2) * tree.size;
     // The push is a lean of the tip; spread it over the height, so it bends from the foot.
@@ -527,7 +531,12 @@ export class Woods {
     this.shear.set(1, kx, 0, kx * h, 0, 1, 0, 0, 0, kz, 1, kz * h, 0, 0, 0, 1);
     // The base is T·R·S; the shear goes between T and the rest, so it bends in world directions.
     this.scratch.multiplyMatrices(tree.at, this.shear).multiply(tree.turn);
+    const stored = tree.mesh.instanceMatrix.array;
+    const first = tree.index * 16;
+    for (let k = 0; k < 16; k++) this.was[k] = stored[first + k];
     tree.mesh.setMatrixAt(tree.index, this.scratch);
+    for (let k = 0; k < 16; k++) if (!Object.is(stored[first + k], this.was[k])) return true;
+    return false;
   }
 
   /** Take out the trees and boulders within `radius` of (x, z), so a minigame's things stand clear. Back with `restore`. */
@@ -597,7 +606,9 @@ export class Woods {
 
 /** The coarse grid the trees are filed in: a cell is about a hex across. */
 const CELL = 1.5;
-const cellKey = (x: number, z: number) => `${Math.floor(x / CELL)},${Math.floor(z / CELL)}`;
+/** One number for the cell (cx, cz): its own for every cell within half a million cells of the origin, far past any map. */
+const cellOf = (cx: number, cz: number) => (cx + 0x80000) * 0x100000 + (cz + 0x80000);
+const cellKey = (x: number, z: number) => cellOf(Math.floor(x / CELL), Math.floor(z / CELL));
 
 /** A colour about 1 to multiply a tree's or rock's own by: `light` lifts or darkens it, `warm` pushes it toward yellow or blue. */
 export function tintOf(light: number, warm: number): THREE.Color {

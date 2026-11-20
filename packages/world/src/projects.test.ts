@@ -1,32 +1,20 @@
-// Harbor projects: the contribution check, completion, and the lighthouse's
-// extra day on a voyage's doom clock.
+// Harbor projects: the catalogue, what unlocks the second tier, the
+// contribution check and completion.
 
 import { describe, expect, it } from "vitest";
-import { STARTING_STATS } from "@gantt-quest/core";
 import {
-  CANNED_FILLS,
-  coastHexes,
-  projectLock,
-  projectProgress,
-  projectLockText,
-  type ProjectProgress,
   PROJECTS,
-  STORY_FRAMES,
-  buildBible,
   builtProjects,
   checkContribution,
-  createWorld,
   projectAmountsText,
   projectById,
   projectComplete,
   projectGivable,
+  projectLock,
+  projectLockText,
+  projectProgress,
   projectRemaining,
-  stepWorld,
-  voyageBoons,
-  type HeroInit,
-  type WorldAction,
-  type WorldEvent,
-  type WorldState,
+  type ProjectProgress,
 } from "./index";
 
 const lighthouse = projectById("lighthouse")!;
@@ -152,76 +140,9 @@ describe("contributions", () => {
   });
 });
 
-describe("what built projects give a voyage", () => {
-  const frame = STORY_FRAMES[0];
-  const fill = CANNED_FILLS.stolen_relic[0];
-  const hero: HeroInit = { id: "p1", name: "P1", classId: "qa_paladin", level: 1, xp: 0, unspent: 0, base: { ...STARTING_STATS.qa_paladin }, bonus: {}, weapon: "mace", weaponPower: 0, armor: 0 };
-
-  function begin(state: WorldState): { state: WorldState; events: WorldEvent[] } {
-    const events: WorldEvent[] = [];
-    const actions: WorldAction[] = [{ type: "join", hero }, { type: "start", heroId: "p1" }, { type: "begin", bible: buildBible(frame, fill) }];
-    for (const action of actions) {
-      const res = stepWorld(state, action);
-      if (!res.ok) throw new Error(`${action.type} failed: ${res.error}`);
-      state = res.state;
-      events.push(...res.events);
-    }
-    return { state, events };
-  }
-
-  it("only the lighthouse changes the voyage itself, and only once", () => {
-    expect(voyageBoons(undefined)).toEqual({ doomDays: 0, chartCoast: false, lines: [] });
-    expect(voyageBoons(["apothecary", "smithy", "galley", "castle"])).toEqual({ doomDays: 0, chartCoast: false, lines: [] });
-    expect(voyageBoons(["lighthouse", "lighthouse"])).toMatchObject({ doomDays: 1, chartCoast: true });
-    expect(voyageBoons(["lighthouse", "lighthouse"]).lines).toHaveLength(1);
+describe("what a crew has built", () => {
+  it("is every project with a day it was finished, and nothing for a crew with no works", () => {
     expect(builtProjects({ projects: [{ id: "lighthouse", paid: {}, builtAt: 5 }, { id: "smithy", paid: {}, builtAt: null }], gifts: [] })).toEqual(["lighthouse"]);
     expect(builtProjects(undefined)).toEqual([]);
-  });
-
-  it("the lighthouse adds one day to the doom clock and says so as the voyage opens", () => {
-    for (const seed of ["lamp-1", "lamp-2", "lamp-3"]) {
-      const plain = begin(createWorld("PLAIN", seed));
-      const lit = begin(createWorld("LIT", seed, ["lighthouse"]));
-      expect(lit.state.doom, seed).toBe(plain.state.doom + 1);
-      expect(lit.state.projects).toEqual(["lighthouse"]);
-      const boons = lit.events.filter((e) => e.t === "harbor_boon");
-      expect(boons).toHaveLength(1);
-      expect(boons[0]).toMatchObject({ projectId: "lighthouse" });
-      expect((boons[0] as { text: string }).text).toMatch(/one more day/);
-      expect((boons[0] as { text: string }).text).toMatch(/whole coast/);
-      expect(plain.events.some((e) => e.t === "harbor_boon")).toBe(false);
-      // Nothing else about the voyage changes: same island, same rolls.
-      expect(lit.state.map).toEqual(plain.state.map);
-      expect(lit.state.rng).toBe(plain.state.rng);
-    }
-  });
-
-  it("the lighthouse's chart opens the voyage with the whole coast seen, and touches nothing else", () => {
-    for (const seed of ["lamp-1", "lamp-2", "lamp-3", "lamp-4"]) {
-      const plain = begin(createWorld("PLAIN", seed));
-      const lit = begin(createWorld("LIT", seed, ["lighthouse"]));
-      const coast = coastHexes(lit.state.map);
-      const tile = (key: string) => lit.state.map.tiles.find((t) => `${t.q},${t.r}` === key)!;
-      // Every land hex on the coast touches the sea, and there is real coast to chart.
-      const shore = coast.filter((k) => tile(k).biome !== "water");
-      expect(shore.length, seed).toBeGreaterThan(10);
-      const litSeen = new Set(lit.state.seen);
-      const plainSeen = new Set(plain.state.seen);
-      for (const k of coast) expect(litSeen.has(k), `${seed} ${k}`).toBe(true);
-      // Without it, most of the coast is still fog; with it, nothing else beyond the landing's sight is lifted.
-      expect(shore.filter((k) => !plainSeen.has(k)).length, seed).toBeGreaterThan(5);
-      expect([...litSeen].every((k) => plainSeen.has(k) || coast.includes(k)), seed).toBe(true);
-      expect(new Set(lit.state.seen).size).toBe(lit.state.seen!.length);
-      // Same island, same rolls, and the same bands in the same places.
-      expect(lit.state.map).toEqual(plain.state.map);
-      expect(lit.state.rng).toBe(plain.state.rng);
-      expect(lit.state.roamers).toEqual(plain.state.roamers);
-    }
-  });
-
-  it("a voyage saved before projects existed still begins", () => {
-    const old = createWorld("OLD", "lamp-1");
-    delete old.projects;
-    expect(begin(old).state.doom).toBe(begin(createWorld("NEW", "lamp-1")).state.doom);
   });
 });

@@ -5,6 +5,7 @@
 // passes build the result. On with "Fancy graphics" in the options (see fancy.ts).
 
 import * as THREE from "three";
+import { programsReady } from "./graphics";
 
 /**
  * The layer for what is read rather than looked at (name plates, speech bubbles, health bars). The finishing pass
@@ -134,8 +135,8 @@ void main() {
   vec4 back = invViewProj * vec4(vUv * 2.0 - 1.0, depth * 2.0 - 1.0, 1.0);
   vec3 spot = back.xyz / back.w;
   float ground = step(depth, 0.99995);
-  // Cloud shadows drift over the land and the sea.
-  c *= 1.0 - airShadow * cloudOver(spot) * ground;
+  // Cloud shadows drift over the land and the sea. (Indoors and underground there are none, and the cloud is not worked out.)
+  if (airShadow != 0.0) c *= 1.0 - airShadow * cloudOver(spot) * ground;
   // Light shafts: walk from the eye to the spot and count how much of the air on the way stands in sunlight.
   // The steps are the same for every pixel: starting each pixel's walk at a different point left a grain
   // over the picture like a dirty screen.
@@ -373,6 +374,38 @@ export class PostFx {
    * @param wide a map of the world, seen whole from high up: nearly all of it is kept sharp and clear, where a
    *   view from among the houses lets its distance blur and sink into the sky
    */
+  /**
+   * Compile a scene's shaders as this pass will draw it, ahead of the first frame and off the page's thread where
+   * the browser can. Done when they are ready.
+   *
+   * A shader is compiled for what draws with it and how: the lights in the picture and the kind of buffer drawn
+   * into are part of it, even for a thing no light falls on. So each of this pass's draws is asked for as it will
+   * be made (see `render`): the scene without its overlay layer, lit, into this pass's own buffer; the overlay
+   * layer alone, with no lights in it, onto the screen; and this pass's own three.
+   */
+  warm(scene: THREE.Scene, camera: THREE.PerspectiveCamera): Promise<void> {
+    const r = this.renderer;
+    const layers = camera.layers.mask;
+    camera.layers.disable(OVERLAY_LAYER);
+    r.setRenderTarget(this.scene);
+    r.compile(scene, camera);
+    r.setRenderTarget(null);
+    camera.layers.set(OVERLAY_LAYER);
+    const over: THREE.Object3D[] = [];
+    scene.traverse((o) => {
+      if (o.layers.test(camera.layers) && ((o as THREE.Mesh).isMesh || (o as THREE.Sprite).isSprite || (o as THREE.Line).isLine || (o as THREE.Points).isPoints)) over.push(o);
+    });
+    for (const o of over) r.compile(o, camera, scene);
+    camera.layers.mask = layers;
+    for (const [material, to] of [[this.bright, this.glow[0][1]], [this.blur, this.glow[0][0]], [this.final, null]] as const) {
+      this.quad.material = material;
+      r.setRenderTarget(to);
+      r.compile(this.quad, this.flat);
+    }
+    r.setRenderTarget(null);
+    return programsReady(r);
+  }
+
   render(scene: THREE.Scene, camera: THREE.PerspectiveCamera, focus: number, night: number, air: Air, wide = false) {
     const p = this.params;
     const r = this.renderer;
@@ -444,18 +477,22 @@ export class PostFx {
     this.pass(this.final, null);
 
     // The overlay layer, straight onto the finished picture: no sky to clear it, and no shadow maps to redraw.
+    // Nor is where everything stands worked out again: nothing has moved since the scene was drawn just above.
     const background = scene.background;
     const autoClear = r.autoClear;
     const shadows = r.shadowMap.autoUpdate;
+    const placing = scene.matrixWorldAutoUpdate;
     scene.background = null;
     r.autoClear = false;
     r.shadowMap.autoUpdate = false;
+    scene.matrixWorldAutoUpdate = false;
     camera.layers.set(OVERLAY_LAYER);
     r.render(scene, camera);
     camera.layers.mask = layers;
     scene.background = background;
     r.autoClear = autoClear;
     r.shadowMap.autoUpdate = shadows;
+    scene.matrixWorldAutoUpdate = placing;
   }
 
   dispose() {

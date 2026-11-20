@@ -24,11 +24,25 @@ const rgb = (hex: string) => {
 };
 const mix = (a: number[], b: number[], t: number) => a.map((v, i) => v + (b[i] - v) * t);
 
-function sheet(draw: (ctx: CanvasRenderingContext2D) => void): THREE.CanvasTexture {
-  const canvas = document.createElement("canvas");
-  canvas.width = canvas.height = SIZE;
-  draw(canvas.getContext("2d")!);
-  const tex = new THREE.CanvasTexture(canvas);
+/**
+ * Each sheet is painted once for the page, and kept: a view that opens later (going into a building, coming back
+ * out) is handed the same picture, as a texture of its own. Painting one takes up to a quarter of a second.
+ */
+const painted = new Map<string, HTMLCanvasElement>();
+function paintedOnce(name: string, width: number, height: number, draw: (ctx: CanvasRenderingContext2D) => void): HTMLCanvasElement {
+  let canvas = painted.get(name);
+  if (!canvas) {
+    canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    draw(canvas.getContext("2d")!);
+    painted.set(name, canvas);
+  }
+  return canvas;
+}
+
+function sheet(name: string, draw: (ctx: CanvasRenderingContext2D) => void): THREE.CanvasTexture {
+  const tex = new THREE.CanvasTexture(paintedOnce(name, SIZE, SIZE, draw));
   tex.colorSpace = THREE.SRGBColorSpace;
   tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
   tex.anisotropy = 8;
@@ -42,7 +56,7 @@ function sheet(draw: (ctx: CanvasRenderingContext2D) => void): THREE.CanvasTextu
  * minimum of its distances to the borders with every neighbour, which rounds the corners.
  */
 export function cobbleTexture(): THREE.CanvasTexture {
-  return sheet((ctx) => {
+  return sheet("cobble", (ctx) => {
     const CELLS = 5;
     const step = SIZE / CELLS;
     const tones = ["#7d8089", "#767982", "#838690", "#7a7c84"].map(rgb);
@@ -212,7 +226,7 @@ function board(ctx: CanvasRenderingContext2D, wood: Wood, x: number, y: number, 
 
 /** Floorboards for a hut: warm, honey-coloured boards running across the room. */
 export function floorTexture(): THREE.CanvasTexture {
-  return sheet((ctx) => planks(ctx, { boards: ["#b58d5e", "#ab8455", "#bd9566", "#b08a5c"], gap: "#7f5f3e", grain: "#9a7650", nail: "#6e5640" }, 300));
+  return sheet("floor", (ctx) => planks(ctx, { boards: ["#b58d5e", "#ab8455", "#bd9566", "#b08a5c"], gap: "#7f5f3e", grain: "#9a7650", nail: "#6e5640" }, 300));
 }
 
 /**
@@ -220,7 +234,7 @@ export function floorTexture(): THREE.CanvasTexture {
  * with dark joints, a soft wear across the middle, a crack or two, and soot and scorch scuffed into them.
  */
 export function flagstoneTexture(): THREE.CanvasTexture {
-  return sheet((ctx) => {
+  return sheet("flagstone", (ctx) => {
     ctx.fillStyle = "#2c2925";
     ctx.fillRect(0, 0, SIZE, SIZE);
     const rows = 3;
@@ -296,7 +310,7 @@ export function flagstoneTexture(): THREE.CanvasTexture {
 
 /** Planks for the piers: greyer, sea-weathered boards running out to sea. */
 export function pierTexture(): THREE.CanvasTexture {
-  return sheet((ctx) => {
+  return sheet("pier", (ctx) => {
     // Turned a quarter, so the boards run the other way from the floor's.
     ctx.translate(SIZE / 2, SIZE / 2);
     ctx.rotate(Math.PI / 2);
@@ -311,7 +325,7 @@ export function pierTexture(): THREE.CanvasTexture {
  * position (see triplanar in props.ts), so it needs no UVs and never stretches.
  */
 export function fieldstoneTexture(): THREE.CanvasTexture {
-  return sheet((ctx) => {
+  return sheet("fieldstone", (ctx) => {
     const CELLS = 4;
     const step = SIZE / CELLS;
     const tones = ["#a8977a", "#9d8d72", "#b2a286", "#968770", "#a39a88"].map(rgb);
@@ -513,15 +527,10 @@ function timberBand(ctx: CanvasRenderingContext2D, W: number, y0: number, y1: nu
   ctx.fillRect(0, y0, W, y1 - y0);
 }
 
-function wallSheet(draw: (ctx: CanvasRenderingContext2D, W: number, H: number, at: (share: number) => number) => void): THREE.CanvasTexture {
+function wallSheet(name: string, draw: (ctx: CanvasRenderingContext2D, W: number, H: number, at: (share: number) => number) => void): THREE.CanvasTexture {
   const W = 256;
   const H = 448;
-  const canvas = document.createElement("canvas");
-  canvas.width = W;
-  canvas.height = H;
-  const ctx = canvas.getContext("2d")!;
-  draw(ctx, W, H, (share) => H * (1 - share));
-  const tex = new THREE.CanvasTexture(canvas);
+  const tex = new THREE.CanvasTexture(paintedOnce(name, W, H, (ctx) => draw(ctx, W, H, (share) => H * (1 - share))));
   tex.colorSpace = THREE.SRGBColorSpace;
   tex.wrapS = THREE.RepeatWrapping;
   tex.anisotropy = 8;
@@ -535,7 +544,7 @@ function wallSheet(draw: (ctx: CanvasRenderingContext2D, W: number, H: number, a
  * smoke-black beam along the top. One sheet is one unit of wall across; it repeats along the wall.
  */
 export function smithyWallTexture(): THREE.CanvasTexture {
-  return wallSheet((ctx, W, H, at) => {
+  return wallSheet("smithyWall", (ctx, W, H, at) => {
     const stoneTop = at(0.56);
     const beam = at(0.93);
     // Mortar behind everything, then the blocks laid over it in courses, each course offset from the last.
@@ -642,7 +651,7 @@ export function smithyWallTexture(): THREE.CanvasTexture {
  * across (two panels); it repeats along the wall.
  */
 export function apothecaryWallTexture(): THREE.CanvasTexture {
-  return wallSheet((ctx, W, H, at) => {
+  return wallSheet("apothecaryWall", (ctx, W, H, at) => {
     const railTop = at(0.53);
     const rail = at(0.5);
     const skirt = at(0.05);
@@ -731,7 +740,7 @@ export function apothecaryWallTexture(): THREE.CanvasTexture {
  * one unit of wall across (eight boards, eight tiles); it repeats along the wall.
  */
 export function galleyWallTexture(): THREE.CanvasTexture {
-  return wallSheet((ctx, W, H, at) => {
+  return wallSheet("galleyWall", (ctx, W, H, at) => {
     const beam = at(0.93);
     const tileTop = at(0.62);
     const tileFoot = at(0.53);
@@ -820,7 +829,7 @@ export function galleyWallTexture(): THREE.CanvasTexture {
  * the wall.
  */
 export function lapidaryWallTexture(): THREE.CanvasTexture {
-  return wallSheet((ctx, W, H, at) => {
+  return wallSheet("lapidaryWall", (ctx, W, H, at) => {
     const beam = at(0.93);
     const railTop = at(0.535);
     const rail = at(0.5);

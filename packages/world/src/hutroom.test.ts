@@ -1,14 +1,11 @@
 import { describe, expect, it } from "vitest";
+import { pieceMaker } from "./test/furnishings";
 import { hexNeighbors } from "@gantt-quest/core";
-import { CHEST_COLS, CHEST_MAX_ROWS, FURNISHINGS, HOME_FREEBIES, HUT_TIERS, SMALL_PER_SPOT, STORAGE_CHEST, WARDROBE, displacedFurnishings, freeSpot, hutDoor, hutFloor, hutPath, hutRoom, hutTier, HEX_DIRS, besideHexes, isBeside, lieDownProblem, useOf, useProblem, placeProblem, placedFurnishings, poiAt, putInProblem, seatHexes, smallPlaceProblem, tileAt, validFacing, type Furnishing } from "./index";
+import { CHEST_COLS, CHEST_MAX_ROWS, FURNISHINGS, HOME_FREEBIES, HUT_TIERS, SMALL_PER_SPOT, STORAGE_CHEST, WARDROBE, displacedFurnishings, freeSpot, hutDoor, hutFloor, hutPath, hutRoom, hutTier, HEX_DIRS, besideHexes, isBeside, lieDownProblem, useOf, useProblem, placeProblem, poiAt, putInProblem, seatHexes, smallPlaceProblem, tileAt, validFacing } from "./index";
 
 const at = (q: number, r: number) => ({ q, r });
 
 describe("hut room", () => {
-  it("is the same every time", () => {
-    expect(hutRoom(1)).toEqual(hutRoom(1));
-  });
-
   for (const { tier, cols, rows } of HUT_TIERS) {
     describe(`tier ${tier}`, () => {
       const room = hutRoom(tier);
@@ -87,10 +84,6 @@ describe("placing furnishings", () => {
   it("allows facings 0 to 5 only", () => {
     expect([0, 1, 2, 3, 4, 5].every(validFacing)).toBe(true);
     expect([-1, 6, 1.5, NaN, "2", null, undefined].some(validFacing)).toBe(false);
-  });
-
-  it("tells placed furnishings from stored ones", () => {
-    expect(placedFurnishings([{ q: 1, r: 1 }, { q: null, r: null }])).toEqual([{ q: 1, r: 1 }]);
   });
 });
 
@@ -198,11 +191,11 @@ describe("containers", () => {
 });
 
 describe("the free storage chest", () => {
-  it("is a free container with no perk, never sold or crafted", () => {
+  it("is a free container, never sold or crafted", () => {
     const def = FURNISHINGS[STORAGE_CHEST];
     expect(def.kind).toBe("furniture");
     expect(def.storage).toBeGreaterThan(0);
-    expect(def.price ?? def.recipe ?? def.perk).toBeUndefined();
+    expect(def.price ?? def.recipe).toBeUndefined();
   });
 
   it("finds a legal spot away from the door, and none on a full floor", () => {
@@ -226,13 +219,13 @@ describe("the free storage chest", () => {
 });
 
 describe("the free wardrobe", () => {
-  it("comes with every home beside the chest: free, no perk, never sold or crafted", () => {
+  it("comes with every home beside the chest: free, never sold or crafted", () => {
     expect(HOME_FREEBIES).toEqual([STORAGE_CHEST, WARDROBE]);
     const def = FURNISHINGS[WARDROBE];
     expect(def.kind).toBe("furniture");
     expect(def.dress).toBe(true);
     expect(def.storage).toBeUndefined();
-    expect(def.price ?? def.recipe ?? def.perk).toBeUndefined();
+    expect(def.price ?? def.recipe).toBeUndefined();
   });
 
   it("finds its own spot clear of the chest in every hut", () => {
@@ -250,22 +243,7 @@ describe("the free wardrobe", () => {
 describe("small things and containers", () => {
   const room = hutRoom(1);
   const [a, b] = hutFloor(room).filter((p) => poiAt(room, p)?.kind !== "door");
-  let next = 1;
-  const piece = (defId: string, at: { q: number; r: number } | null, more: Partial<Furnishing> = {}): Furnishing => ({
-    id: next++,
-    defId,
-    label: defId,
-    q: at?.q ?? null,
-    r: at?.r ?? null,
-    facing: 0,
-    x: 0,
-    z: 0,
-    y: 0,
-    angle: 0,
-    onId: null,
-    inId: null,
-    ...more,
-  });
+  const piece = pieceMaker();
 
   it("puts a small thing anywhere near the middle of a free hex", () => {
     expect(smallPlaceProblem(room, [], "candle", { pos: a, x: 0.3, z: -0.4, angle: 1 })).toBeNull();
@@ -328,10 +306,7 @@ describe("using pieces outside edit mode", () => {
   const floor = hutFloor(room).filter((p) => poiAt(room, p)?.kind !== "door");
   // A hex in the middle of the room, every neighbour of it floor too.
   const mid = floor.find((p) => HEX_DIRS.map((d) => ({ q: p.q + d.q, r: p.r + d.r })).every((n) => tileAt(room, n)?.biome === "floor" && poiAt(room, n)?.kind !== "door"))!;
-  let next = 100;
-  const piece = (defId: string, at: { q: number; r: number } | null, more: Partial<Furnishing> = {}): Furnishing => ({
-    id: next++, defId, label: defId, q: at?.q ?? null, r: at?.r ?? null, facing: 0, x: 0, z: 0, y: 0, angle: 0, onId: null, inId: null, ...more,
-  });
+  const piece = pieceMaker(100);
 
   it("rests in a bed, opens containers, warms up at a fire, reads books and otherwise looks", () => {
     expect(useOf("bed")).toBe("rest");

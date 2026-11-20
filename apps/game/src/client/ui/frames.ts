@@ -15,7 +15,6 @@
 export const D = 2;
 
 export const BRASS = { hi: "#f3dfa0", mid: "#c29a4c", lo: "#7a5a26", dark: "#3d2b12" };
-export const OUT = "#090705";
 
 export function sheet(w: number, h: number, scale = D): [HTMLCanvasElement, CanvasRenderingContext2D] {
   const canvas = document.createElement("canvas");
@@ -79,59 +78,6 @@ export function gold(ctx: CanvasRenderingContext2D, x0: number, y0: number, x1: 
   g.addColorStop(0.7, BRASS.lo);
   g.addColorStop(1, "#a8823c");
   return g;
-}
-
-/** Stroke a square ring `inset` in from the picture's edge. */
-function ring(ctx: CanvasRenderingContext2D, size: number, inset: number, width: number, style: string | CanvasGradient) {
-  ctx.strokeStyle = style;
-  ctx.lineWidth = width;
-  ctx.strokeRect(inset, inset, size - inset * 2, size - inset * 2);
-}
-
-/**
- * A gold corner plate for a timber frame, drawn at the origin for a top-left corner (turn the canvas about for
- * the others): `wood` is the timber's width and `p` the plate's size.
- */
-export function paintPlate(ctx: CanvasRenderingContext2D, wood: number, p: number) {
-  // The plate: a square with its inner corner rounded off, and a short tongue down each edge.
-  const shape = new Path2D();
-  shape.moveTo(1.5, 0.5);
-  shape.lineTo(p + 9, 0.5);
-  shape.lineTo(p + 3, wood * 0.55);
-  shape.lineTo(p, wood * 0.55);
-  shape.quadraticCurveTo(p, p, wood * 0.55, p);
-  shape.lineTo(wood * 0.55, p + 3);
-  shape.lineTo(0.5, p + 9);
-  shape.lineTo(0.5, 1.5);
-  shape.closePath();
-  ctx.fillStyle = gold(ctx, 0, 0, p, p);
-  ctx.fill(shape);
-  ctx.strokeStyle = OUT;
-  ctx.lineWidth = 1;
-  ctx.stroke(shape);
-  // Bright along the top and left, where the light falls.
-  ctx.strokeStyle = "rgba(255, 246, 210, 0.7)";
-  ctx.lineWidth = 0.8;
-  ctx.beginPath();
-  ctx.moveTo(1.6, p + 4);
-  ctx.lineTo(1.6, 1.6);
-  ctx.lineTo(p + 4, 1.6);
-  ctx.stroke();
-  // An engraved ring, and a domed stud inside it.
-  const c = p * 0.42;
-  ctx.strokeStyle = "rgba(60, 40, 14, 0.85)";
-  ctx.lineWidth = 0.9;
-  ctx.beginPath();
-  ctx.arc(c, c, p * 0.27, 0, Math.PI * 2);
-  ctx.stroke();
-  const dome = ctx.createRadialGradient(c - p * 0.07, c - p * 0.07, 0.3, c, c, p * 0.19);
-  dome.addColorStop(0, "#fff6d2");
-  dome.addColorStop(0.45, BRASS.mid);
-  dome.addColorStop(1, BRASS.dark);
-  ctx.fillStyle = dome;
-  ctx.beginPath();
-  ctx.arc(c, c, p * 0.17, 0, Math.PI * 2);
-  ctx.fill();
 }
 
 /** The bottom bar's timber (rackArt.ts): every frame is cut from the same wood. */

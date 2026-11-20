@@ -143,7 +143,7 @@ export function salesmanStock(crewId: string, visit: SalesmanVisit, playerId: st
         return entry(index, { kind: "item", item }, Math.round(itemPrice(item) * CURIO_MARKUP));
       });
     case "plans":
-      // Blueprints that are otherwise only found on a voyage.
+      // Blueprints that are otherwise only found, in a cache out on a map.
       return some(rng, FOUND_BLUEPRINTS, 3).map((defId, index) => entry(index, { kind: "blueprint", defId }, blueprintPrice(defId)));
     case "far":
       return some(rng, Object.keys(FAR_GOODS), 2).map((defId, index) => entry(index, { kind: "furnishing", defId }, FAR_GOODS[defId]));

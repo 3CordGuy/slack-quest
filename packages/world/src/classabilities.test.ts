@@ -1,12 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { STARTING_STATS } from "@gantt-quest/core";
 import { ABILITY_POOLS, ABILITY_SLOTS, abilitySlotError, classAbilitiesOf, parseAbilityLoadout, withAbilityInSlot, withClassAbilities, type AbilityPools } from "./classabilities";
-import { ABILITIES, HERO_CLASSES, abilitiesFor } from "./content";
+import { ABILITIES, HERO_CLASSES } from "./content";
 import { TACTICS } from "./zone/kit";
-import { heroCombatant, type HeroSheet } from "./hero";
+import type { HeroSheet } from "./hero";
 import { zoneHero } from "./zone/zone";
 
-// Real pools are still empty, so the rules are tried on a made-up one.
+// The rules are tried on a made-up pool, so the real ones can change without these tests changing.
 const pools: AbilityPools = {
   qa_paladin: [
     { id: "bash", level: 1 },
@@ -26,8 +26,8 @@ describe("class ability pools", () => {
       }
     }
   });
-  it("has a pool (possibly empty) for every class", () => {
-    for (const c of HERO_CLASSES) expect(ABILITY_POOLS[c.id], c.id).toBeDefined();
+  it("has a pool for every class", () => {
+    for (const c of HERO_CLASSES) expect(ABILITY_POOLS[c.id]?.length, c.id).toBeGreaterThan(0);
   });
 });
 
@@ -110,18 +110,13 @@ describe("a hero's loadout, as they go into a fight", () => {
     id: "ann", name: "Ann", classId: "qa_paladin", level, base: STARTING_STATS.qa_paladin, bonus: {}, weapon: "mace", weaponPower: 0, armor: 0, abilityLoadout,
   });
 
-  it("adds what the level has opened to the weapon's, in a voyage battle", () => {
-    expect(heroCombatant(sheet(1, ["cleave", "flail_strike", null])).abilities).toEqual([...abilitiesFor("mace"), "cleave"]);
-    expect(heroCombatant(sheet(4, ["cleave", "flail_strike", null])).abilities).toEqual([...abilitiesFor("mace"), "cleave", "flail_strike"]);
-  });
-
-  it("adds the same in a zone", () => {
+  it("takes what the level has opened into a zone, in slot order", () => {
     expect(zoneHero(sheet(1, ["cleave", "flail_strike", null])).classAbilities).toEqual(["cleave"]);
     expect(zoneHero(sheet(4, [null, "flail_strike", "cleave"])).classAbilities).toEqual(["flail_strike", "cleave"]);
   });
 
   it("adds nothing for an empty loadout, or none at all", () => {
-    expect(heroCombatant(sheet(4, [null, null, null])).abilities).toEqual(abilitiesFor("mace"));
-    expect(heroCombatant({ ...sheet(4, []), abilityLoadout: undefined }).abilities).toEqual(abilitiesFor("mace"));
+    expect(zoneHero(sheet(4, [null, null, null])).classAbilities).toEqual([]);
+    expect(zoneHero({ ...sheet(4, []), abilityLoadout: undefined }).classAbilities).toEqual([]);
   });
 });

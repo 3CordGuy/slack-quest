@@ -1,4 +1,4 @@
-// The smithy: a Harbor crew project where gear is worked on between voyages.
+// The smithy: a Harbor crew project where gear is worked on.
 //
 // A weapon can be sharpened and a piece of armour reinforced, one step at a
 // time, each step adding 1 to its power, up to SMITHY_MAX_STEPS. Each step

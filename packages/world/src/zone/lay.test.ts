@@ -352,7 +352,8 @@ describe("the bands", () => {
     }
     // (It does happen, on the smaller maps out in the open: there is only so much ground clear of the start.)
     expect(short).toBeGreaterThan(0);
-  });
+    // (A few hundred maps laid: a second or two here, several times that on a busy CI runner.)
+  }, 30_000);
 
   it("are each as many as the party (one more for three or four), one more for each step of threat, and one more again where a peril says so: two to eight", () => {
     expect([bandSize(1, 1), bandSize(1, 2), bandSize(2, 1), bandSize(2, 2), bandSize(2, 3), bandSize(3, 2), bandSize(4, 1), bandSize(4, 2), bandSize(4, 3)]).toEqual([2, 2, 2, 3, 4, 5, 5, 6, 7]);
@@ -546,7 +547,7 @@ describe("the chests", () => {
   // has its strongbox at 14,18 and band1 posted at 19,4 17,4 20,3: fourteen hexes and more from what it guards.
   it.todo("under ground the strongbox stands in the last chamber, with the band that guards it");
 
-  it("cannot be opened in a zone made of the plan until that band is down", () => {
+  it("has its band standing over it, not yet roused, in a zone made of the plan", () => {
     const zone = createZone("LAY", "guarded", options({ site: "keep" }));
     const chest = zone.map.pois.find((p) => p.kind === "cache")!;
     expect(zone.units.some((u) => u.group === chest.guard)).toBe(true);

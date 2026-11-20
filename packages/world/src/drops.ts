@@ -1,52 +1,16 @@
-// What an island gives for the hut: materials from fights and caches, the
-// odd blueprint or piece of decor from a cache, and a trophy for the story.
+// What a searched cache gives for the hut: materials, and now and then a
+// blueprint or a piece of decor.
 //
-// Pure functions of an Rng. Each returns values in the shape the reducer's
-// `grant` helper takes, so world.ts only has to pass them along.
+// Pure functions of an Rng.
 
-import { ENEMIES } from "./content";
-import { FURNISHINGS, TROPHY_FOR_FRAME, addResources, type ResourceKind, type Resources } from "./hut";
+import { FURNISHINGS, type ResourceKind, type Resources } from "./hut";
 import type { Rng } from "./rng";
-import type { StoryBible } from "./story";
-import type { FurnishingGrant } from "./world";
 
-const BEAST: ResourceKind[] = ["fur", "bone"];
-const ARMED: ResourceKind[] = ["iron", "copper"];
-
-/** What each kind of enemy leaves behind. An enemy not listed leaves nothing. */
-export const ENEMY_DROPS: Record<string, ResourceKind[]> = {
-  wolf: BEAST,
-  alpha: BEAST,
-  bear: BEAST,
-  great_bear: BEAST,
-  bandit: ARMED,
-  archer: ARMED,
-  brute: ARMED,
-  cultist: ARMED,
-  // An ogre's hide and the iron bands off its club; a troll's bones, and the stone it hurls.
-  ogre: ["fur", "bone", "iron"],
-  troll: ["bone", "stone"],
-  villain: ARMED,
-  guardian: ["stone"],
-  // The dead leave bones behind.
-  shade: ["bone"],
-  skeleton: ["bone", "iron"],
-  bat: ["fur"],
-  slime: ["slime"],
-  haunt: ["bone"],
-  // What lives out on the atlas's maps (what a body there holds is zone/spoils.ts; these are for the old fights).
-  spider: ["mushrooms", "slime"],
-  broodmother: ["mushrooms", "slime"],
-  frost_wolf: BEAST,
-  ember_hound: BEAST,
-  snow_bear: BEAST,
-  wraith: ["bone"],
-  witch: ["herbs", "mushrooms"],
-};
-
-/** Units of material from one enemy: [min, max]. */
-export const ENEMY_DROP_UNITS: [number, number] = [1, 3];
-export const BOSS_DROP_UNITS: [number, number] = [4, 6];
+/** A piece of furniture or a trophy handed to a hero. */
+export interface FurnishingGrant {
+  defId: string;
+  label: string;
+}
 
 /** What a cache search can turn up besides gold and gear. */
 export const CACHE_RESOURCES: ResourceKind[] = ["wood", "stone", "copper"];
@@ -68,18 +32,6 @@ function spread(rng: Rng, kinds: readonly ResourceKind[], units: number): Resour
   return out;
 }
 
-/** Materials one hero takes from a won fight against these enemies. */
-export function battleDrops(rng: Rng, enemyKinds: readonly string[]): Resources {
-  const total: Resources = {};
-  for (const kind of enemyKinds) {
-    const kinds = ENEMY_DROPS[kind];
-    if (!kinds) continue;
-    const [min, max] = ENEMIES[kind]?.boss ? BOSS_DROP_UNITS : ENEMY_DROP_UNITS;
-    addResources(total, spread(rng, kinds, rng.int(min, max)));
-  }
-  return total;
-}
-
 export interface CacheDrops {
   resources: Resources;
   blueprint?: string;
@@ -88,7 +40,7 @@ export interface CacheDrops {
 
 /**
  * What a cache search that found something yields for the hut. `known` are
- * blueprints the hero has already picked up this voyage, which are not
+ * blueprints the hero has already picked up on this map, which are not
  * handed out twice.
  */
 export function cacheDrops(rng: Rng, known: readonly string[] = []): CacheDrops {
@@ -103,18 +55,4 @@ export function cacheDrops(rng: Rng, known: readonly string[] = []): CacheDrops 
     out.furnishing = { defId, label: FURNISHINGS[defId].name };
   }
   return out;
-}
-
-const capital = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
-
-/** The trophy every hero takes home for winning this story, named after it. */
-export function storyTrophy(bible: Pick<StoryBible, "frameId" | "title" | "relicName" | "villain"> & Partial<Pick<StoryBible, "islandName">>): FurnishingGrant | undefined {
-  const defId = TROPHY_FOR_FRAME[bible.frameId];
-  if (!defId || !FURNISHINGS[defId]) return undefined;
-  const what =
-    defId === "trophy_pelt" ? `Pelt of ${bible.villain.name}`
-    : defId === "trophy_core" ? `Core of ${bible.villain.name}`
-    : defId === "trophy_token" ? `Thanks from ${bible.frameId === "lift_curse" ? (bible.islandName ?? "the island") : bible.relicName}`
-    : capital(bible.relicName);
-  return { defId, label: `${what} · ${bible.title}` };
 }

@@ -9,78 +9,22 @@
 // on the update or on the refusal, and a client that keeps the map's tiles is
 // sent them once.
 
-import { readFileSync, readdirSync } from "node:fs";
-import { DatabaseSync } from "node:sqlite";
+import type { DatabaseSync } from "node:sqlite";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { hexDistance } from "@gantt-quest/core";
 import { ALERT_RANGE, ATLAS_HOME, EXPLORE_ROUND_MS, atlasNodeById, zoneOptions, type ZoneEvent, type ZoneState, type ZoneView } from "@gantt-quest/world";
 import { atlasSeed, chartFor, openNode } from "../src/server/atlas";
 import { CAVE_IDLE_MS, createZoneRow, crewPlaces, openCave, teleportTo } from "../src/server/zones";
+import { addHero, openDb } from "./d1";
+import { FakeSocket as RoomSocket, fakeUpgrades } from "./rooms";
 
-const globals = globalThis as Record<string, unknown>;
-globals.WebSocketRequestResponsePair = class {
-  constructor(
-    public request: string,
-    public response: string,
-  ) {}
-};
-/** The client's end of a socket pair is never looked at here; the server's end is taken from `nextServerSocket`. */
-let nextServerSocket: FakeSocket;
-globals.WebSocketPair = class {
-  0 = {};
-  1 = nextServerSocket;
-};
-// Node's Response refuses status 101; the room only needs it to exist.
-class Upgrade {
-  status = 101;
-}
-const RealResponse = Response;
-globals.Response = function (body: unknown, init?: { status?: number; webSocket?: unknown }) {
-  return init?.status === 101 ? new Upgrade() : new RealResponse(body as BodyInit, init);
-} as unknown as typeof Response;
+/** Says which socket the room is handed as the server's end of the next upgrade. */
+const serveNext = fakeUpgrades();
 
 const { ZoneRoom, ZONE_TURN_MS, zoneActionFrom } = await import("../src/server/zone-room");
 
-type Row = Record<string, unknown>;
-class Stmt {
-  constructor(private sql: DatabaseSync, private text: string, private args: unknown[] = []) {}
-  bind(...args: unknown[]) {
-    return new Stmt(this.sql, this.text, args);
-  }
-  exec() {
-    const stmt = this.sql.prepare(this.text);
-    if (/^\s*(SELECT|WITH)/i.test(this.text)) return { results: stmt.all(...(this.args as never[])) as Row[], meta: { changes: 0, last_row_id: 0 } };
-    const res = stmt.run(...(this.args as never[]));
-    return { results: [] as Row[], meta: { changes: Number(res.changes), last_row_id: Number(res.lastInsertRowid) } };
-  }
-  async run() {
-    return this.exec();
-  }
-  async all() {
-    return this.exec();
-  }
-  async first() {
-    return this.exec().results[0] ?? null;
-  }
-}
-
 type Update = { type: "update"; state: ZoneView; events: ZoneEvent[]; online: string[]; ack?: number } | { type: "error"; message: string; ack?: number };
-class FakeSocket {
-  sent: Update[] = [];
-  closed: number | null = null;
-  private attachment: unknown = null;
-  deserializeAttachment() {
-    return this.attachment;
-  }
-  serializeAttachment(next: unknown) {
-    this.attachment = next;
-  }
-  send(data: string) {
-    this.sent.push(JSON.parse(data));
-  }
-  close(code = 1000) {
-    this.closed = code;
-  }
+class FakeSocket extends RoomSocket<Update> {
   /** The newest state this socket was sent. */
   get state(): ZoneView {
     const last = this.sent.filter((m): m is Extract<Update, { type: "update" }> => m.type === "update").at(-1);
@@ -121,7 +65,7 @@ function room() {
 
 async function connect(to: InstanceType<typeof ZoneRoom>, code: string, playerId: string, near?: string, lean = false): Promise<FakeSocket> {
   const ws = new FakeSocket();
-  nextServerSocket = ws;
+  serveNext(ws);
   const res = await to.fetch({ headers: new Headers({ Upgrade: "websocket", "x-zone-code": code, "x-player-id": playerId, ...(near ? { "x-zone-near": near } : {}), ...(lean ? { "x-zone-lean": "1" } : {}) }) } as never);
   if (res.status !== 101) throw new Error(`refused: ${await res.text()}`);
   return ws;
@@ -157,15 +101,9 @@ async function pickFight(zone: InstanceType<typeof ZoneRoom>, ann: FakeSocket) {
 }
 
 beforeEach(() => {
-  sql = new DatabaseSync(":memory:");
-  const dir = new URL("../migrations/", import.meta.url);
-  for (const file of readdirSync(dir).sort()) sql.exec(readFileSync(new URL(file, dir), "utf8"));
-  db = { prepare: (text: string) => new Stmt(sql, text), batch: async (stmts: Stmt[]) => stmts.map((s) => s.exec()) } as unknown as D1Database;
+  ({ sql, db } = openDb());
   const at = Date.now();
-  for (const [id, name] of [["ann", "Ann"], ["bo", "Bo"]]) {
-    sql.prepare("INSERT INTO players (id, name, created_at) VALUES (?, ?, ?)").run(id, name, at);
-    sql.prepare("INSERT INTO characters (player_id, name, class_id, status, str, int_stat, vit, agi, dex, gold, created_at) VALUES (?, ?, 'qa_paladin', 'active', 9, 4, 9, 4, 4, 100, ?)").run(id, name, at);
-  }
+  for (const [id, name] of [["ann", "Ann"], ["bo", "Bo"]]) addHero(sql, { id, name, str: 9, int_stat: 4, vit: 9, agi: 4, dex: 4, at });
   sockets = [];
   storage = new Map();
   alarm = null;
@@ -189,7 +127,7 @@ describe("ZoneRoom", () => {
 
   it("refuses someone with no hero, and replaces an older tab", async () => {
     const { code, zone, ann } = await arrive();
-    nextServerSocket = new FakeSocket();
+    serveNext(new FakeSocket());
     const res = await zone.fetch({ headers: new Headers({ Upgrade: "websocket", "x-zone-code": code, "x-player-id": "nobody" }) } as never);
     expect(res.status).toBe(409);
     await connect(zone, code, "ann");
@@ -293,8 +231,7 @@ describe("ZoneRoom", () => {
     const bo = await connect(zone, code, "bo", "ann");
     expect(hexDistance(hero(bo.state, "bo").pos, hero(bo.state, "ann").pos)).toBe(1);
     // In a fight, a newcomer arrives at the map's start instead.
-    sql.prepare("INSERT INTO players (id, name, created_at) VALUES ('cy', 'Cy', 1)").run();
-    sql.prepare("INSERT INTO characters (player_id, name, class_id, status, str, int_stat, vit, agi, dex, gold, created_at) VALUES ('cy', 'Cy', 'qa_paladin', 'active', 9, 4, 9, 4, 4, 100, 1)").run();
+    addHero(sql, { id: "cy", name: "Cy", str: 9, int_stat: 4, vit: 9, agi: 4, dex: 4, at: 1 });
     await act(zone, ann, { type: "dev", dev: { op: "ai", off: true } });
     await act(zone, ann, { type: "dev", dev: { op: "start_fight" } });
     expect(ann.state.encounter?.order).toContain("ann");

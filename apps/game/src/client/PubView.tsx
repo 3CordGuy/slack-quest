@@ -1,16 +1,19 @@
 // Inside the pub: a room bigger than any hut, drawn by the same renderer,
-// where the crew sees each other. Stand at the menu board to order food and
-// drink or have a word with Old Tam; stand at the dice table to play. The
-// contract dealer, by the pillar at the end of the bar, has the contracts and
-// the crew's goal.
+// where the crew sees each other. Stand at the menu board to order a meal
+// or have a word with Old Tam; stand at the dice table to play. The
+// dealer, by the pillar at the end of the bar, has word of the regulars'
+// errands.
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ComponentType, type ReactNode, type RefObject, useLayoutEffect } from "react";
 import { useAudioScene } from "./audio/useAudioScene";
 import { hexDistance, hexNeighbors, type HexPos } from "@gantt-quest/core";
-import { PUB_BARKEEP, PUB_BARKEEP_POS, PUB_COUNTER, PUB_CREW, PUB_DEALER, PUB_DEALER_POS, PUB_DEALER_STAND, PUB_DICE, PUB_FITTINGS, PUB_GRID, PUB_LEADERBOARD, PUB_MAX_TALK, PUB_MENU, PUB_REGULAR_SPOTS, PUB_SALESMAN_POS, PUB_SEATS, PUB_SHOALS, PUB_TIDE, PUB_TRADER, dueIn, gatherDay, poiAt, pubMountSpots, pubPath, pubRoom, PUB_MOUNT_SLOTS, regularsOn, salesman, type Perk, type RegularId } from "@gantt-quest/world";
+import { PUB_BARKEEP, PUB_BARKEEP_POS, PUB_COUNTER, PUB_DEALER, PUB_DEALER_POS, PUB_DEALER_STAND, PUB_FITTINGS, PUB_GRID, PUB_LEADERBOARD, PUB_MAX_TALK, PUB_MENU, PUB_REGULAR_SPOTS, PUB_SALESMAN_POS, PUB_SEATS, PUB_TRADER, dueIn, gatherDay, poiAt, pubMountSpots, pubPath, pubRoom, PUB_MOUNT_SLOTS, regularsOn, salesman, outfitOf, type PubClientMessage, type RegularId, type XpMessage } from "@gantt-quest/world";
+import { toOwned } from "./items";
+import { withLook } from "./render/sprites";
 import { CatchPanel } from "./CatchPanel";
 import { RecordBoard } from "./CatchBook";
-import { api, type Me, type PubTab, type PubWall, type RegularsView } from "./api";
+import { ChatInput } from "./ChatInput";
+import { api, type Me, type PubWall, type RegularsView } from "./api";
 import { RegularPanel } from "./RegularPanel";
 import { DealerPanel } from "./board/DealerPanel";
 import { DiceTable } from "./DiceTable";
@@ -27,13 +30,13 @@ import { OptionsMenu } from "./OptionsMenu";
 import { HudBar } from "./ui/Hud";
 import { InventoryScreen } from "./InventoryScreen";
 import { Logbook } from "./Logbook";
-import { perkText } from "./hutDrops";
 import { ThingIcon, pubIcon } from "./thingIcons";
 import { TileAction } from "./TileAction";
 import { WorldRenderer, type RenderState } from "./render/WorldRenderer";
 import { fancy } from "./render/fancy";
 import { harborOutlook, type Outlook } from "./render/harborOutlook";
-import { usePub } from "./usePub";
+import { usePub, type PubConnection, type PubTables } from "./usePub";
+import type { SeatLook, StageHost } from "./useTableStage";
 import { HeroSheet, useHeroSheet } from "./HeroSheet";
 import { blurb, label } from "./labels";
 import { xpEvents } from "./xpEvents";
@@ -48,8 +51,62 @@ const same = (a: HexPos, b: HexPos) => a.q === b.q && a.r === b.r;
 const regularUnit = (id: string) => `regular:${id}`;
 const ROOM = pubRoom();
 const DOOR = ROOM.pois.find((p) => p.kind === "door")!.pos;
-type TableName = "dice" | "shoals" | "crew" | "tide";
-const TABLE_HEX: Record<TableName, HexPos> = { dice: PUB_DICE, shoals: PUB_SHOALS, crew: PUB_CREW, tide: PUB_TIDE };
+
+// ---------- the game tables ----------
+
+/** A table game, by the name its messages go by. */
+type Game = keyof PubTables;
+type TableView<G extends Game> = NonNullable<PubTables[G]>;
+/** What whoever sits down is handed, the same at every table. */
+interface Seat {
+  you: string;
+  gold: number;
+  lastXp: XpMessage | null;
+  looks: Record<string, SeatLook>;
+  world: RefObject<WorldRenderer | null>;
+  host: Omit<StageHost, "world">;
+}
+/** What a game's panel is given: the seat, its own table, and the way to ask for a move there. */
+interface PanelProps<G extends Game> extends Seat {
+  table: PubTables[G];
+  error: string | null;
+  send(action: Extract<PubClientMessage, { type: G }>["action"]): void;
+}
+/** A game table in the pub. */
+interface PubTable {
+  /** The game: the name its messages go by, and the kind of the place in the room you sit at to play it. */
+  game: Game;
+  hex: HexPos;
+  /** What a pointer over its hex is told. */
+  tip: string;
+  /** Where you are, standing at it. */
+  place: string;
+  /** You are in a game of it that is under way. */
+  holding(pub: PubConnection, you: string | null): boolean;
+  /** Its panel, for whoever is sitting at it. */
+  panel(pub: PubConnection, seat: Seat): ReactNode;
+}
+/** `holding`: whether someone in a seat is still in a game under way, so that walking off would forfeit it. */
+function table<G extends Game>(game: G, Panel: ComponentType<PanelProps<G>>, at: { tip: string; place: string; holding(seat: TableView<G>["seats"][number]): boolean }): PubTable {
+  return {
+    game,
+    hex: ROOM.pois.find((p) => p.kind === game)!.pos,
+    tip: at.tip,
+    place: at.place,
+    holding: (pub, you) => {
+      const view = pub.tables[game];
+      return view?.phase === "playing" && (view.seats as TableView<G>["seats"][number][]).some((s) => s.id === you && at.holding(s));
+    },
+    panel: (pub, seat) => <Panel {...seat} table={pub.tables[game] ?? null} error={pub.tableErrors[game] ?? null} send={(action) => pub.send({ type: game, action } as PubClientMessage)} />,
+  };
+}
+/** The pub's game tables. A new one is its panel and a line here, with its messages in packages/world/src/pub.ts. */
+const TABLES: PubTable[] = [
+  table("dice", DiceTable, { tip: "Dice table: a bluffing game for a small stake", place: "At the dice table.", holding: (s) => s.count > 0 }),
+  table("shoals", ShoalsTable, { tip: "Shoals: lay your markers, bid, and sail without running aground", place: "At the Shoals table.", holding: (s) => s.count > 0 }),
+  table("crew", CrewTable, { tip: "Cargo and Krakens: roll a ship, then gamble for a captain and cargo, and beware the Kraken", place: "At the Cargo and Krakens table.", holding: (s) => s.contending && !s.forfeited }),
+  table("tide", TideTable, { tip: "Turn the Tide: a card game of one-card hands, where the Moon decides whether high or low wins", place: "At the Turn the Tide card table.", holding: (s) => !s.forfeited }),
+];
 /** Where a pointer over the leaderboard lands: its own hex, the two wall hexes behind it (its top is in front of them), and the floor where it is read. */
 const BOARD_HEXES: HexPos[] = [PUB_LEADERBOARD.pos, { q: PUB_LEADERBOARD.pos.q, r: PUB_LEADERBOARD.pos.r - 1 }, { q: PUB_LEADERBOARD.pos.q + 1, r: PUB_LEADERBOARD.pos.r - 1 }, PUB_LEADERBOARD.stand];
 const onBoard = (pos: HexPos) => BOARD_HEXES.some((h) => same(h, pos));
@@ -59,25 +116,21 @@ interface TalkLine {
   text: string;
 }
 
-/** One thing ordered at the bar, with its icon, or what to say when there is none. */
-function Having({ item, none }: { item: { id: string } | undefined; none: string }) {
-  if (!item) return <strong>{none}</strong>;
-  return <span className="pub-having"><ThingIcon icon={pubIcon(item.id)} size={18} /><strong>{label("pub", item.id)}</strong></span>;
-}
-
-export function PubView({ me, refresh, onLeave }: { me: Me; refresh(): Promise<unknown>; onLeave(): void }) {
-  useAudioScene("pub");
+/**
+ * `resting`: the player is somewhere else, and the pub is kept, built but put away: not drawn, not connected, none
+ * of its panels up. It is made that way with the game (App's Buildings), so that walking in is at once.
+ */
+export function PubView({ me, refresh, onLeave, resting = false }: { me: Me; refresh(): Promise<unknown>; onLeave(): void; resting?: boolean }) {
+  useAudioScene("pub", !resting);
+  const born = useRef(resting);
   const mount = useRef<HTMLDivElement>(null);
   const renderer = useRef<WorldRenderer | null>(null);
   const [hover, setHover] = useState<HexPos | null>(null);
-  const [text, setText] = useState("");
   const chatEnd = useRef<HTMLDivElement>(null);
-  /** What this hero has ordered and what it will give them. */
-  const [tab, setTab] = useState<PubTab | null>(null);
   const [busy, setBusy] = useState(false);
   const [orderError, setOrderError] = useState<string | null>(null);
-  /** The last order was a meal that gave back a gathering outing. */
-  const [rested, setRested] = useState(false);
+  /** Whether the last meal ordered gave back a gathering outing. Null until one is ordered. */
+  const [rested, setRested] = useState<boolean | null>(null);
   /** The conversation with the barkeep. Kept in this browser only. */
   const [talk, setTalk] = useState<TalkLine[]>([]);
   const [ask, setAsk] = useState("");
@@ -125,7 +178,7 @@ export function PubView({ me, refresh, onLeave }: { me: Me; refresh(): Promise<u
   }, [talkTo, loadRegs]);
   /** The regular just clicked: their panel opens once you are beside them. */
   const wantTalk = useRef<RegularId | null>(null);
-  /** The contract dealer's panel is open. It opens once you are beside them if you clicked them, and closes when you walk away. */
+  /** The dealer's panel is open. It opens once you are beside them if you clicked them, and closes when you walk away. */
   const [dealing, setDealing] = useState(false);
   const wantDeal = useRef(false);
   const castRef = useRef(cast);
@@ -142,50 +195,50 @@ export function PubView({ me, refresh, onLeave }: { me: Me; refresh(): Promise<u
       if (m.id === pub.you) void refresh();
     },
     (id, text) => renderer.current?.say(id, text),
+    !resting,
   );
-  const { you, players } = pub;
+  const { you } = pub;
+  // Before the room has said who is inside (the pub is loaded with the game, put away), you are stood at the door
+  // as your own pack says you look: the room is then drawn once, unseen, with you in it, and walking in has no
+  // figure to make. The room's own word replaces this the moment it comes.
+  const myLook = useMemo(() => (me.character ? withLook(outfitOf(me.inventory.map(toOwned).filter((i) => i.equipped)), me.character.appearance) : undefined), [me.inventory, me.character]);
+  const players = useMemo<typeof pub.players>(
+    () => (pub.you || !me.character ? pub.players : [{ id: me.player.id, name: me.character.name, classId: me.character.class_id, level: me.character.level, xp: me.character.xp, pos: DOOR, outfit: myLook } as (typeof pub.players)[number]]),
+    [pub.you, pub.players, me.character, me.player.id, myLook],
+  );
   const self = players.find((p) => p.id === you);
   /** How each player is drawn, for their seat at the Shoals table. */
   const looks = useMemo(() => Object.fromEntries(players.map((p) => [p.id, { classId: p.classId, outfit: p.outfit }])), [players]);
 
   // Holding dice: a stray click on the floor would walk away from the table and forfeit, so the floor is ignored until the game is over.
-  const holdingDice =
-    (pub.dice?.phase === "playing" && pub.dice.seats.some((s) => s.id === you && s.count > 0)) ||
-    (pub.shoals?.phase === "playing" && pub.shoals.seats.some((s) => s.id === you && s.count > 0)) ||
-    (pub.crew?.phase === "playing" && pub.crew.seats.some((s) => s.id === you && s.contending && !s.forfeited)) ||
-    (pub.tide?.phase === "playing" && pub.tide.seats.some((s) => s.id === you && !s.forfeited));
+  const holdingDice = TABLES.some((t) => t.holding(pub, you));
   const pinned = useRef(holdingDice);
   pinned.current = holdingDice;
   // Gold moves when a dice game starts and when it ends.
-  const dicePhase = `${pub.dice?.phase}|${pub.shoals?.phase}|${pub.crew?.phase}|${pub.tide?.phase}`;
+  const dicePhase = TABLES.map((t) => String(pub.tables[t.game]?.phase)).join("|");
   useEffect(() => {
     if (/playing|done/.test(dicePhase)) void refresh();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dicePhase]);
 
+  // (With nobody known to be inside, put away or just walked into, the room is still built: its people follow.)
   const scene = useMemo<RenderState | null>(() => {
-    if (!you) return null;
     return {
       code: "pub",
       kind: "pub",
-      you,
-      phase: "overworld",
-      round: 0,
+      you: you ?? me.player.id,
       map: ROOM,
       heroes: [
         ...players.map((p) => ({ id: p.id, classId: p.classId, pos: p.pos, label: p.name, outfit: p.outfit, level: p.level, xp: p.xp })),
         // The barkeep stands behind his bar and is drawn like anyone else.
         { id: PUB_BARKEEP.id, classId: "npc", pos: PUB_BARKEEP_POS, label: PUB_BARKEEP.name },
-        // The contract dealer, by the pillar at the end of the bar.
+        // The dealer, by the pillar at the end of the bar.
         { id: PUB_DEALER.id, classId: PUB_DEALER.look, pos: PUB_DEALER_POS, label: PUB_DEALER.name },
         // A traveling salesman, when one is in, takes the corner by the far wall.
         ...(seller ? [{ id: "salesman", classId: seller.look, pos: PUB_SALESMAN_POS, label: seller.name }] : []),
         // The day's regulars, each on their own spot.
         ...cast.map((r, i) => ({ id: regularUnit(r.id), classId: r.look, pos: PUB_REGULAR_SPOTS[i].pos, label: r.name })),
       ],
-      turn: null,
-      story: null,
-      npcs: {},
       freeRoam: true,
       indoors: true,
       props: [
@@ -229,7 +282,7 @@ export function PubView({ me, refresh, onLeave }: { me: Me; refresh(): Promise<u
         const who = spot >= 0 ? castRef.current[spot] : undefined;
         wantTalk.current = who?.id ?? null;
         if (who) return send.current({ type: "move", to: PUB_REGULAR_SPOTS[spot].stand });
-        // Clicking the contract dealer (or the hex in front of them) walks you up, and opens their papers once there.
+        // Clicking the dealer (or the hex in front of them) walks you up, and opens their papers once there.
         wantDeal.current = same(to, PUB_DEALER_POS) || same(to, PUB_DEALER_STAND);
         if (wantDeal.current) return send.current({ type: "move", to: PUB_DEALER_STAND });
         // Clicking the leaderboard (its wall, or the floor in front of it) walks you up to it, and opens it once there.
@@ -237,7 +290,7 @@ export function PubView({ me, refresh, onLeave }: { me: Me; refresh(): Promise<u
         if (onBoard(to)) return readBoard.current();
         // Clicking the salesman walks you up to their table.
         send.current({ type: "move", to: sellerHere.current && same(to, PUB_SALESMAN_POS) ? PUB_TRADER : to });
-      }, onHover: setHover });
+      }, onHover: setHover }, { resting: born.current });
     renderer.current = r;
     if (latest.current) r.setState(latest.current);
     // With fancy graphics, the pub has windows onto the real Harbor outside: a second view of it, drawn off screen.
@@ -265,38 +318,49 @@ export function PubView({ me, refresh, onLeave }: { me: Me; refresh(): Promise<u
   useEffect(() => {
     if (scene) renderer.current?.setState(scene);
   }, [scene]);
+  // Put away as the player leaves (a layout effect: before the next place's view is made, in the same pass), with
+  // whatever was open in here closed.
+  useLayoutEffect(() => {
+    if (!resting) return;
+    renderer.current?.setResting(true);
+    wantTalk.current = null;
+    wantDeal.current = wantBoard.current = false;
+    setHover(null);
+    setTalkTo(null);
+    setStood(null);
+    for (const close of [setSellingFish, setRecords, setDealing, setReading, setBag, setBook]) close(false);
+    heroSheet.close();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [resting]);
+  // And brought back as they walk in, fading in over where they came from (render/handover.ts).
+  useEffect(() => {
+    if (!resting) renderer.current?.setResting(false);
+  }, [resting]);
   useEffect(() => {
     chatEnd.current?.scrollIntoView({ block: "end" });
   }, [pub.chat.length]);
   useEffect(() => {
     talkEnd.current?.scrollIntoView({ block: "end" });
   }, [talk.length]);
-  useEffect(() => {
-    api.pub().then(setTab, () => undefined);
-  }, []);
 
   // Dev-only handle for driving the pub from the console or a test script.
   if (import.meta.env.DEV) (window as unknown as { __pub: unknown }).__pub = { pub };
 
   const atCounter = !!self && same(self.pos, PUB_COUNTER);
-  const atDice = !!self && same(self.pos, PUB_DICE);
-  const atShoals = !!self && same(self.pos, PUB_SHOALS);
-  const atCrew = !!self && same(self.pos, PUB_CREW);
-  const atTide = !!self && same(self.pos, PUB_TIDE);
+  /** The game table whose hex you are on, sitting or stood up beside it. */
+  const atTable = self ? TABLES.find((t) => same(self.pos, t.hex)) : undefined;
+  const atGame = atTable?.game ?? null;
   const atDoor = !!self && same(self.pos, DOOR);
   // Sitting at a table: first person, until you stand up. Standing up walks you out to the floor beside it.
-  const [stood, setStood] = useState<TableName | null>(null);
-  const seatedAt: TableName | null = atDice && stood !== "dice" ? "dice" : atShoals && stood !== "shoals" ? "shoals" : atCrew && stood !== "crew" ? "crew" : atTide && stood !== "tide" ? "tide" : null;
+  const [stood, setStood] = useState<Game | null>(null);
+  const seatedAt = atTable && stood !== atTable.game ? atTable : null;
   useEffect(() => {
-    if (stood === "dice" && !atDice) setStood(null);
-    if (stood === "shoals" && !atShoals) setStood(null);
-    if (stood === "crew" && !atCrew) setStood(null);
-    if (stood === "tide" && !atTide) setStood(null);
-  }, [stood, atDice, atShoals, atCrew, atTide]);
-  const standFrom = (table: TableName) => {
-    setStood(table);
-    const from = TABLE_HEX[table];
-    const away = hexNeighbors(from, PUB_GRID).filter((n) => ![PUB_COUNTER, PUB_DICE, PUB_SHOALS, PUB_CREW, PUB_TIDE, PUB_TRADER, PUB_DEALER_STAND].some((p) => same(p, n)) && !PUB_SEATS.some((s) => same(s, n)) && pubPath(ROOM, from, n));
+    if (stood && stood !== atGame) setStood(null);
+  }, [stood, atGame]);
+  const standFrom = (table: PubTable) => {
+    setStood(table.game);
+    const from = table.hex;
+    const away = hexNeighbors(from, PUB_GRID).filter((n) => ![PUB_COUNTER, ...TABLES.map((t) => t.hex), PUB_TRADER, PUB_DEALER_STAND].some((p) => same(p, n)) && !PUB_SEATS.some((s) => same(s, n)) && pubPath(ROOM, from, n));
     // The floor south of the table first, toward the room.
     away.sort((a, b) => b.r - a.r);
     if (away[0]) pub.send({ type: "move", to: away[0] });
@@ -349,33 +413,26 @@ export function PubView({ me, refresh, onLeave }: { me: Me; refresh(): Promise<u
   const [bag, setBag] = useState(false);
   const [book, setBook] = useState(false);
   const hoverPoi = hover ? poiAt(ROOM, hover) : undefined;
+  const hoverTable = hoverPoi && TABLES.find((t) => t.game === hoverPoi.kind);
   const tip = hoverRegular ? `${hoverRegular.name}, ${hoverRegular.trade}. Click to walk up and talk.`
     : hover && same(hover, PUB_BARKEEP_POS) ? `${PUB_BARKEEP.name}, the barkeep. Stand at the menu board to talk to him.`
     : hover && seller && same(hover, PUB_SALESMAN_POS) ? `${seller.name}, ${seller.trade}. Click to walk up and trade.`
-    : hover && same(hover, PUB_DEALER_POS) ? `${PUB_DEALER.name}, ${PUB_DEALER.trade}. Click to walk up: contracts and the crew's goal.`
+    : hover && same(hover, PUB_DEALER_POS) ? `${PUB_DEALER.name}, ${PUB_DEALER.trade}. Click to walk up: word on the regulars' errands.`
     : hover && onBoard(hover) ? "The leaderboard: the crew's wins at the game tables. Click to walk up and read it."
     : !hoverPoi ? null
+    : hoverTable ? hoverTable.tip
     : hoverPoi.kind === "counter" ? "The menu board: order here, or have a word with the barkeep"
-    : hoverPoi.kind === "dice" ? "Dice table: a bluffing game for a small stake"
-    : hoverPoi.kind === "dealer" ? `Where you stand to deal with ${PUB_DEALER.name}: contracts and the crew's goal`
+    : hoverPoi.kind === "dealer" ? `Where you stand to deal with ${PUB_DEALER.name}: word on the regulars' errands`
     : hoverPoi.kind === "trader" ? (seller ? `Trade with ${seller.name}, ${seller.trade}` : "The corner where traveling salesmen set up. Empty for now.")
-    : hoverPoi.kind === "shoals" ? "Shoals: lay your markers, bid, and sail without running aground"
-    : hoverPoi.kind === "crew" ? "Cargo and Krakens: roll a ship, then gamble for a captain and cargo, and beware the Kraken"
-    : hoverPoi.kind === "tide" ? "Turn the Tide: a card game of one-card hands, where the Moon decides whether high or low wins"
     : hoverPoi.kind === "door" ? "The door back to the Harbor"
     : null;
 
-  const say = () => {
-    if (!text.trim()) return;
-    pub.send({ type: "say", text });
-    setText("");
-  };
   const order = async (itemId: string) => {
     setBusy(true);
     setOrderError(null);
+    setRested(null);
     try {
       const next = await api.pubOrder(itemId);
-      setTab(next);
       setRested(!!next.rested);
       await refresh();
     } catch (e) {
@@ -399,40 +456,35 @@ export function PubView({ me, refresh, onLeave }: { me: Me; refresh(): Promise<u
       setWaiting(false);
     }
   };
-  const having = (kind: "drink" | "food") => PUB_MENU.find((i) => i.kind === kind && tab?.orders.includes(i.id));
-  const buffText = (buff: Perk) => perkText(buff) || "nothing";
 
+  // Put away: only the stage is kept, with the view built on it. (The stage is keyed, here and below, so it is the
+  // same element either way and keeps its canvas.)
+  if (resting) return <div className="run hut-view pub-view" style={{ display: "none" }}><div key="stage" className="stage" ref={mount} /></div>;
   return (
     <div className={`run hut-view pub-view${seatedAt ? " seated" : ""}`}>
-      <div className="stage" ref={mount} />
+      <div key="stage" className="stage" ref={mount} />
 
       {you && atCounter && (
         <DragPanel id="pub.bar" title="At the bar" className="story panel pub-bar">
           <h3>The board</h3>
-          <p className="muted">One drink and one meal go with you on your next voyage, then they are gone. Ordering another replaces the one you have. A meal also gives back one gathering outing, once a day.</p>
+          <p className="muted">A meal gives back one gathering outing, once a day. It gives nothing back if you have not been out gathering today, or have already eaten.</p>
           <ul className="pub-menu">
-            {PUB_MENU.map((item) => {
-              const mine = tab?.orders.includes(item.id);
-              return (
-                <li key={item.id} className={mine ? "having" : ""}>
-                  <ThingIcon icon={pubIcon(item.id)} size={36} />
-                  <div className="grow">
-                    <strong>{label("pub", item.id)}</strong> <span className="tag">{item.kind}</span>
-                    <div className="muted">{blurb("pub", item.id)} <span className="good">{buffText(item.buff)}</span></div>
-                  </div>
-                  <button className="small primary" disabled={busy || mine || gold < item.price} title={mine ? "You have this already" : gold < item.price ? "You cannot afford it" : ""} onClick={() => void order(item.id)}>
-                    {mine ? "Having it" : `${item.price}g`}
-                  </button>
-                </li>
-              );
-            })}
+            {PUB_MENU.map((item) => (
+              <li key={item.id}>
+                <ThingIcon icon={pubIcon(item.id)} size={36} />
+                <div className="grow">
+                  <strong>{label("pub", item.id)}</strong>
+                  <div className="muted">{blurb("pub", item.id)}</div>
+                </div>
+                <button className="small primary" disabled={busy || gold < item.price} title={gold < item.price ? "You cannot afford it" : ""} onClick={() => void order(item.id)}>
+                  {item.price}g
+                </button>
+              </li>
+            ))}
           </ul>
           {orderError && <p className="bad">{orderError}</p>}
-          {rested && <p className="good">That set you up: one gathering outing is yours again today.</p>}
-          <p>
-            In you: <Having item={having("drink")} none="no drink" /> and <Having item={having("food")} none="no meal" />
-            {tab && perkText(tab.buff) && <span className="good"> · next voyage: {perkText(tab.buff)}</span>}
-          </p>
+          {rested === true && <p className="good">That set you up: one gathering outing is yours again today.</p>}
+          {rested === false && <p className="muted">You eat. No outing comes back: you have not been out gathering today, or have already eaten.</p>}
 
           <h3>{PUB_BARKEEP.name}</h3>
           <p className="row">
@@ -458,15 +510,12 @@ export function PubView({ me, refresh, onLeave }: { me: Me; refresh(): Promise<u
       {you && sellingFish && <CatchPanel buyer="tam" onGold={() => void refresh()} onClose={() => setSellingFish(false)} />}
       {you && atTrader && seller && <SalesmanPanel me={me} refresh={refresh} />}
       {you && atBoard && reading && <PubLeaderboard you={you} version={dicePhase} onClose={() => setReading(false)} />}
-      {you && atDealer && dealing && <DealerPanel refresh={refresh} onClose={() => setDealing(false)} />}
+      {you && atDealer && dealing && <DealerPanel onClose={() => setDealing(false)} />}
       {you && talking && regs && <RegularPanel key={talking.regular} view={talking} handedIn={regs.handedIn} cap={regs.cap} reload={loadRegs} refresh={refresh} onClose={() => setTalkTo(null)} />}
-      {you && seatedAt === "shoals" && <ShoalsTable table={pub.shoals} you={you} gold={gold} error={pub.shoalsError} lastXp={pub.lastXp} looks={looks} world={renderer} host={{ hex: PUB_SHOALS, hide: players.filter((p) => same(p.pos, PUB_SHOALS)).map((p) => p.id), onStand: () => standFrom("shoals") }} send={(action) => pub.send({ type: "shoals", action })} />}
-      {you && seatedAt === "crew" && <CrewTable table={pub.crew} you={you} gold={gold} error={pub.crewError} lastXp={pub.lastXp} looks={looks} world={renderer} host={{ hex: PUB_CREW, hide: players.filter((p) => same(p.pos, PUB_CREW)).map((p) => p.id), onStand: () => standFrom("crew") }} send={(action) => pub.send({ type: "crew", action })} />}
-      {you && seatedAt === "tide" && <TideTable table={pub.tide} you={you} gold={gold} error={pub.tideError} lastXp={pub.lastXp} looks={looks} world={renderer} host={{ hex: PUB_TIDE, hide: players.filter((p) => same(p.pos, PUB_TIDE)).map((p) => p.id), onStand: () => standFrom("tide") }} send={(action) => pub.send({ type: "tide", action })} />}
-      {you && seatedAt === "dice" && <DiceTable table={pub.dice} you={you} gold={gold} error={pub.diceError} lastXp={pub.lastXp} looks={looks} world={renderer} host={{ hex: PUB_DICE, hide: players.filter((p) => same(p.pos, PUB_DICE)).map((p) => p.id), onStand: () => standFrom("dice") }} send={(action) => pub.send({ type: "dice", action })} />}
+      {you && seatedAt && seatedAt.panel(pub, { you, gold, lastXp: pub.lastXp, looks, world: renderer, host: { hex: seatedAt.hex, hide: players.filter((p) => same(p.pos, seatedAt.hex)).map((p) => p.id), onStand: () => standFrom(seatedAt) } })}
       {you && seatedAt && (() => {
-        const t = pub[seatedAt];
-        return <WinBanner key={seatedAt} table={t} you={you} xp={t && pub.lastXp?.id === t.winner ? pub.lastXp.amount : undefined} />;
+        const t = pub.tables[seatedAt.game] ?? null;
+        return <WinBanner key={seatedAt.game} table={t} you={you} xp={t && pub.lastXp?.id === t.winner ? pub.lastXp.amount : undefined} />;
       })()}
 
       {you && <>
@@ -486,10 +535,7 @@ export function PubView({ me, refresh, onLeave }: { me: Me; refresh(): Promise<u
           {pub.chat.map((l, i) => <div key={i} className="line hero"><strong>{l.name}: </strong>{l.text}</div>)}
           <div ref={chatEnd} />
         </div>
-        <div className="row">
-          <input value={text} maxLength={200} placeholder="Say something…" onChange={(e) => setText(e.target.value)} onKeyDown={(e) => e.key === "Enter" && say()} />
-          <button disabled={!text.trim()} onClick={say}>Say</button>
-        </div>
+        <ChatInput placeholder="Say something…" onSay={(text) => pub.send({ type: "say", text })} />
       </DragPanel>
 
       {/* Put away while seated at a game table: the table's own dock has the moves and the way to stand up, and it
@@ -501,16 +547,13 @@ export function PubView({ me, refresh, onLeave }: { me: Me; refresh(): Promise<u
             {holdingDice ? <span>You are in a game. Walking away forfeits it.</span>
               : atDoor ? <span>The door back to the Harbor.</span>
               : atCounter ? <span>At the bar.</span>
-              : atDice ? <span>At the dice table.</span>
-              : atShoals ? <span>At the Shoals table.</span>
-              : atCrew ? <span>At the Cargo and Krakens table.</span>
+              : atTable ? <span>{atTable.place}</span>
               : atBoard ? <span>In front of the leaderboard.</span>
-              : atTide ? <span>At the Turn the Tide card table.</span>
               : near ? <span>Beside {near.name}, {near.trade}.</span>
               : atDealer ? <span>Beside {PUB_DEALER.name}, {PUB_DEALER.trade}.</span>
               : atTrader ? (seller ? <span>At {seller.name}'s table.</span> : <span className="muted">The corner is empty.{due && ` ${due.name} is due ${dueIn(visitor.next!.startsAt - visitor.now)}.`}</span>)
               : seller ? <span className="pub-visitor">{seller.name}, {seller.trade}, is in the corner by the far wall.</span>
-              : <span className="muted">Click a hex to walk. Order at the menu board; contracts are with {PUB_DEALER.short} by the pillar; the game tables are across the room, with their leaderboard on the back wall.</span>}
+              : <span className="muted">Click a hex to walk. Order at the menu board; {PUB_DEALER.short}, by the pillar, knows the regulars' errands; the game tables are across the room, with their leaderboard on the back wall.</span>}
           </>
         }
         chips={pub.status !== "open" && !pub.error ? <span className="hud-chip bad">connecting…</span> : undefined}
@@ -533,7 +576,7 @@ export function PubView({ me, refresh, onLeave }: { me: Me; refresh(): Promise<u
         }
       >
         {near && !holdingDice && <button className="primary" disabled={!!talking} onClick={() => setTalkTo(near.id)}>Talk to {near.short}</button>}
-        {atDealer && !holdingDice && <button className="primary" disabled={dealing} onClick={() => setDealing(true)}>See contracts</button>}
+        {atDealer && !holdingDice && <button className="primary" disabled={dealing} onClick={() => setDealing(true)}>See errands</button>}
         {atBoard && !holdingDice && <button className="primary" disabled={reading} onClick={() => setReading(true)}>Read the board</button>}
         <button className={atDoor ? "primary" : ""} disabled={holdingDice} onClick={onLeave}>Leave</button>
       </HudBar>}
@@ -541,7 +584,7 @@ export function PubView({ me, refresh, onLeave }: { me: Me; refresh(): Promise<u
       {book && me.character && <Logbook me={me} refresh={refresh} onClose={() => setBook(false)} />}
       {atDoor && self && !holdingDice && <TileAction renderer={renderer} pos={self.pos} unitId={self.id} label="Leave" run={onLeave} />}
       {near && self && !talking && !holdingDice && !atBoard && <TileAction renderer={renderer} pos={self.pos} unitId={self.id} label={`Talk to ${near.short}`} run={() => setTalkTo(near.id)} />}
-      {atDealer && self && !dealing && !holdingDice && <TileAction renderer={renderer} pos={self.pos} unitId={self.id} label="See contracts" run={() => setDealing(true)} />}
+      {atDealer && self && !dealing && !holdingDice && <TileAction renderer={renderer} pos={self.pos} unitId={self.id} label="See errands" run={() => setDealing(true)} />}
       {atBoard && self && !reading && !holdingDice && <TileAction renderer={renderer} pos={self.pos} unitId={self.id} label="Read the board" run={() => setReading(true)} />}
       </>}
 

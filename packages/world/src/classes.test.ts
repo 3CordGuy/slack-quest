@@ -1,37 +1,10 @@
-// The classes brought over from the old game: each is complete, and their
-// passives and special abilities do what they say: the Druid's regrowth, the
-// Bard's aura, the Warden's opening guard, Taunt and Bulwark Strike, and the
-// Warlock's bleeding perfect hits, Hex and Soul Drain.
+// The hero classes as data: each is complete, with stats, levelling, weapons
+// of its own and abilities that exist. What their passives and abilities do
+// in a fight is in zone/zone.test.ts.
 
 import { describe, expect, it } from "vitest";
 import { LEVELUP_AUTO_ALLOC, STARTING_STATS } from "@gantt-quest/core";
-import {
-  ABILITIES,
-  BARD_AURA,
-  DRUID_REGEN,
-  DUMMY_KIND,
-  HERO_CLASSES,
-  SHIPS_GUNS,
-  WARLOCK_BLEED_TURNS,
-  WEAPONS,
-  WEAPON_ICON,
-  createBattle,
-  currentActor,
-  equipProblem,
-  gearSheet,
-  heroCombatant,
-  makeRng,
-  rollItem,
-  stepBattle,
-  weaponItem,
-  type BattleEvent,
-  type BattleState,
-  type HeroInit,
-} from "./index";
-
-function hero(id: string, classId: string): HeroInit {
-  return { id, name: id, classId, level: 1, xp: 0, unspent: 0, base: { ...STARTING_STATS[classId] }, ...gearSheet(classId, []), weapon: HERO_CLASSES.find((c) => c.id === classId)!.weapons[0] };
-}
+import { ABILITIES, HERO_CLASSES, SHIPS_GUNS, WEAPONS, WEAPON_ICON, equipProblem, makeRng, rollItem, weaponItem } from "./index";
 
 describe("hero classes", () => {
   it("offers all eight, each with stats, levelling, weapons of its own and abilities that exist", () => {
@@ -77,103 +50,25 @@ describe("hero classes", () => {
   });
 });
 
-/** Play `who` against the dummy, always with `ability`, and collect every event. */
-function spar(heroes: HeroInit[], ability: Record<string, string>, seed: number, turns = 12, enemies = [DUMMY_KIND], dummyHp?: number) {
-  const rng = makeRng(seed);
-  let { state } = createBattle({ heroes: heroes.map((h) => heroCombatant(h)), enemyKinds: enemies, avgLevel: 1, poiId: "ring" }, rng);
-  if (dummyHp) state = { ...state, combatants: state.combatants.map((c) => (c.side === "enemy" ? { ...c, hp: dummyHp, maxHp: dummyHp } : c)) };
-  const events: BattleEvent[] = [];
-  const hurt = (s: BattleState) => ({ ...s, combatants: s.combatants.map((c) => (c.side === "hero" ? { ...c, hp: Math.max(1, c.hp - 10) } : c)) });
-  state = hurt(state);
-  for (let i = 0; i < turns && state.status === "active"; i++) {
-    const actor = currentActor(state)!;
-    const res = stepBattle(state, actor.id, { type: "ability", ability: ability[actor.id], target: ABILITIES[ability[actor.id]].target === "ally" ? actor.id : "e0" }, rng);
-    if (!res.ok) throw new Error(res.error);
-    events.push(...res.events);
-    state = res.state;
-  }
-  return { state, events };
-}
-
-describe("class passives", () => {
-  it("lets the Reef Druid grow back at the start of each of its turns", () => {
-    const { events } = spar([hero("d", "backend_druid")], { d: "thornlash" }, 3);
-    const regrowth = events.filter((e) => e.t === "heal" && e.ability === "Deep Roots");
-    expect(regrowth.length).toBeGreaterThan(0);
-    for (const e of regrowth) if (e.t === "heal") expect(e.amount).toBeLessThanOrEqual(DRUID_REGEN);
-  });
-
-  it("does not regrow anyone else", () => {
-    const { events } = spar([hero("m", "devops_mage")], { m: "shock" }, 3);
-    expect(events.some((e) => e.t === "heal" && e.ability === "Deep Roots")).toBe(false);
-  });
-
-  it("makes the other heroes hit harder while a Shanty Bard stands, but not the Bard itself", () => {
-    // The same rolls with and without a Bard aboard: the paladin's hits differ by exactly the aura when every roll lands.
-    const perfectHits = (withBard: boolean) => {
-      const party = withBard ? [hero("p", "qa_paladin"), hero("b", "frontend_bard")] : [hero("p", "qa_paladin")];
-      const hits: number[] = [];
-      for (let seed = 0; seed < 60; seed++) {
-        const { events } = spar(party, { p: "bash", b: "dissonance" }, seed, 2);
-        for (const e of events) if (e.t === "hit" && e.actor === "p" && e.perfect) hits.push(e.amount);
-      }
-      return hits;
-    };
-    const plain = new Set(perfectHits(false));
-    const played = new Set(perfectHits(true));
-    expect(plain.size).toBe(1);
-    expect(played.size).toBe(1);
-    expect([...played][0] - [...plain][0]).toBe(BARD_AURA);
-  });
-});
-
-describe("Tidewall Warden", () => {
-  it("does not guard any other class at the start of a fight", () => {
-    const heroes = HERO_CLASSES.filter((c) => c.id !== "sre_warden").map((c) => heroCombatant(hero(c.id, c.id)));
-    const { state } = createBattle({ heroes, enemyKinds: [DUMMY_KIND], avgLevel: 1, poiId: "ring" }, makeRng(1));
-    for (const c of state.combatants) expect(c.effects.some((e) => e.kind === "guarded"), c.id).toBe(false);
-  });
-
-});
-
-describe("Wreck Warlock", () => {
-  it("leaves the target bleeding on every perfect hit, and only on a perfect hit", () => {
-    let perfects = 0;
-    let plain = 0;
-    for (let seed = 0; seed < 60; seed++) {
-      const { events } = spar([hero("k", "data_warlock")], { k: "hex" }, seed, 6, [DUMMY_KIND], 500);
-      events.forEach((e, i) => {
-        if (e.t !== "hit" || e.actor !== "k") return;
-        // The effects this hit applied: Hex's own (glitched) and the Warlock's bleed.
-        const after: BattleEvent[] = [];
-        for (let j = i + 1; j < events.length && events[j].t === "effect"; j++) after.push(events[j]);
-        const bled = after.some((x) => x.t === "effect" && x.effect === "bleeding");
-        if (e.perfect) {
-          perfects += 1;
-          expect(after).toContainEqual({ t: "effect", target: e.target, effect: "bleeding", turns: WARLOCK_BLEED_TURNS });
-        } else {
-          plain += 1;
-          expect(bled).toBe(false);
-        }
-      });
+describe("signature weapons", () => {
+  it("every class has a signature weapon of its own, with its own ability first", () => {
+    for (const c of HERO_CLASSES) {
+      const w = WEAPONS[c.signature];
+      expect(w?.classId).toBe(c.id);
+      expect(ABILITIES[w.abilities[0]]).toBeTruthy();
+      expect(WEAPONS[w.looksLike!]).toBeTruthy();
     }
-    expect(perfects).toBeGreaterThan(0);
-    expect(plain).toBeGreaterThan(0);
   });
 
-  it("heals itself a third of the damage Soul Drain deals", () => {
-    let drains = 0;
-    for (let seed = 0; seed < 40; seed++) {
-      const { events } = spar([hero("k", "data_warlock")], { k: "soul_drain" }, seed, 6, [DUMMY_KIND], 500);
-      events.forEach((e, i) => {
-        if (e.t !== "heal" || e.ability !== "Soul Drain") return;
-        drains += 1;
-        // The hit it drained from: just before, or before the bleeding a perfect hit leaves.
-        const hit = events.slice(0, i).reverse().find((x) => x.t === "hit" && x.actor === "k")!;
-        expect(hit).toBeDefined();
-        if (hit.t === "hit") expect(e.amount).toBeLessThanOrEqual(Math.max(1, Math.round(hit.amount * ABILITIES.soul_drain.drain!)));
-      });
+  it("drops only from good loot", () => {
+    const sig = new Set(HERO_CLASSES.map((c) => c.signature));
+    let low = 0;
+    let high = 0;
+    for (let seed = 0; seed < 400; seed++) {
+      if (sig.has(rollItem(makeRng(seed), "qa_paladin", 0.2, 3, "main_hand").ref)) low += 1;
+      if (sig.has(rollItem(makeRng(seed), "qa_paladin", 0.6, 3, "main_hand").ref)) high += 1;
     }
-    expect(drains).toBeGreaterThan(0);
+    expect(low).toBe(0);
+    expect(high).toBeGreaterThan(50);
   });
 });

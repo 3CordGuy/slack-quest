@@ -245,7 +245,6 @@ export const AUDIO: AudioManifest = {
     // or music: "pub" to replace the music from outside.
     hut: { inside: { of: "harbor", cutoff: 700, gainDb: -3 } },
     pub: { inside: { of: "harbor", cutoff: 700, gainDb: -3 } },
-    sailing: { music: "island", ambience: ["rain", "rainstorm"] },
     island: { music: "island", ambience: ["day", "night", "rain", "rainstorm"] },
     // Under the rocks: no sky, no weather. The island's music until the caverns have their own.
     caverns: { music: "island" },

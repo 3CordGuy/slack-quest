@@ -1,5 +1,5 @@
 // Zones in D1: the row a ZoneRoom loads its map from and saves it back to.
-// D1 is the system of record, as for voyages: the room's copy is a cache.
+// D1 is the system of record: the room's copy is a cache.
 
 import { zoneCleared, type ZoneOptions, type ZoneState } from "@gantt-quest/world";
 
@@ -86,14 +86,27 @@ export async function onAZone(db: D1Database, playerId: string): Promise<boolean
   return !!row;
 }
 
-/** Who of a crew is out on a zone, by player id. Nobody, if presence cannot be read. */
-export async function crewPresence(db: D1Database, crewId: string): Promise<Map<string, { code: string; fighting: boolean }>> {
+/**
+ * SQL for the crew a read is about. `THIS_CREW` is the crew whose id is bound; `CREW_OF_PLAYER` is the crew of the
+ * player whose id is bound, for a read that starts from a player and would otherwise ask for their crew first. A
+ * player is in one crew at most (crew_members.player_id is unique); in none, it names no crew and the read finds nobody.
+ */
+const THIS_CREW = "?";
+const CREW_OF_PLAYER = "(SELECT crew_id FROM crew_members WHERE player_id = ?)";
+type WhichCrew = typeof THIS_CREW | typeof CREW_OF_PLAYER;
+
+async function presenceIn(db: D1Database, crew: WhichCrew, id: string): Promise<Map<string, { code: string; fighting: boolean }>> {
   const rows = await db
-    .prepare("SELECT p.player_id AS id, p.code, p.fighting FROM zone_presence p JOIN crew_members m ON m.player_id = p.player_id WHERE m.crew_id = ? AND p.seen_at > ?")
-    .bind(crewId, Date.now() - PRESENCE_STALE_MS)
+    .prepare(`SELECT p.player_id AS id, p.code, p.fighting FROM zone_presence p JOIN crew_members m ON m.player_id = p.player_id WHERE m.crew_id = ${crew} AND p.seen_at > ?`)
+    .bind(id, Date.now() - PRESENCE_STALE_MS)
     .all<{ id: string; code: string; fighting: number }>()
     .then((r) => r.results, (err) => (unwritten("read")(err), []));
   return new Map(rows.map((p) => [p.id, { code: p.code, fighting: !!p.fighting }]));
+}
+
+/** Who of a crew is out on a zone, by player id. Nobody, if presence cannot be read. */
+export async function crewPresence(db: D1Database, crewId: string): Promise<Map<string, { code: string; fighting: boolean }>> {
+  return presenceIn(db, THIS_CREW, crewId);
 }
 
 export interface CrewPlace {
@@ -105,16 +118,28 @@ export interface CrewPlace {
   zone: { code: string; fighting: boolean } | null;
 }
 
-/** Everyone in a crew and where they are, for the roster shown on a zone. */
-export async function crewPlaces(db: D1Database, crewId: string): Promise<CrewPlace[]> {
+async function placesIn(db: D1Database, crew: WhichCrew, id: string): Promise<CrewPlace[]> {
   const [members, away] = await Promise.all([
     db
-      .prepare("SELECT m.player_id AS id, c.name, c.class_id AS classId, c.level FROM crew_members m JOIN characters c ON c.player_id = m.player_id AND c.status = 'active' WHERE m.crew_id = ? ORDER BY m.joined_at, m.player_id")
-      .bind(crewId)
+      .prepare(`SELECT m.player_id AS id, c.name, c.class_id AS classId, c.level FROM crew_members m JOIN characters c ON c.player_id = m.player_id AND c.status = 'active' WHERE m.crew_id = ${crew} ORDER BY m.joined_at, m.player_id`)
+      .bind(id)
       .all<{ id: string; name: string; classId: string; level: number }>(),
-    crewPresence(db, crewId),
+    presenceIn(db, crew, id),
   ]);
   return members.results.map((m) => ({ ...m, zone: away.get(m.id) ?? null }));
+}
+
+/** Everyone in a crew and where they are, for the roster shown on a zone. */
+export async function crewPlaces(db: D1Database, crewId: string): Promise<CrewPlace[]> {
+  return placesIn(db, THIS_CREW, crewId);
+}
+
+/**
+ * The same for the crew a player is in, read without first asking which crew that is (nobody, for a player in
+ * none): a zone's roster asks for it every few seconds.
+ */
+export async function crewPlacesOf(db: D1Database, playerId: string): Promise<CrewPlace[]> {
+  return placesIn(db, CREW_OF_PLAYER, playerId);
 }
 
 /**

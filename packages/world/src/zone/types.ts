@@ -11,7 +11,7 @@ import type { EffectKind } from "../content";
 import type { ItemDef, Outfit } from "../gear";
 import type { ResourceKind, Resources } from "../hut";
 import type { Clime, WorldMap } from "../map";
-import type { FurnishingGrant } from "../world";
+import type { FurnishingGrant } from "../drops";
 import type { ZoneMod } from "./mods";
 
 export type Side = "hero" | "enemy";
@@ -309,6 +309,10 @@ export interface ZoneState {
   seed: string;
   rng: number;
   options: ZoneOptions;
+  /**
+   * Its `tiles` array is shared by each state with the one before it (stepZone), and what is reckoned from an array
+   * is kept with it. So a tile is never changed where it lies: whatever changes one puts a new tile in a new array.
+   */
   map: WorldMap;
   /** Where heroes arrive, and wake after a lost fight. */
   start: HexPos;

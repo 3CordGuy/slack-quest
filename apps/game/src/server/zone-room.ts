@@ -1,7 +1,7 @@
 // ZoneRoom: one Durable Object per zone (a map a party walks freely and
 // fights on), addressed by the zone's code.
 //
-// It follows RunRoom's rules:
+// Its rules:
 // - WebSockets use the hibernation API, so an idle room costs nothing.
 // - D1 is the system of record. this.zone is only a cache and is reloaded
 //   from zones.state_json after hibernation.
@@ -31,12 +31,13 @@
 // written on the socket itself, which outlives the room's hibernation.
 
 import { DurableObject } from "cloudflare:workers";
-import { THROWABLE_KINDS, ZONE_CLIENT_ACTIONS, createZone, ensureMouth, stepZone, zoneAwaiting, zoneHero, zoneOptions, zoneView, type ZoneAction, type ZoneEvent, type ZoneState } from "@gantt-quest/world";
+import { THROWABLE_KINDS, ZONE_CLIENT_ACTIONS, createZone, ensureMouth, hiddenEnemies, stepZone, zoneAwaiting, zoneHero, zoneOptions, zoneView, type ZoneAction, type ZoneEvent, type ZoneState } from "@gantt-quest/world";
 import { consumablesOf, gainConsumables, kitStatements, spendConsumables, type Consumables } from "./consumables";
 import { applyZoneGrant, crewFor, heroInitFor, refreshHarbor, type Env } from "./db";
 import { isDev } from "./dev";
 import { clearNode } from "./atlas";
 import { clearPresence, getZoneRow, saveZoneStatement, setPresence, zoneStatus } from "./zones";
+import { closeBack, tellTrades } from "./walk-room";
 
 /** How long a turn in a fight may take before it ends itself. */
 export const ZONE_TURN_MS = 90_000;
@@ -158,16 +159,7 @@ export class ZoneRoom extends DurableObject<Env> {
       // A trade changed: tell the player it concerns to look again, if they are here and connected.
       const url = new URL(request.url);
       if (url.pathname !== "/trades") return new Response("expected websocket", { status: 426 });
-      for (const to of url.searchParams.getAll("to")) {
-        for (const ws of this.ctx.getWebSockets(to)) {
-          try {
-            ws.send(JSON.stringify({ type: "trades" }));
-          } catch {
-            // Socket is closing; webSocketClose will follow.
-          }
-        }
-      }
-      return new Response("ok");
+      return tellTrades(this.ctx, url.searchParams.getAll("to"));
     }
     const code = request.headers.get("x-zone-code");
     const playerId = request.headers.get("x-player-id");
@@ -192,7 +184,7 @@ export class ZoneRoom extends DurableObject<Env> {
     await this.serial(async () => {
       await this.resumeTimer();
       this.fighting.delete(playerId);
-      await this.notePresence();
+      this.tellHarbor(await this.notePresence());
       this.broadcast([]);
     });
     return new Response(null, { status: 101, webSocket: pair[0] });
@@ -235,11 +227,7 @@ export class ZoneRoom extends DurableObject<Env> {
   }
 
   async webSocketClose(ws: WebSocket, code: number): Promise<void> {
-    try {
-      ws.close(code === 1005 || code === 1006 ? 1000 : code);
-    } catch {
-      // Already closed.
-    }
+    closeBack(ws, code);
     const { playerId } = (ws.deserializeAttachment() as Attachment | null) ?? { playerId: "" };
     await this.serial(async () => {
       const zone = await this.load();
@@ -249,7 +237,7 @@ export class ZoneRoom extends DurableObject<Env> {
         if (zone.units.some((u) => u.side === "hero" && (u.id === playerId || u.controller === playerId) && !u.away)) await this.apply({ type: "away", player: playerId, away: true });
         this.fighting.delete(playerId);
         await clearPresence(this.env.DB, playerId, zone.code);
-        this.tellHarbor(playerId);
+        this.tellHarbor([playerId]);
       }
       this.broadcast([]);
     });
@@ -320,6 +308,8 @@ export class ZoneRoom extends DurableObject<Env> {
     // The dev toolbox's restock is real too, for every player's hero here.
     if (action.type === "dev" && action.dev.op === "heal") for (const u of next.units) if (u.side === "hero" && !u.controller) writes.push(...kitStatements(db, u.id));
     const grants = res.effects.filter((effect) => effect.type === "grant");
+    // Whose crew's Harbor has something new to show once all of this is written: it is told once, at the end.
+    const news = new Set<string>();
     if (grants.length === 0) {
       // The common case, and one trip to D1 for all of it: the pack's rows and then the zone, in that order.
       await db.batch([...writes, saveZoneStatement(db, next)]);
@@ -331,42 +321,59 @@ export class ZoneRoom extends DurableObject<Env> {
         // A full pack never loses what was found, but the hero hears where it went.
         if (effect.item && (place === "storage" || place === "overfull")) res.events.push({ t: "stowed", id: effect.heroId, item: effect.item.name, place });
         // The roster shows each hero's level.
-        this.tellHarbor(effect.heroId);
+        news.add(effect.heroId);
       }
       await saveZoneStatement(db, next).run();
     }
     // A landfall cleared (nobody left to fight, nothing left to open) is cleared on the crew's chart: once, and
     // the Harbor is told, so a chart that is open there shows the routes beyond it.
     const landfall = this.landfall;
+    let charted: string | null = null;
     if (landfall && !landfall.told && zoneStatus(next) === "cleared") {
       landfall.told = true;
       await clearNode(db, landfall.crewId, landfall.node);
-      this.ctx.waitUntil(refreshHarbor(this.env, landfall.crewId));
+      charted = landfall.crewId;
     }
-    await this.notePresence();
+    for (const playerId of await this.notePresence()) news.add(playerId);
+    this.tellHarbor(news, charted);
     this.broadcast([...passed, ...res.events], from);
     return null;
   }
 
-  /** Write down, for everyone connected, that they are here and whether they are in a fight: only what has changed. */
-  private async notePresence() {
+  /**
+   * Write down, for everyone connected, that they are here and whether they are in a fight: only what has changed.
+   * Gives whose record changed, for the Harbor to be told of (`tellHarbor`).
+   */
+  private async notePresence(): Promise<string[]> {
     const zone = this.zone;
-    if (!zone) return;
+    if (!zone) return [];
+    const changed: string[] = [];
     for (const playerId of this.online()) {
       const now = !!zone.encounter?.order.includes(playerId);
       if (this.fighting.get(playerId) === now) continue;
       this.fighting.set(playerId, now);
-      await setPresence(this.env.DB, playerId, zone.code, now);
-      this.tellHarbor(playerId);
+      changed.push(playerId);
     }
+    // One player's record does not wait on another's.
+    await Promise.all(changed.map((playerId) => setPresence(this.env.DB, playerId, zone.code, this.fighting.get(playerId) === true)));
+    return changed;
   }
 
-  /** The crew's Harbor shows where its members are: tell it to look again. */
-  private tellHarbor(playerId: string) {
+  /**
+   * The crew's Harbor shows where its members are and their levels: tell it to look again. Once for each crew,
+   * however many of its members there is news of. `crewId`: a crew to tell whoever the players are (its chart changed).
+   * Nothing waits for it, and it is called once everything it is to show has been written.
+   */
+  private tellHarbor(players: Iterable<string>, crewId: string | null = null) {
+    const ids = [...new Set(players)];
+    if (ids.length === 0 && !crewId) return;
+    const crewOf = (playerId: string) =>
+      crewFor(this.env.DB, playerId).then(
+        (crew) => crew?.id ?? null,
+        (err) => (console.warn("zone-room:harbor-refresh-failed", { err: err instanceof Error ? err.message : String(err) }), null),
+      );
     this.ctx.waitUntil(
-      crewFor(this.env.DB, playerId)
-        .then((crew) => refreshHarbor(this.env, crew?.id ?? null))
-        .catch((err) => console.warn("zone-room:harbor-refresh-failed", { err: err instanceof Error ? err.message : String(err) })),
+      Promise.all(ids.map(crewOf)).then((crews) => Promise.all([...new Set([crewId, ...crews])].map((crew) => refreshHarbor(this.env, crew)))),
     );
   }
 
@@ -380,9 +387,11 @@ export class ZoneRoom extends DurableObject<Env> {
     const zone = this.zone;
     if (!zone) return;
     const online = this.online();
+    // Who is out of sight is the same whoever is looking: worked out once for everyone here.
+    const hidden = hiddenEnemies(zone);
     for (const ws of this.ctx.getWebSockets()) {
       const seat = ws.deserializeAttachment() as Attachment;
-      const view = zoneView(zone, seat.playerId);
+      const view = zoneView(zone, seat.playerId, hidden);
       // The tiles go once to a client that keeps them: everything else about the map (its places) goes every time.
       const { tiles: _tiles, ...rest } = view.map;
       const state = seat.lean && seat.tiles ? { ...view, map: rest } : view;

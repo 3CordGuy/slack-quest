@@ -151,7 +151,7 @@ export interface Loop {
 }
 
 /** The places the game can be, each with its own music and atmosphere. */
-export type SceneName = "title" | "harbor" | "hut" | "pub" | "sailing" | "island" | "caverns" | "battle";
+export type SceneName = "title" | "harbor" | "hut" | "pub" | "island" | "caverns" | "battle";
 
 /**
  * One piece of music for the day and another for the night, each a key of `music`. The change comes

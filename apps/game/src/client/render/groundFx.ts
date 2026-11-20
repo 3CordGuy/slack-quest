@@ -328,15 +328,21 @@ export function fireField(hexes: HexPos[], at: (p: HexPos) => { x: number; y: nu
   const flames: THREE.Object3D[] = [];
   const sparkAt: number[] = [];
   const sparkSeed: number[] = [];
+  // One bed of embers and one flame of each size are made, for the first hex. Every other is a copy of those, sharing
+  // their shapes and materials: each copy flickers by its own tongues (flickerFlame), and nothing changes a material.
+  // They go when the field does: whoever clears the group disposes of every mesh in it (TacticsLayer.clear).
+  let firstBed: THREE.Mesh | null = null;
+  let firstTall: THREE.Group | null = null;
+  let firstLow: THREE.Group | null = null;
   hexes.forEach((p, i) => {
     const { x, y, z } = at(p);
-    const bed = emberBed(0.78);
+    const bed = firstBed ? firstBed.clone() : (firstBed = emberBed(0.78));
     bed.position.set(x, y + 0.035, z);
     group.add(bed);
     for (let k = 0; k < 3; k++) {
       const a = (k / 3) * Math.PI * 2 + i * 1.3;
       const d = k === 0 ? 0.05 : 0.3;
-      const flame = torchFlame(k === 0 ? 0.42 : 0.3);
+      const flame = k === 0 ? (firstTall ? firstTall.clone() : (firstTall = torchFlame(0.42))) : firstLow ? firstLow.clone() : (firstLow = torchFlame(0.3));
       flame.position.set(x + Math.cos(a) * d, y + 0.04, z + Math.sin(a) * d);
       group.add(flame);
       flames.push(flame);

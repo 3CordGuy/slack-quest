@@ -9,16 +9,17 @@
 //
 // The rack is one picture of timber drawn in code (rackArt.ts), with what
 // changes laid over it. It is sectioned by two raised posts. Left of the
-// first: what is in each hand. Between them, nine slots: what the hero can do (the abilities
-// of the weapon in hand, or a punch with none), then anything quick to hand
-// (potions on a voyage). Right of the second: the bag. On the beam over it
+// first: what is in each hand. Between them, the slots: what the hero can do
+// in a fight (see below). Right of the second: the bag. On the beam over it
 // runs the experience bar. Above that sit two meters, health on the left
-// and whatever else the view counts on the right (focus on a voyage,
+// and whatever else the view counts on the right (focus on a map,
 // gathering outings in the Harbor), with a plaque between them that shows
-// the hero's level, or, on a voyage, the turn's clock: press it to end your
-// turn. The turn's points are pips over the meters. Tabs hang off
-// the rack's ends: the logbook and rest on the left, the bag's key and the
-// menu on the right. Nothing on the
+// the hero's level and opens the logbook. A view may hand the bar a turn
+// instead (`turn`: the plaque is then its clock, pressed to end it) and
+// points to show as pips over the meters (`pips`); none does now, a fight
+// on the tiles having a turn bar of its own (zone/TurnBar.tsx). Tabs hang
+// off the rack's ends: the logbook and rest on the left, the bag's key and
+// the menu on the right. Nothing on the
 // bar is labelled: pointing at a thing brings up a card over the bar saying
 // what it is (a meter's numbers, an item's card as in the bag, what an
 // ability does, a key).
@@ -35,7 +36,7 @@
 // I (or B) opens and closes the bag and L opens the logbook, unless you are
 // typing. The bag's button does the same: press it again to put the bag away.
 
-import { Children, useEffect, useRef, useState, type CSSProperties, type DragEvent, type MouseEvent, type ReactNode } from "react";
+import { Children, useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent, type MouseEvent, type ReactNode } from "react";
 import { ABILITIES, COMMON_ACTIONS, ITEM_AP, RARITY_COLOR, THROWABLES, abilitiesFor, classAbilitiesOf, commonCost, loadoutOf, maxHpFor, parseAbilityLoadout, tacticOf, withClassAbilities, xpToNext, type CommonAction, type Throwable } from "@gantt-quest/world";
 import type { Me } from "../api";
 import { Icon, ItemDetail, toOwned } from "../items";
@@ -48,7 +49,6 @@ import { loadBar, moveSlot, saveBar } from "../zone/hotbar";
 import { RACK, RACK_ROW, paintRack } from "./rackArt";
 import "./hud.css";
 
-const BOOK = ["####..####", "#...##...#", "#.#.##.#.#", "#...##...#", "#.#.##.#.#", "#...##...#", "#...##...#", "####..####", "..######.."];
 /** A campfire: rest. */
 const FIRE = ["....#.....", "....##....", "...###.#..", "..####.##.", "..#######.", ".###.####.", ".##...###.", "..##.###..", "#..####..#", ".########.", "#........#"];
 const HOURGLASS = ["########", ".#....#.", ".######.", "..####..", "...##...", "..#..#..", ".#.##.#.", ".######.", "########"];
@@ -83,16 +83,6 @@ export interface HudSlot {
   run?(): void;
 }
 
-/** Something quick to hand on the rack, after the abilities. */
-export interface HudQuick {
-  icon: { name: string; color: string };
-  /** What it is, and (in `note`) a line about it, for its tooltip. */
-  label: string;
-  note?: string;
-  count?: number;
-  run?(): void;
-}
-
 /** The meter on the right, across from health. */
 export interface HudMeter {
   /** What it counts, and (in `note`) a few words more, for its tooltip. */
@@ -109,16 +99,14 @@ interface Props {
   place?: ReactNode;
   /** The button for what can be done here. */
   children?: ReactNode;
-  /** Hit points right now; omitted off a voyage, where the hero is whole. */
-  /** `shield`: points of shield (Bolstered), shown after the HP. */
+  /** Hit points right now; omitted anywhere but on a map, where the hero is whole. `shield`: points of shield (Bolstered), shown after the HP. */
   hp?: { now: number; max: number; shield?: number };
   /** What the right-hand meter counts here. */
   meter?: HudMeter;
   pips?: HudPips[];
-  /** Small extras beside the points: the doom clock, the larder. */
+  /** Small extras beside the points: "connecting…" while a place's connection is down, the keys held on a map. */
   chips?: ReactNode;
-  quick?: HudQuick[];
-  /** The slots as the view wants them (a fight on the tiles): up to two rows of nine, null for an empty one. Replaces the weapon's abilities and `quick`. */
+  /** The slots as the view wants them (a fight on the tiles): up to two rows of nine, null for an empty one. Otherwise the bar is shown as this class last left it. */
   slots?: (HudSlot | null)[];
   /** The player dragged slot `from` onto slot `to`. */
   onSlotMove?(from: number, to: number): void;
@@ -160,14 +148,18 @@ function Tip({ name, line, more, keys }: { name: string; line?: string; more?: s
   );
 }
 
-export function HudBar({ me, place, children, hp, meter, pips = [], chips, quick = [], slots, onSlotMove, onSlotMenu, torch, turn, rest, onBag, bagBlocked, onBook, menu }: Props) {
+export function HudBar({ me, place, children, hp, meter, pips = [], chips, slots, onSlotMove, onSlotMenu, torch, turn, rest, onBag, bagBlocked, onBook, menu }: Props) {
   const c = me.character;
-  const items = me.inventory.map(toOwned);
+  // The pack is read out of its stored form (each row's JSON) when it changes, not every time the bar is drawn.
+  const items = useMemo(() => me.inventory.map(toOwned), [me.inventory]);
   const worn = items.filter((i) => i.equipped);
   const weapon = worn.find((i) => i.slot === "main_hand");
   const offhand = worn.find((i) => i.slot === "off_hand");
-  // With nothing in hand there is only the punch.
-  const abilities = withClassAbilities(abilitiesFor(weapon?.ref), c ? classAbilitiesOf(c.class_id, c.level, parseAbilityLoadout(c.ability_loadout)) : []);
+  // With nothing in hand there is only the punch. Likewise read (the loadout is stored as JSON) only when it changes.
+  const abilities = useMemo(
+    () => withClassAbilities(abilitiesFor(weapon?.ref), c ? classAbilitiesOf(c.class_id, c.level, parseAbilityLoadout(c.ability_loadout)) : []),
+    [weapon?.ref, c?.class_id, c?.level, c?.ability_loadout],
+  );
 
   /** What the pointer is over on the bar, and where along it (in the picture's pixels), for the card that explains it. */
   const [tip, setTip] = useState<{ x: number; node: ReactNode } | null>(null);
@@ -440,7 +432,7 @@ export function HudBar({ me, place, children, hp, meter, pips = [], chips, quick
         </button>
 
         {/* The tabs off each end: the logbook and rest on the left, the bag's key and the menu on the right. */}
-        <button className={`hud-tab ${news ? "news" : ""}`} style={tab("left", 0)} aria-label="Logbook" disabled={!onBook} onClick={onBook} {...hover(4, <Tip name="Logbook" line={news ? "Something to spend or pick" : "Your hero, traits and skills"} keys="L" />)}>L</button>
+        <button className={`hud-tab ${news ? "news" : ""}`} style={tab("left", 0)} aria-label="Logbook" disabled={!onBook} onClick={onBook} {...hover(4, <Tip name="Logbook" line={news ? "Something to spend or pick" : "Your hero, stats and skills"} keys="L" />)}>L</button>
         {rest && (
           <button className="hud-tab" style={tab("left", 1)} aria-label="Rest" disabled={rest.disabled} onClick={rest.run} {...hover(4, <Tip name="Rest" line={rest.hint} />)}>
             <PixelIcon rows={FIRE} size={11} />

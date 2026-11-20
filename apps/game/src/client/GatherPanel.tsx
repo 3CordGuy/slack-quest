@@ -60,7 +60,7 @@ function Water({ outing, busy, cast }: { outing: GatherView; busy: boolean; cast
   );
 }
 
-export function GatherPanel({ spot, pier, at, vessel = null, gilded = false, shipBeside = false, onRod, renderer, onClose, onStamina, onPaid }: {
+export function GatherPanel({ spot, pier, at, vessel = null, gilded = false, onRod, renderer, onClose, onStamina, onPaid }: {
   spot: GatherSpot;
   /** Fishing: where the hero is fishing from (a pier, the shore, or afloat), and the hex they are on. */
   pier?: FishSpot;
@@ -69,8 +69,6 @@ export function GatherPanel({ spot, pier, at, vessel = null, gilded = false, shi
   vessel?: Vessel | null;
   /** The Catch Book is full: the rod is gilded. */
   gilded?: boolean;
-  /** A crew's ship is moored off that pier. */
-  shipBeside?: boolean;
   /** Fishing: show the hero with a rod in hand to everyone in the Harbor, or put it down. */
   onRod?(on: boolean): void;
   /** The Harbor's renderer: felling is played in it, through the hero's eyes. */
@@ -91,7 +89,6 @@ export function GatherPanel({ spot, pier, at, vessel = null, gilded = false, shi
   };
   const [atPier] = useState(pier);
   const [atHex] = useState(at);
-  const [shipAtOpen] = useState(shipBeside);
   const [paid, setPaid] = useState<Resources | null>(null);
   /** What the outing just ended paid in XP. */
   const [xp, setXp] = useState<XpResult | null>(null);
@@ -160,7 +157,7 @@ export function GatherPanel({ spot, pier, at, vessel = null, gilded = false, shi
     : null;
   if (spot === "fishing" && from && renderer.current) {
     if (!status && !error) return null;
-    if (!open || open.sitting) return <Fishing pier={from.spot} at={from.at} vessel={vessel} gilded={gilded} world={renderer.current} shipBeside={shipAtOpen} onRod={onRod} onClose={onClose} onStamina={onStamina} onPaid={onPaid} />;
+    if (!open || open.sitting) return <Fishing pier={from.spot} at={from.at} vessel={vessel} gilded={gilded} world={renderer.current} onRod={onRod} onClose={onClose} onStamina={onStamina} onPaid={onPaid} />;
   }
   // Felling is played in the Harbor itself, through the hero's eyes: no panel over it.
   if (outing?.felling && outing.spot === spot) {
@@ -233,7 +230,7 @@ export function GatherPanel({ spot, pier, at, vessel = null, gilded = false, shi
               <div>
                 <span className="muted">Harbor XP</span>
                 <strong>{status.harborXp.left} of {status.harborXp.cap}</strong>
-                <span className="muted">left today, from any pastime · voyages are not capped</span>
+                <span className="muted">left today, from any pastime · XP from the maps is not capped</span>
               </div>
             )}
           </div>
@@ -251,7 +248,7 @@ export function GatherPanel({ spot, pier, at, vessel = null, gilded = false, shi
         {status && !outing && (
           left > 0
             ? <button className="primary" disabled={busy} onClick={() => run(() => api.gatherStart(spot))}>{words.start} · uses 1 stamina</button>
-            : <p className="bad">You are worn out for today. A voyage or a rest in your own shack gives all three outings back, and a meal at the pub gives back one a day.</p>
+            : <p className="bad">You are worn out for today. A rest in your own shack gives all three outings back, and a meal at the pub gives back one a day.</p>
         )}
 
         {outing && (

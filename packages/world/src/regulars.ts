@@ -13,9 +13,9 @@
 //   fetch  bring N of a material or two and hand it in at the pub;
 //   trade  swap some of one material for another at a fair-to-kind rate,
 //          a few times a day;
-//   quest  do one small thing elsewhere (rest, give to a crew project, come
-//          home from a won voyage, meet a contract from the dealer), checked
-//          against what the game already records after the job was taken.
+//   quest  do one small thing elsewhere (rest, give to a crew project),
+//          checked against what the game already records after the job was
+//          taken.
 //
 // Pay is a little XP (under the daily Harbor XP cap, like every pastime)
 // plus some gold or materials. A player hands in at most ERRANDS_PER_DAY jobs
@@ -29,7 +29,7 @@ import { makeRng, seedFromString, type Rng } from "./rng";
 
 export type RegularId = "gretta" | "pike" | "wen" | "moss" | "dacey";
 export type ErrandKind = "fetch" | "trade" | "quest";
-export type QuestGoal = "rest" | "give" | "voyage" | "contract";
+export type QuestGoal = "rest" | "give";
 
 export interface Regular {
   id: RegularId;
@@ -79,7 +79,7 @@ export const REGULARS: Regular[] = [
     kinds: ["quest", "quest", "fetch"],
     wants: ["iron", "wood"],
     gives: ["iron", "copper"],
-    quests: ["voyage", "contract", "rest"],
+    quests: ["rest"],
   },
   {
     id: "wen",
@@ -118,7 +118,7 @@ export const REGULARS: Regular[] = [
     kinds: ["trade", "trade", "fetch"],
     wants: ["copper", "fur", "iron"],
     gives: ["iron", "copper", "fur"],
-    quests: ["contract"],
+    quests: [],
   },
 ];
 
@@ -175,7 +175,7 @@ export type Errand =
  * favour, and a little over.
  */
 export const MATERIAL_WORTH: Record<ResourceKind, number> = { wood: 1, stone: 1, bone: 1, herbs: 1, mushrooms: 1, fur: 1.5, copper: 2, iron: 2, slime: 2, gem: 6 };
-/** The most gold a fetch pays: about a contract, at the low end. */
+/** The most gold a fetch pays. */
 export const FETCH_GOLD_MAX = 30;
 /** A trade gives this much more worth than it takes. */
 export const TRADE_GENEROSITY = 1.2;
@@ -184,32 +184,24 @@ export const TRADE_GENEROSITY = 1.2;
 export const QUEST_TEXT: Record<QuestGoal, string> = {
   rest: "Rest on a bedroll or at home in your hut",
   give: "Give something to one of the crew's Harbor projects",
-  voyage: "Come home from a voyage the crew won",
-  contract: "Meet one of the contract dealer's contracts on a voyage",
 };
 
 /** What the regular says when asking. */
 const QUEST_ASK: Record<RegularId, Partial<Record<QuestGoal, string>>> = {
   gretta: { rest: "You look worse than my nets. Go and lie down for a bit, then come and tell me you did." },
-  pike: {
-    voyage: "Bring a ship home with a win in her hold and I will stand you something better than ale.",
-    contract: "Take one of those notices off the board and see it through. Proper work, that.",
-    rest: "Sleep, sailor. A tired hand loses fingers. Rest, then report.",
-  },
+  pike: { rest: "Sleep, sailor. A tired hand loses fingers. Rest, then report." },
   wen: { give: "The crew's building something. Put a bit of yourself into it, and I will put a bit into you." },
   moss: {
     rest: "When did you last sleep? Go on. Rest, and come back with a clearer eye.",
     give: "Help the crew build something that outlasts you. Then come tell an old man about it.",
   },
-  dacey: { contract: "There is a notice on the board with your name on it, if you squint. See it done." },
+  dacey: {},
 };
 
-/** Base pay for each quest, before a regular's day roll. Voyage work pays the most. */
-const QUEST_PAY: Record<QuestGoal, { xp: number; gold: number; bonus: number }> = {
-  rest: { xp: 4, gold: 10, bonus: 0 },
-  give: { xp: 5, gold: 15, bonus: 0 },
-  voyage: { xp: 8, gold: 30, bonus: 2 },
-  contract: { xp: 8, gold: 25, bonus: 2 },
+/** Base pay for each quest, before a regular's day roll. */
+const QUEST_PAY: Record<QuestGoal, { xp: number; gold: number }> = {
+  rest: { xp: 4, gold: 10 },
+  give: { xp: 5, gold: 15 },
 };
 
 const units = (r: Resources) => RESOURCE_KINDS.reduce((n, k) => n + (r[k] ?? 0), 0);
@@ -255,8 +247,7 @@ export function errandFor(crewId: string, day: string, who: Regular): Errand {
 
   const goal = rng.pick(who.quests);
   const pay = QUEST_PAY[goal];
-  const bonus: Resources = pay.bonus > 0 ? { [rng.pick(who.gives)]: pay.bonus } : {};
-  const reward: ErrandReward = { xp: pay.xp, gold: pay.gold + rng.int(0, 5), ...(units(bonus) > 0 ? { resources: bonus } : {}) };
+  const reward: ErrandReward = { xp: pay.xp, gold: pay.gold + rng.int(0, 5) };
   return { ...base, kind: "quest", goal, reward, text: QUEST_ASK[who.id][goal] ?? `${QUEST_TEXT[goal]}, would you?` };
 }
 
@@ -273,19 +264,12 @@ export interface QuestFacts {
   rested: boolean;
   /** Gave to a crew project. */
   gave: boolean;
-  /** Came home from a won voyage. */
-  wonVoyage: boolean;
-  /** Met a notice-board contract on a voyage. */
-  metContract: boolean;
 }
 
-export const NO_FACTS: QuestFacts = { rested: false, gave: false, wonVoyage: false, metContract: false };
+export const NO_FACTS: QuestFacts = { rested: false, gave: false };
 
 export function questMet(goal: QuestGoal, facts: QuestFacts): boolean {
-  if (goal === "rest") return facts.rested;
-  if (goal === "give") return facts.gave;
-  if (goal === "voyage") return facts.wonVoyage;
-  return facts.metContract;
+  return goal === "rest" ? facts.rested : facts.gave;
 }
 
 /** A player's standing with one regular's job, as the server reads it. */

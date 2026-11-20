@@ -18,16 +18,17 @@ import { catchIcon } from "./render/catchArt";
 import { units } from "./units";
 import { useAudioScene } from "./audio/useAudioScene";
 import type { HexPos } from "@gantt-quest/core";
-import { DEFAULT_APPEARANCE, FURNISHINGS, type PublicHero, besideHexes, coveredHexes, hutPath, isBeside, useOf, useProblem, type FurnishingUse, craftProblem, footprintCentre, furnitureSellPrice, sellFurnitureProblem, footprintOf, hexCentre, hexSpan, hutDoor, hutPerks, hutRoom, hutTier, isFlat, isMounted, isSmall, nextHutTier, placeProblem, placedFurnishings, poiAt, smallPlaceProblem, turnOf, upgradeProblem, wallPlaceProblem, wrapAngle, type Furnishing } from "@gantt-quest/world";
+import { DEFAULT_APPEARANCE, FURNISHINGS, type PublicHero, besideHexes, coveredHexes, hutPath, isBeside, useOf, useProblem, type FurnishingUse, craftProblem, footprintCentre, furnitureSellPrice, sellFurnitureProblem, footprintOf, hexCentre, hexSpan, hutDoor, hutRoom, hutTier, isFlat, isMounted, isSmall, nextHutTier, placeProblem, placedFurnishings, poiAt, smallPlaceProblem, turnOf, upgradeProblem, wallPlaceProblem, wrapAngle, type Furnishing } from "@gantt-quest/world";
 import { api, type Hut, type Me } from "./api";
 import { ChangeLook, LOOK_CHANGED } from "./ChangeLook";
+import { ChatInput } from "./ChatInput";
 import { CrewRoster } from "./CrewRoster";
 import { DragPanel } from "./DragPanel";
 import { OptionsMenu } from "./OptionsMenu";
 import { HudBar, HudCorner } from "./ui/Hud";
 import { InventoryScreen } from "./InventoryScreen";
 import { Logbook } from "./Logbook";
-import { CostChips, PerkMeter, ResourceChips } from "./hutDrops";
+import { CostChips, ResourceChips } from "./hutDrops";
 import { TileAction } from "./TileAction";
 import { HutToolbar, ICON, type ToolAction } from "./HutToolbar";
 import { PixelIcon } from "./PixelIcon";
@@ -38,7 +39,6 @@ import "./hut.css";
 import { blurb, label } from "./labels";
 import { ThingIcon, furnishingIcon } from "./thingIcons";
 import { xpEvents } from "./xpEvents";
-import { StaminaBolts } from "./StaminaBolts";
 
 const same = (a: HexPos, b: HexPos) => a.q === b.q && a.r === b.r;
 /** What there is to build with at home: the pack's materials and everything in the hut's chests (the server spends from both here). */
@@ -68,8 +68,6 @@ const readSnap = () => {
     return true;
   }
 };
-/** Where a floor piece stands, for the rules. */
-const spotOf = (f: Furnishing) => ({ x: f.x, z: f.z, angle: turnOf(f) });
 
 /** What a piece can do, as short tags under its name. */
 function tags(defId: string): string[] {
@@ -103,7 +101,6 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
   const mount = useRef<HTMLDivElement>(null);
   const renderer = useRef<WorldRenderer | null>(null);
   const [hover, setHover] = useState<HexPos | null>(null);
-  const [text, setText] = useState("");
   /** A furnishing picked up to be put down on the next floor hex clicked. */
   const [holding, setHolding] = useState<number | null>(null);
   /**
@@ -197,8 +194,6 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
     return {
       code: `hut:${ownerId}:${tier}`,
       you,
-      phase: "overworld",
-      round: 0,
       map: room,
       heroes: players.map((p) => {
         // Lying on their bed after a rest, until they walk off (HutRoom's lie_down).
@@ -209,9 +204,6 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
         const lying = bed && pillow && mid ? { pos: { q: bed.q, r: bed.r }, asleep: true, at: { x: pillow.x - mid.x, z: pillow.z - mid.z, y: 0.3 } } : { pos: p.pos };
         return { id: p.id, classId: p.classId, label: p.name, outfit: p.outfit, level: p.level, xp: p.xp, ...lying };
       }),
-      turn: null,
-      story: null,
-      npcs: {},
       freeRoam: true,
       indoors: true,
       lampOff,
@@ -445,7 +437,6 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
       setBusy(false);
     }
   };
-  const perks = useMemo(() => hutPerks(furnishings), [furnishings]);
   const bigger = tier === null ? null : nextHutTier(tier);
   const title = mine ? "Your hut" : owner ? `${owner.name}'s hut` : "A hut";
   const self = players.find((p) => p.id === you);
@@ -472,7 +463,6 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
   const tired = !!stamina && stamina.stamina.left < stamina.stamina.max;
   /** Why resting would do nothing right now, or null (the server has the last word). */
   const restBlocked = !stamina ? null : !tired ? "You are not tired. Rest after you have been out gathering." : restIn > 0 ? `You can rest again in ${restIn} min.` : null;
-  const staminaLine = stamina && `${stamina.stamina.left} of ${stamina.stamina.max} outings${restIn > 0 ? ` · rest again in ${restIn} min` : ""}`;
   /** A short note that fades: what a rest did, or why it did nothing. */
   const [notice, setNotice] = useState<{ text: string; ok: boolean; n: number } | null>(null);
   useEffect(() => {
@@ -511,11 +501,6 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
     } finally {
       setResting(false);
     }
-  };
-  const say = () => {
-    if (!text.trim()) return;
-    hut.send({ type: "say", text });
-    setText("");
   };
   /** Do what a piece does, standing beside it (or, for a look, from anywhere). */
   const doUse = useRef<(piece: Furnishing) => void>(() => {});
@@ -801,7 +786,7 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
                       <ThingIcon icon={furnishingIcon(def.id)} size={36} />
                       <span className="grow">
                       <strong>{label("furnishing", def.id)}</strong>
-                      <span className="muted"> · {known ? blurb("furnishing", def.id) : "Blueprint not found yet. Islands hide them."}</span>
+                      <span className="muted"> · {known ? blurb("furnishing", def.id) : "Blueprint not found yet. Chests out on the maps hide them."}</span>
                       {def.minTier && tier !== null && tier < def.minTier && <span className="muted"> Needs a {hutTier(def.minTier).name}.</span>}
                       </span>
                     </div>
@@ -835,10 +820,6 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
               Build the {bigger.name}
             </button>
           </>)}
-
-          <h4>Voyage perks</h4>
-          <p className="muted">What the pieces standing in the room give {mine ? "you" : "their owner"} when boarding a ship, and the most a hut can give.</p>
-          <PerkMeter perks={perks} />
 
           <h4>In the room</h4>
           {placed.length === 0 && <p className="muted">Nothing placed yet.</p>}
@@ -886,10 +867,7 @@ export function HutView({ ownerId, me, refresh, onLeave }: { ownerId: string; me
           {hut.chat.map((l, i) => <div key={i} className="line hero"><strong>{l.name}: </strong>{l.text}</div>)}
           <div ref={chatEnd} />
         </div>
-        <div className="row">
-          <input value={text} maxLength={200} placeholder="Say something…" onChange={(e) => setText(e.target.value)} onKeyDown={(e) => e.key === "Enter" && say()} />
-          <button disabled={!text.trim()} onClick={say}>Say</button>
-        </div>
+        <ChatInput placeholder="Say something…" onSay={(text) => hut.send({ type: "say", text })} />
       </DragPanel>
 
       <HudBar

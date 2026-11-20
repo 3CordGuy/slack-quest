@@ -80,6 +80,8 @@ const up = new THREE.Vector3();
 const across = new THREE.Vector3();
 const m = new THREE.Matrix4();
 const turn = new THREE.Quaternion();
+/** From the world into the table's own space: worked out once for each `update`, at its first piece. */
+const toSpace = new THREE.Matrix4();
 const Y = new THREE.Vector3(0, 1, 0);
 const grey = new THREE.Color();
 
@@ -97,6 +99,7 @@ export class TableShadows {
   update(roots: THREE.Object3D[], space: THREE.Object3D) {
     let nr = 0;
     let ns = 0;
+    let spaceKnown = false;
     for (const root of roots) {
       root.traverseVisible((o) => {
         const c = o.userData.shadow as Caster | undefined;
@@ -105,10 +108,15 @@ export class TableShadows {
         const n = c.round ? nr : ns;
         if (n >= MAX) return;
         const box = o.geometry.boundingBox ?? (o.geometry.computeBoundingBox(), o.geometry.boundingBox!);
-        o.getWorldPosition(p);
-        space.worldToLocal(p);
-        o.getWorldScale(s);
-        o.getWorldQuaternion(q);
+        // Where the piece is in the world, how it is turned and how big: all three out of its one world matrix.
+        o.updateWorldMatrix(true, false);
+        o.matrixWorld.decompose(p, q, s);
+        if (!spaceKnown) {
+          space.updateWorldMatrix(true, false);
+          toSpace.copy(space.matrixWorld).invert();
+          spaceKnown = true;
+        }
+        p.applyMatrix4(toSpace);
         let hx = ((box.max.x - box.min.x) / 2) * s.x;
         const hy = ((box.max.y - box.min.y) / 2) * s.y;
         let hz = ((box.max.z - box.min.z) / 2) * s.z;

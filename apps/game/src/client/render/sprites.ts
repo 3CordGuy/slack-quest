@@ -45,11 +45,6 @@ export function withLook(outfit: Outfit, appearance: string | Appearance | null 
   return look ? { ...outfit, appearance: look } : outfit;
 }
 
-/** A hero sheet whose outfit carries their chosen look. */
-export function withOutfitLook<T extends { outfit?: Outfit }>(sheet: T, appearance: string | null | undefined): T {
-  return { ...sheet, outfit: withLook(sheet.outfit ?? {}, appearance) };
-}
-
 /**
  * A figure's picture drawn with a given palette (undefined: the stock look) rather than the one in force,
  * as an image URL: the admin page's live preview. Same models as the game, no cache.

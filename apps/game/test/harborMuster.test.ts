@@ -1,42 +1,23 @@
 // The crew's muster as the Harbor room keeps it (src/server/harbor-room.ts; the rules are packages/world/src/
 // muster.ts, with tests of their own). The room is driven the way the worker drives it (the internal /muster
 // routes, with what `scoutNode` said of the place), with fake hibernatable sockets as in the other Harbor room
-// tests, a fake of the object's storage and its alarm, and a real SQLite database with the game's migrations
-// applied (the same stand-in for D1 as atlas.test.ts), so the map a muster makes is really made.
+// tests (rooms.ts), a fake of the object's storage and its alarm, and a real SQLite database with the game's
+// migrations applied (the stand-in for D1 in d1.ts), so the map a muster makes is really made.
 
-import { readFileSync, readdirSync } from "node:fs";
-import { DatabaseSync } from "node:sqlite";
+import type { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { ATLAS_HOME, HARBOR_SPAWN, MUSTER_LINGER_MS, MUSTER_MS, MUSTER_PARTY, atlasNodeById, needsStone, stoneItem, type HarborPlayer, type HarborServerMessage, type Muster, type MusterAnswer, type MusterMember, type ZoneMod, type ZoneOptions } from "@gantt-quest/world";
+import { ATLAS_HOME, HARBOR_SPAWN, MUSTER_LINGER_MS, MUSTER_MS, MUSTER_PARTY, atlasNodeById, needsStone, stoneItem, type Muster, type MusterAnswer, type MusterMember, type ZoneMod, type ZoneOptions } from "@gantt-quest/world";
 import { atlasSeed, chartFor, clearNode, openNode, scoutNode } from "../src/server/atlas";
 import { lodestonesOf } from "../src/server/lodestones";
 import { CAVE_IDLE_MS, getZoneRow } from "../src/server/zones";
+import { addHero, openDb } from "./d1";
+import { HarborSocket, fakeUpgrades } from "./rooms";
 
-const globals = globalThis as Record<string, unknown>;
-globals.WebSocketRequestResponsePair = class {
-  constructor(
-    public request: string,
-    public response: string,
-  ) {}
-};
-/** The client's end of a socket pair is never looked at here; the server's end is taken from `nextServerSocket`. */
-let nextServerSocket: FakeSocket;
-globals.WebSocketPair = class {
-  0 = {};
-  1 = nextServerSocket;
-};
-// Node's Response refuses status 101; the room only needs the answer to an upgrade to exist.
-const RealResponse = Response;
-globals.Response = Object.assign(
-  function (body: unknown, init?: { status?: number; webSocket?: unknown }) {
-    return init?.status === 101 ? { status: 101 } : new RealResponse(body as BodyInit, init);
-  },
-  { json: (data: unknown, init?: ResponseInit) => RealResponse.json(data, init) },
-) as unknown as typeof Response;
+/** Says which socket the room is handed as the server's end of the next upgrade. */
+const serveNext = fakeUpgrades();
 
 const { HarborRoom } = await import("../src/server/harbor-room");
 
-type Row = Record<string, unknown>;
 /**
  * Whether the database takes a turn of the event loop to answer, as D1 does (it is over the network; the object's
  * own storage is not). Off, a whole request runs to its end before the next is looked at; on, two requests sent
@@ -44,48 +25,8 @@ type Row = Record<string, unknown>;
  */
 let lag = false;
 const answered = () => (lag ? new Promise<void>((done) => setImmediate(done)) : Promise.resolve());
-class Stmt {
-  constructor(private sql: DatabaseSync, private text: string, private args: unknown[] = []) {}
-  bind(...args: unknown[]) {
-    return new Stmt(this.sql, this.text, args);
-  }
-  exec() {
-    const stmt = this.sql.prepare(this.text);
-    if (/^\s*(SELECT|WITH)/i.test(this.text)) return { results: stmt.all(...(this.args as never[])) as Row[], meta: { changes: 0, last_row_id: 0 } };
-    const res = stmt.run(...(this.args as never[]));
-    return { results: [] as Row[], meta: { changes: Number(res.changes), last_row_id: Number(res.lastInsertRowid) } };
-  }
-  async run() {
-    await answered();
-    return this.exec();
-  }
-  async all() {
-    await answered();
-    return this.exec();
-  }
-  async first() {
-    await answered();
-    return this.exec().results[0] ?? null;
-  }
-}
 
-class FakeSocket {
-  sent: HarborServerMessage[] = [];
-  closed: number | null = null;
-  tags: string[] = [];
-  constructor(private attachment: HarborPlayer | null = null) {}
-  deserializeAttachment() {
-    return this.attachment;
-  }
-  serializeAttachment(next: HarborPlayer | null) {
-    this.attachment = next;
-  }
-  send(data: string) {
-    this.sent.push(JSON.parse(data));
-  }
-  close(code = 1000) {
-    this.closed = code;
-  }
+class FakeSocket extends HarborSocket {
   /** Every telling of the muster this socket has had, in order (null: "there is none any more"). */
   get musters(): (Muster | null)[] {
     return this.sent.flatMap((m) => (m.type === "muster" ? [m.muster] : []));
@@ -154,7 +95,7 @@ function inTown(who: MusterMember): FakeSocket {
 /** Someone walks into the Harbor: the upgrade request the worker passes on. */
 async function connect(who: MusterMember, to = room()): Promise<FakeSocket> {
   const ws = new FakeSocket();
-  nextServerSocket = ws;
+  serveNext(ws);
   const res = await to.fetch({ url: "https://harbor/ws", headers: new Headers({ Upgrade: "websocket", "x-crew-id": CREW, "x-player-id": who.id, "x-player-name": encodeURIComponent(who.name) }) } as never);
   if (res.status !== 101) throw new Error(`refused: ${await res.text()}`);
   return ws;
@@ -212,16 +153,8 @@ beforeEach(() => {
   // Only the clock is faked: nothing here waits on a timer.
   vi.useFakeTimers({ toFake: ["Date"] });
   vi.setSystemTime(T0);
-  sql = new DatabaseSync(":memory:");
-  const dir = new URL("../migrations/", import.meta.url);
-  for (const file of readdirSync(dir).sort()) sql.exec(readFileSync(new URL(file, dir), "utf8"));
-  db = { prepare: (text: string) => new Stmt(sql, text), batch: async (stmts: Stmt[]) => (await answered(), stmts.map((s) => s.exec())) } as unknown as D1Database;
-  for (const [who, crew] of [[ann, CREW], [bo, CREW], [cy, CREW], [dee, CREW], [eve, CREW], [fay, CREW], [{ id: "zed", name: "Zed" }, OTHER]] as const) {
-    sql.prepare("INSERT INTO players (id, name, created_at) VALUES (?, ?, ?)").run(who.id, who.name, T0);
-    sql.prepare("INSERT INTO characters (player_id, name, class_id, status, str, int_stat, vit, agi, dex, gold, created_at) VALUES (?, ?, 'qa_paladin', 'active', 5, 5, 5, 5, 5, 100, ?)").run(who.id, who.name, T0);
-    sql.prepare("INSERT OR IGNORE INTO crews (id, name, created_by, created_at) VALUES (?, 'Crew', ?, ?)").run(crew, who.id, T0);
-    sql.prepare("INSERT INTO crew_members (crew_id, player_id, joined_at) VALUES (?, ?, ?)").run(crew, who.id, T0);
-  }
+  ({ sql, db } = openDb({ answered }));
+  for (const [who, crew] of [[ann, CREW], [bo, CREW], [cy, CREW], [dee, CREW], [eve, CREW], [fay, CREW], [{ id: "zed", name: "Zed" }, OTHER]] as const) addHero(sql, { ...who, crew, at: T0 });
   sockets = [];
   storage = new Map();
   alarm = null;
@@ -729,11 +662,9 @@ describe("a muster that has ended", () => {
     expect(kept()).toBeUndefined();
   });
 
-  // KNOWN BUG (reported, not fixed here): `musterNow` drops a muster that has been told long enough without telling
-  // the sockets, and `alarm()` then finds nothing kept and says nothing either. So when anything asks after the
-  // muster (the atlas polls GET /muster every 1.5s; a socket connecting asks too) between the moment it lapses and
-  // the alarm running, nobody in town is ever sent `muster: null`, and their panel stays up. Written as the
-  // behaviour wanted: turn `it.fails` into `it` once the room tells the sockets whichever way the muster is dropped.
+  // Anything that asks after a muster between the moment it lapses and its alarm running is the one to drop it (the
+  // atlas polls GET /muster; a socket connecting asks too). The sockets in town are told it is gone all the same, or
+  // their panel would stay up.
   it("tells the sockets it is gone even when someone asking after it was the one to drop it", async () => {
     const { b, endedAt } = await setOut();
     vi.setSystemTime(endedAt + MUSTER_LINGER_MS);

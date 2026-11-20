@@ -2,11 +2,11 @@
 // floor decor that furniture stands on (see hutroom.ts, coveredHexes and isFlat).
 
 import { describe, expect, it } from "vitest";
+import { pieceMaker } from "./test/furnishings";
 import { posKey, type HexPos } from "@gantt-quest/core";
 import {
   FURNISHINGS,
   HEX_DIRS,
-  PERK_CAPS,
   blockedHexes,
   buyFurnitureProblem,
   coveredHexes,
@@ -26,25 +26,9 @@ import {
   tileAt,
   turnOf,
   useOf,
-  type Furnishing,
 } from "./index";
 
-let next = 1;
-const piece = (defId: string, at: HexPos | null, more: Partial<Furnishing> = {}): Furnishing => ({
-  id: next++,
-  defId,
-  label: defId,
-  q: at?.q ?? null,
-  r: at?.r ?? null,
-  facing: 0,
-  x: 0,
-  z: 0,
-  y: 0,
-  angle: 0,
-  onId: null,
-  inId: null,
-  ...more,
-});
+const piece = pieceMaker();
 
 const step = (p: HexPos, dir: number, n = 1): HexPos => ({ q: p.q + HEX_DIRS[dir].q * n, r: p.r + HEX_DIRS[dir].r * n });
 const keys = (hexes: HexPos[]) => hexes.map(posKey).sort();
@@ -221,12 +205,8 @@ describe("the new big pieces in the catalogue", () => {
     expect(lieDownProblem(room, [bed], bed.id, step(step(middle, 1), 1), true)).toBeNull();
   });
 
-  it("keeps perks modest and inside the caps", () => {
-    for (const id of [...TWO_HEX, "runner_rug", "round_rug"]) {
-      const perk = FURNISHINGS[id].perk ?? {};
-      for (const [k, v] of Object.entries(perk)) expect(v).toBeLessThanOrEqual(PERK_CAPS[k as keyof typeof PERK_CAPS]);
-      expect(FURNISHINGS[id].price ?? FURNISHINGS[id].recipe).toBeDefined();
-    }
+  it("can each be bought or crafted", () => {
+    for (const id of [...TWO_HEX, "runner_rug", "round_rug"]) expect(FURNISHINGS[id].price ?? FURNISHINGS[id].recipe).toBeDefined();
   });
 
   it("only sells or crafts the biggest pieces for a hut that has outgrown the Shack", () => {

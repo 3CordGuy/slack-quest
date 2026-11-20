@@ -1,5 +1,5 @@
 // The Lapidary as it stands in the Harbor (packages/world/src/harbor.ts has
-// where; WorldRenderer.poiModel calls this for its point of interest): the
+// where; its place model in places/harborTown.ts calls this): the
 // jeweller-and-stonecutter's shop where lodestones are cut and worked and
 // gems are bought. Built from the same kit as the crew's workshops (dark
 // timbers, plaster, dressed stone, glass that warms at dusk), but narrower
@@ -13,12 +13,12 @@
 //   - and upstairs a window that shows blue after dark: the lodestones.
 //
 // The model fits one hex, its front to +z, like every other place's; the
-// renderer scales and stands it (see PLACE there).
+// renderer scales and stands it (see PLACE in places/placing.ts).
 
 import * as THREE from "three";
 import type { BuildingGlow } from "./ambience";
 
-/** Window glass that warms with the dusk (WorldRenderer's `warmPane`). */
+/** Window glass that warms with the dusk (`warmPane` in places/kit.ts). */
 type WarmPane = (unlit: string, lit: string) => THREE.MeshBasicMaterial;
 
 /**

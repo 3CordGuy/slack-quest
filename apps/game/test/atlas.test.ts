@@ -1,9 +1,7 @@
 // A crew's chart in D1 (src/server/atlas.ts), against a real SQLite database
-// with the game's migrations applied (the same stand-in for D1 as
-// storage.test.ts).
+// with the game's migrations applied (the stand-in for D1 in d1.ts).
 
-import { readFileSync, readdirSync } from "node:fs";
-import { DatabaseSync } from "node:sqlite";
+import type { DatabaseSync } from "node:sqlite";
 import { beforeEach, describe, expect, it } from "vitest";
 import { ATLAS_HOME, GEM_PRICE, PLAIN_STONE_COST, STACK_MAX, TOWN_TABS_MAX, TOWN_TAB_CELLS, atlasNodeById, attuneCost, modsOf, nodePlace, townTabCost, needsStone, rerollCost, stoneItem, temperCost, type ZoneMod, type ZoneOptions } from "@gantt-quest/world";
 import { atlasSeed, chartFor, clearNode, devClearNode, devResetChart, enterProblem, openNode, scoutNode } from "../src/server/atlas";
@@ -12,30 +10,7 @@ import { sellGems } from "../src/server/lapidary";
 import { attuneStone, cutStone, fuseStones, gainStone, lodestonesOf, rerollStone, temperStone } from "../src/server/lodestones";
 import { chestBuyTab, chestColorTab, chestFor, chestMoveTab, chestPutGear, chestPutStack, chestRenameTab, chestTakeGear, chestTakeStack } from "../src/server/townchest";
 import { CAVE_IDLE_MS, getZoneRow } from "../src/server/zones";
-
-type Row = Record<string, unknown>;
-
-class Stmt {
-  constructor(private sql: DatabaseSync, private text: string, private args: unknown[] = []) {}
-  bind(...args: unknown[]) {
-    return new Stmt(this.sql, this.text, args);
-  }
-  exec() {
-    const stmt = this.sql.prepare(this.text);
-    if (/^\s*(SELECT|WITH)/i.test(this.text)) return { results: stmt.all(...(this.args as never[])) as Row[], meta: { changes: 0, last_row_id: 0 } };
-    const res = stmt.run(...(this.args as never[]));
-    return { results: [] as Row[], meta: { changes: Number(res.changes), last_row_id: Number(res.lastInsertRowid) } };
-  }
-  async run() {
-    return this.exec();
-  }
-  async all() {
-    return this.exec();
-  }
-  async first() {
-    return this.exec().results[0] ?? null;
-  }
-}
+import { addHero, openDb } from "./d1";
 
 let sql: DatabaseSync;
 let db: D1Database;
@@ -43,17 +18,9 @@ const CREW = "CREWAA";
 const OTHER = "CREWBB";
 
 beforeEach(() => {
-  sql = new DatabaseSync(":memory:");
-  const dir = new URL("../migrations/", import.meta.url);
-  for (const file of readdirSync(dir).sort()) sql.exec(readFileSync(new URL(file, dir), "utf8"));
-  db = { prepare: (text: string) => new Stmt(sql, text), batch: async (stmts: Stmt[]) => stmts.map((s) => s.exec()) } as unknown as D1Database;
+  ({ sql, db } = openDb());
   const at = Date.now();
-  for (const [id, name, crew] of [["ann", "Ann", CREW], ["bo", "Bo", CREW], ["cy", "Cy", OTHER]]) {
-    sql.prepare("INSERT INTO players (id, name, created_at) VALUES (?, ?, ?)").run(id, name, at);
-    sql.prepare("INSERT INTO characters (player_id, name, class_id, status, str, int_stat, vit, agi, dex, gold, created_at) VALUES (?, ?, 'qa_paladin', 'active', 5, 5, 5, 5, 5, 100, ?)").run(id, name, at);
-    sql.prepare("INSERT OR IGNORE INTO crews (id, name, created_by, created_at) VALUES (?, 'Crew', ?, ?)").run(crew, id, at);
-    sql.prepare("INSERT INTO crew_members (crew_id, player_id, joined_at) VALUES (?, ?, ?)").run(crew, id, at);
-  }
+  for (const [id, name, crew] of [["ann", "Ann", CREW], ["bo", "Bo", CREW], ["cy", "Cy", OTHER]]) addHero(sql, { id, name, crew, at });
 });
 
 const home = (crew = CREW) => atlasNodeById(atlasSeed(crew), ATLAS_HOME)!;

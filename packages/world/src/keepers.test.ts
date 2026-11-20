@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { DISHES, HAGGLE_ASKS, HEX_DIRS, KEEPER_HOUSES, KEEPER_PLACES, KEEPER_SHOPS, POT_PRICES, isKeeperHouse, isKeeperShop, keeperWallPieces, potDish, potKey, forgeStock, haggleChance, haggleLine, haggleOutcome, haggledPrice, keeperPath, keeperRoom, smithyCost } from "./index";
+import { HAGGLE_ASKS, HEX_DIRS, KEEPER_HOUSES, KEEPER_PLACES, KEEPER_SHOPS, isKeeperHouse, isKeeperShop, keeperWallPieces, forgeStock, haggleChance, haggleLine, haggleOutcome, haggledPrice, keeperPath, keeperRoom, smithyCost } from "./index";
 
 describe("the keepers' rooms", () => {
   it("lets a customer walk from the door to the keeper in every one, around the fittings", () => {
@@ -20,7 +20,7 @@ describe("the keepers' rooms", () => {
 
 describe("the Lapidary", () => {
   it("is a keeper's room like the others, with a keeper of its own, and is not one of the crew's shops", () => {
-    expect(KEEPER_HOUSES).toEqual([...KEEPER_SHOPS, "lapidary"]);
+    expect(KEEPER_HOUSES).toEqual([...KEEPER_SHOPS, "galley", "lapidary"]);
     expect(isKeeperHouse("lapidary")).toBe(true);
     // Nothing is haggled over there, and nobody had to build it.
     expect(isKeeperShop("lapidary")).toBe(false);
@@ -87,16 +87,10 @@ describe("the galley", () => {
     }
   });
 
-  it("prices every dish, and names each by a key that leads back to it", () => {
-    for (const d of DISHES) {
-      expect(POT_PRICES[d.id]).toBeGreaterThan(0);
-      expect(potDish(potKey(d.id))).toBe(d.id);
-    }
-    expect(potDish("dish:gruel")).toBeUndefined();
-    expect(potDish("flask:fire")).toBeUndefined();
-    // The cook answers a haggle like the others do.
-    expect(haggleLine("galley", { ask: "lowball", pct: 35 })).toMatch(/\w/);
-    expect(haggleLine("galley", { ask: "nudge", pct: 0 }, 1)).toMatch(/\w/);
+  it("has a cook in it who sells nothing and is not haggled with", () => {
+    expect(isKeeperHouse("galley")).toBe(true);
+    expect(isKeeperShop("galley")).toBe(false);
+    expect(KEEPER_PLACES.galley.keeper.id).toBe("keeper:galley");
   });
 });
 

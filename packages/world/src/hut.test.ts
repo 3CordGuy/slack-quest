@@ -1,5 +1,26 @@
 import { describe, expect, it } from "vitest";
-import { FURNISHINGS, HUT_TIERS, PERK_CAPS, RESOURCE_KINDS, STARTER_BLUEPRINTS, STORY_FRAMES, TROPHY_FOR_FRAME, addResources, buyFurnitureProblem, canAfford, capPerks, craftProblem, hutPerks, nextHutTier, upgradeProblem, xpWithBonus, STALL_FURNITURE } from "./index";
+import {
+  FURNISHINGS,
+  GEM_PRICE,
+  HUT_TIERS,
+  RESOURCE_KINDS,
+  SHACK_COST,
+  STALL_BUYS,
+  STALL_FURNITURE,
+  STARTER_BLUEPRINTS,
+  binDeposit,
+  binFill,
+  binNeeds,
+  buyFurnitureProblem,
+  canAfford,
+  craftProblem,
+  furnitureSellPrice,
+  nextHutTier,
+  sellFurnitureProblem,
+  sellGemsProblem,
+  sellMaterialProblem,
+  upgradeProblem,
+} from "./index";
 
 describe("hut catalogue", () => {
   it("is internally consistent", () => {
@@ -15,10 +36,6 @@ describe("hut catalogue", () => {
     expect(STARTER_BLUEPRINTS).not.toContain("bed");
   });
 
-  it("has a trophy for every story shape", () => {
-    for (const frame of STORY_FRAMES) expect(FURNISHINGS[TROPHY_FOR_FRAME[frame.id]]?.kind).toBe("trophy");
-  });
-
   it("makes each hut tier bigger and dearer than the last", () => {
     expect(HUT_TIERS[0].gold).toBe(0);
     for (let i = 1; i < HUT_TIERS.length; i++) {
@@ -29,50 +46,11 @@ describe("hut catalogue", () => {
   });
 });
 
-describe("hut perks", () => {
-  const placed = (defId: string) => ({ defId, q: 0 });
-  const stored = (defId: string) => ({ defId, q: null });
-
-  it("counts only what is placed", () => {
-    expect(hutPerks([stored("bed"), stored("chest")])).toEqual({ focus: 0, potions: 0, maxHp: 0, xpPct: 0 });
-    expect(hutPerks([placed("bed"), stored("chest"), placed("hearth")])).toEqual({ focus: 1, potions: 0, maxHp: 4, xpPct: 0 });
-  });
-
-  it("never exceeds the caps, however much is placed", () => {
-    const everything = [...Array(4).fill(placed("bed")), ...Array(4).fill(placed("chest")), ...Array(3).fill(placed("hearth")), ...Array(5).fill(placed("bookshelf")), ...Array(9).fill(placed("trophy_pelt"))];
-    expect(hutPerks(everything)).toEqual(PERK_CAPS);
-  });
-
-  it("ignores furnishings it does not know", () => {
-    expect(hutPerks([placed("no_such_thing"), placed("table")])).toEqual({ focus: 0, potions: 0, maxHp: 0, xpPct: 0 });
-  });
-});
-
 describe("resources", () => {
-  it("adds, drops empties, and checks affordability", () => {
-    const have = addResources({ wood: 3 }, { wood: 2, iron: 1 });
-    expect(have).toEqual({ wood: 5, iron: 1 });
-    expect(addResources(have, { iron: -1 })).toEqual({ wood: 5 });
+  it("can be afforded only when every kind is covered", () => {
     expect(canAfford({ wood: 5 }, { wood: 5 })).toBe(true);
     expect(canAfford({ wood: 5 }, { wood: 5, stone: 1 })).toBe(false);
     expect(canAfford({}, {})).toBe(true);
-  });
-});
-
-describe("perk caps", () => {
-  it("holds any perk to the caps and to whole, non-negative numbers", () => {
-    expect(capPerks(undefined)).toEqual({ focus: 0, potions: 0, maxHp: 0, xpPct: 0 });
-    expect(capPerks({ focus: 9, potions: 9, maxHp: 99, xpPct: 99 })).toEqual(PERK_CAPS);
-    expect(capPerks({ focus: -3, maxHp: 2.9, xpPct: Number.NaN })).toEqual({ focus: 0, potions: 0, maxHp: 2, xpPct: 0 });
-  });
-
-  it("adds the XP bonus as a rounded percentage, never above the cap", () => {
-    expect(xpWithBonus(100, 0)).toBe(100);
-    expect(xpWithBonus(100, 2)).toBe(102);
-    expect(xpWithBonus(100, 50)).toBe(100 + PERK_CAPS.xpPct);
-    expect(xpWithBonus(10, 5)).toBe(11);
-    expect(xpWithBonus(10, 2)).toBe(10);
-    expect(xpWithBonus(0, 5)).toBe(0);
   });
 });
 
@@ -120,8 +98,7 @@ describe("furniture at the stall", () => {
 describe("selling furniture back to the stall", () => {
   const stored = (defId: string) => ({ defId, q: null, inId: null, fish: null });
 
-  it("pays half the stall price, rounded down, for what the stall sells", async () => {
-    const { furnitureSellPrice } = await import("./index");
+  it("pays half the stall price, rounded down, for what the stall sells", () => {
     expect(furnitureSellPrice("table")).toBe(15);
     expect(furnitureSellPrice("chair")).toBe(7);
     expect(furnitureSellPrice("mug")).toBe(2);
@@ -131,8 +108,7 @@ describe("selling furniture back to the stall", () => {
     expect(furnitureSellPrice("toString")).toBeNull();
   });
 
-  it("buys only stored, empty pieces it prices", async () => {
-    const { sellFurnitureProblem } = await import("./index");
+  it("buys only stored, empty pieces it prices", () => {
     expect(sellFurnitureProblem(stored("table"))).toBeNull();
     expect(sellFurnitureProblem(undefined)).toBe("You do not own that.");
     expect(sellFurnitureProblem(stored("bed"))).toBe("The stall does not buy that.");
@@ -167,23 +143,21 @@ describe("making a hut bigger", () => {
 });
 
 describe("the resource bin on a new plot", () => {
-  it("takes what is held, never more than the shack still needs", async () => {
-    const { SHACK_COST, binDeposit, binFill, binFull, binNeeds } = await import("./index");
-    expect(binFull({})).toBe(false);
+  it("takes what is held, never more than the shack still needs", () => {
     expect(binFill({})).toBe(0);
     expect(binNeeds({})).toEqual(SHACK_COST);
     // Only the kinds the shack needs go in, and only up to what it needs.
     const first = binDeposit({}, { wood: 4, stone: 50, fur: 9 });
     expect(first).toEqual({ wood: 4, stone: SHACK_COST.stone });
-    expect(binFull(first)).toBe(false);
+    expect(binNeeds(first)).toEqual({ wood: SHACK_COST.wood! - 4 });
     expect(binFill(first)).toBeGreaterThan(0);
     expect(binFill(first)).toBeLessThan(1);
     // Nothing held, nothing in.
     expect(binDeposit(first, {})).toEqual({});
     const rest = binDeposit(first, { wood: 99 });
     expect(rest).toEqual({ wood: SHACK_COST.wood! - 4 });
-    const full = addResources({ ...first }, rest);
-    expect(binFull(full)).toBe(true);
+    const full = { wood: first.wood! + rest.wood!, stone: first.stone };
+    expect(binNeeds(full)).toEqual({});
     expect(binFill(full)).toBe(1);
     expect(binDeposit(full, { wood: 5, stone: 5 })).toEqual({});
     // Odd amounts from a request are cleaned before they count.
@@ -192,8 +166,7 @@ describe("the resource bin on a new plot", () => {
 });
 
 describe("selling foraged goods to the stall", () => {
-  it("buys herbs and mushrooms only, whole amounts the seller holds, and sends gems to the Lapidary", async () => {
-    const { STALL_BUYS, sellMaterialProblem } = await import("./index");
+  it("buys herbs and mushrooms only, whole amounts the seller holds, and sends gems to the Lapidary", () => {
     expect(Object.keys(STALL_BUYS).sort()).toEqual(["herbs", "mushrooms"]);
     const have = { herbs: 4, mushrooms: 1, wood: 9, gem: 2, iron: 3 };
     expect(sellMaterialProblem("gem", 2, have)).toMatch(/Lapidary/);
@@ -206,8 +179,7 @@ describe("selling foraged goods to the stall", () => {
     for (const bad of [0, -1, 1.5, "2", null]) expect(sellMaterialProblem("herbs", bad, have)).toMatch(/at least one/);
   });
 
-  it("sells gems to the lapidary: whole amounts the seller holds", async () => {
-    const { GEM_PRICE, sellGemsProblem } = await import("./index");
+  it("sells gems to the lapidary: whole amounts the seller holds", () => {
     expect(GEM_PRICE).toBeGreaterThan(0);
     expect(sellGemsProblem(2, { gem: 2 })).toBeNull();
     expect(sellGemsProblem(3, { gem: 2 })).toMatch(/only have 2 gems/);

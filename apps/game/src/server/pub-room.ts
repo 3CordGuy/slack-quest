@@ -1,18 +1,19 @@
 // PubRoom: one Durable Object per crew, for the inside of the Harbor's pub.
 //
-// Presence, walking and chat work as they do in the Harbor and the huts: a
-// relay with no tick loop and no alarm, with who is here kept in each
-// socket's attachment so it survives hibernation. The room and its fittings
-// are fixed, so nothing about them is stored. The two game tables live here
-// too (see stake-table.ts). Ordering food and drink, and talking to the barkeep,
-// are plain HTTP routes in worker.ts; this object only relays people (and,
-// via /bubble, what is said to and by the barkeep).
+// Presence, walking and chat work as they do in the Harbor and the huts
+// (walk-room.ts): a relay with no tick loop and no alarm, with who is here
+// kept in each socket's attachment so it survives hibernation. The room and
+// its fittings are fixed, so nothing about them is stored. The game tables
+// live here too (see stake-table.ts). Ordering a meal, and talking to
+// the barkeep, are plain HTTP routes (routes/pub.ts); this object only relays
+// people (and, via /bubble, what is said to and by the barkeep).
 
 import { DurableObject } from "cloudflare:workers";
-import { LOOK_MIN_MS, validLook, HARBOR_MAX_SAY, UNSTICK_COOLDOWN_MS, pubPath, pubRoom, type CrewGame, type CrewRequest, type DiceGame, type DiceRequest, type HarborPlayer, type PubClientMessage, type PubServerMessage, type ShoalsGame, type ShoalsRequest, type TideGame, type TideRequest } from "@gantt-quest/world";
+import { pubPath, pubRoom, type PubClientMessage, type PubServerMessage } from "@gantt-quest/world";
 import { crewFor, getCharacter, heroInitFor, type Env, type Player } from "./db";
-import { CREW_RULES, DICE_RULES, SHOALS_RULES, TIDE_RULES, StakeTable } from "./stake-table";
-import { readXpPost, relayXp } from "./harbor-xp";
+import { pubTables, type PubTable } from "./stake-table";
+import type { PubGame } from "./pub-scores";
+import { Walkers, hexAsked, walkerFrom } from "./walk-room";
 
 const ROOM = pubRoom();
 const DOOR = ROOM.pois.find((p) => p.kind === "door")!.pos;
@@ -32,65 +33,37 @@ export async function enterPub(env: Env, player: Player, request: Request): Prom
 }
 
 export class PubRoom extends DurableObject<Env> {
-  private dice: StakeTable<DiceGame, DiceRequest>;
-  private shoals: StakeTable<ShoalsGame, ShoalsRequest>;
-  private crew: StakeTable<CrewGame, CrewRequest>;
-  private tide: StakeTable<TideGame, TideRequest>;
-  /** When each player last asked to be put back at the door. In memory only: a light limit. */
-  private unstuckAt = new Map<string, number>();
-  /** When each player's look was last passed on, so a waving pointer cannot flood the room. */
-  private lookedAt = new Map<string, number>();
+  /** Who is here: presence, walking and chat. */
+  private here: Walkers<PubServerMessage>;
+  /** The game tables, by the `type` of the messages that reach them. */
+  private tables: Map<PubGame, PubTable>;
   /** Whose pub this is, for the leaderboard. Kept in storage: the room is named after the crew, but cannot read its own name. */
   private crewId: string | null = null;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
-    ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair("ping", "pong"));
-    const crewId = () => this.crewId;
-    this.dice = new StakeTable(ctx, env, DICE_RULES, crewId);
-    this.shoals = new StakeTable(ctx, env, SHOALS_RULES, crewId);
-    this.crew = new StakeTable(ctx, env, CREW_RULES, crewId);
-    this.tide = new StakeTable(ctx, env, TIDE_RULES, crewId);
+    this.here = new Walkers(ctx);
+    this.tables = pubTables(ctx, env, () => this.crewId);
     void ctx.blockConcurrencyWhile(async () => {
       this.crewId = (await ctx.storage.get<string>("crewId")) ?? null;
     });
   }
 
-  private players(except?: WebSocket): HarborPlayer[] {
-    const seen = new Map<string, HarborPlayer>();
-    for (const ws of this.ctx.getWebSockets()) {
-      if (ws === except) continue;
-      const p = ws.deserializeAttachment() as HarborPlayer | null;
-      if (p) seen.set(p.id, p);
-    }
-    return [...seen.values()];
-  }
-
-  private send(ws: WebSocket, message: PubServerMessage) {
-    try {
-      ws.send(JSON.stringify(message));
-    } catch {
-      // Socket is closing; webSocketClose will follow.
-    }
-  }
-
-  private broadcast(message: PubServerMessage, except?: WebSocket) {
-    for (const ws of this.ctx.getWebSockets()) if (ws !== except) this.send(ws, message);
+  /** Seated players must be standing at their table: each table in turn settles who no longer is. `gone` is a socket that is closing. */
+  private async reconcileTables(gone?: WebSocket): Promise<void> {
+    for (const table of this.tables.values()) await table.reconcile(gone);
   }
 
   async fetch(request: Request): Promise<Response> {
+    const { pathname } = new URL(request.url);
     // A hero earned XP: show it over their head, if they are here.
-    if (new URL(request.url).pathname === "/xp") {
-      const msg = await readXpPost(request);
-      if (msg) relayXp(this.ctx, msg, (m) => this.broadcast(m));
-      return new Response("ok");
-    }
+    if (pathname === "/xp") return this.here.xpPosted(request);
     // A word with the barkeep (said over HTTP): hang it over the speaker for everyone here.
-    if (new URL(request.url).pathname === "/bubble") {
+    if (pathname === "/bubble") {
       const body = (await request.json().catch(() => null)) as { id?: unknown; text?: unknown } | null;
       const id = typeof body?.id === "string" ? body.id : "";
       const text = String(body?.text ?? "").replace(/\s+/g, " ").trim().slice(0, 400);
-      if (id && text) this.broadcast({ type: "bubble", id, text });
+      if (id && text) this.here.broadcast({ type: "bubble", id, text });
       return new Response("ok");
     }
     if (request.headers.get("Upgrade") !== "websocket") return new Response("expected websocket", { status: 426 });
@@ -102,108 +75,48 @@ export class PubRoom extends DurableObject<Env> {
       await this.ctx.storage.put("crewId", crewId);
     }
 
-    // One socket per player. A new tab takes over, standing where the old one stood.
-    let pos = DOOR;
-    for (const old of this.ctx.getWebSockets(id)) {
-      pos = (old.deserializeAttachment() as HarborPlayer | null)?.pos ?? pos;
-      old.serializeAttachment(null);
-      old.close(4000, "replaced by a newer connection");
-    }
-    const hero = await heroInitFor(this.env.DB, id);
-    const player: HarborPlayer = {
-      id,
-      name: decodeURIComponent(request.headers.get("x-player-name") ?? "Sailor"),
-      classId: request.headers.get("x-player-class") ?? "",
-      level: hero?.level ?? Number(request.headers.get("x-player-level") ?? 1),
-      xp: hero?.xp,
-      pos,
-      outfit: hero?.outfit,
-    };
+    // One socket per player. A new tab takes over, standing where the old one stood; anyone else arrives at the door.
+    const pos = this.here.takeOver(id, DOOR);
+    const player = walkerFrom(request, id, await heroInitFor(this.env.DB, id), pos);
 
     const pair = new WebSocketPair();
-    this.ctx.acceptWebSocket(pair[1], [id]);
-    pair[1].serializeAttachment(player);
-    this.send(pair[1], { type: "snapshot", you: id, players: this.players() });
-    this.broadcast({ type: "joined", player }, pair[1]);
-    await this.dice.welcome(pair[1], player);
-    await this.shoals.welcome(pair[1], player);
-    await this.crew.welcome(pair[1], player);
-    await this.tide.welcome(pair[1], player);
+    this.here.admit(pair[1], player);
+    this.here.send(pair[1], { type: "snapshot", you: id, players: this.here.players() });
+    this.here.broadcast({ type: "joined", player }, pair[1]);
+    for (const table of this.tables.values()) await table.welcome(pair[1], player);
     return new Response(null, { status: 101, webSocket: pair[0] });
   }
 
   async webSocketMessage(ws: WebSocket, message: string | ArrayBuffer): Promise<void> {
-    if (typeof message !== "string" || message.length > 2000) return;
-    const player = ws.deserializeAttachment() as HarborPlayer | null;
-    if (!player) return;
-    let msg: PubClientMessage;
-    try {
-      msg = JSON.parse(message);
-    } catch {
-      return;
-    }
+    const heard = this.here.read<PubClientMessage>(ws, message);
+    if (!heard) return;
+    const { player, msg } = heard;
 
     if (msg.type === "move") {
-      const to = { q: Number(msg.to?.q), r: Number(msg.to?.r) };
-      if (!Number.isInteger(to.q) || !Number.isInteger(to.r)) return;
+      const to = hexAsked(msg.to);
+      if (!to) return;
       // A walk may end on a stool, to sit on it, unless someone else already is.
-      const path = pubPath(ROOM, player.pos, to, this.players().filter((p) => p.id !== player.id).map((p) => p.pos));
+      const path = pubPath(ROOM, player.pos, to, this.here.othersAt(player.id));
       if (!path) return;
-      ws.serializeAttachment({ ...player, pos: path[path.length - 1] } satisfies HarborPlayer);
-      this.broadcast({ type: "moved", id: player.id, path });
+      this.here.walk(ws, player, path);
       // Walking away from a game table gives up a seat there.
-      await this.dice.reconcile();
-      await this.shoals.reconcile();
-      await this.crew.reconcile();
-      await this.tide.reconcile();
+      await this.reconcileTables();
     } else if (msg.type === "look") {
-      // Which way they are looking: passed on to everyone else here, and not kept.
-      const look = validLook(msg.look);
-      const now = Date.now();
-      if (look === null || now - (this.lookedAt.get(player.id) ?? -Infinity) < LOOK_MIN_MS) return;
-      this.lookedAt.set(player.id, now);
-      this.broadcast({ type: "looked", id: player.id, look }, ws);
+      this.here.look(ws, player, msg.look);
     } else if (msg.type === "unstick") {
-      // A stuck or lost hero goes back to the door. Only ever the sender's own hero.
-      const now = Date.now();
-      if (now - (this.unstuckAt.get(player.id) ?? -Infinity) < UNSTICK_COOLDOWN_MS) return;
-      this.unstuckAt.set(player.id, now);
-      ws.serializeAttachment({ ...player, pos: DOOR } satisfies HarborPlayer);
-      this.broadcast({ type: "placed", id: player.id, pos: DOOR });
-      // Like walking away, it gives up a seat at a game table.
-      await this.dice.reconcile();
-      await this.shoals.reconcile();
-      await this.crew.reconcile();
-      await this.tide.reconcile();
+      // Back to the door. Like walking away, it gives up a seat at a game table.
+      if (this.here.unstick(ws, player, DOOR)) await this.reconcileTables();
     } else if (msg.type === "say") {
-      const text = String(msg.text ?? "").replace(/\s+/g, " ").trim().slice(0, HARBOR_MAX_SAY);
-      if (text) this.broadcast({ type: "said", id: player.id, name: player.name, text });
-    } else if (msg.type === "dice") {
-      await this.dice.handle(ws, player, msg.action);
-    } else if (msg.type === "shoals") {
-      await this.shoals.handle(ws, player, msg.action);
-    } else if (msg.type === "crew") {
-      await this.crew.handle(ws, player, msg.action);
-    } else if (msg.type === "tide") {
-      await this.tide.handle(ws, player, msg.action);
+      this.here.say(player, msg.text);
+    } else {
+      // Anything else is for a game table, by its game's name. One there is no table for is dropped.
+      await this.tables.get(msg.type)?.handle(ws, player, msg.action);
     }
   }
 
   async webSocketClose(ws: WebSocket, code: number): Promise<void> {
-    const player = ws.deserializeAttachment() as HarborPlayer | null;
-    try {
-      ws.close(code === 1005 || code === 1006 ? 1000 : code);
-    } catch {
-      // Already closed.
-    }
-    // A replaced socket has its attachment cleared, so the player has not really left.
-    if (player) {
-      this.broadcast({ type: "left", id: player.id }, ws);
-      await this.dice.reconcile(ws);
-      await this.shoals.reconcile(ws);
-      await this.crew.reconcile(ws);
-      await this.tide.reconcile(ws);
-    }
+    // Leaving the pub gives up a seat at a game table too.
+    if (this.here.closed(ws, code)) await this.reconcileTables(ws);
   }
 
   async webSocketError(ws: WebSocket): Promise<void> {

@@ -1,10 +1,9 @@
 // Fishing sittings on the server, against a real SQLite database with the
-// game's migrations applied (the same stand-in for D1 as trade.test.ts):
+// game's migrations applied (the stand-in for D1 in d1.ts):
 // stamina spent when a sitting ends rather than when it starts, the fish
 // kept, the Catch Book, crew records, and the idle close.
 
-import { readFileSync, readdirSync } from "node:fs";
-import { DatabaseSync } from "node:sqlite";
+import type { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { BOOK_TITLE, FISH, PAGE_REWARD, SITTING_IDLE_MS, gatherDay, type GatherChoice, type GatherView } from "@gantt-quest/world";
 import { catchBook, hangAtHome, mountInPub, unmountInPub } from "../src/server/catchbook";
@@ -12,51 +11,7 @@ import { getHut, type Env } from "../src/server/db";
 import { playFight } from "../../../packages/world/src/fishbot";
 import { gatherStatus, startOuting, stepOuting } from "../src/server/gather";
 import { fishStock, gildedRod, moveFish, sellFish } from "../src/server/fishmarket";
-
-type Row = Record<string, unknown>;
-
-class Stmt {
-  constructor(private sql: DatabaseSync, private text: string, private args: unknown[] = []) {}
-  bind(...args: unknown[]) {
-    return new Stmt(this.sql, this.text, args);
-  }
-  exec() {
-    const stmt = this.sql.prepare(this.text);
-    if (/^\s*(SELECT|WITH)/i.test(this.text)) return { results: stmt.all(...(this.args as never[])) as Row[], meta: { changes: 0, last_row_id: 0 } };
-    const res = stmt.run(...(this.args as never[]));
-    return { results: [] as Row[], meta: { changes: Number(res.changes), last_row_id: Number(res.lastInsertRowid) } };
-  }
-  async run() {
-    return this.exec();
-  }
-  async all() {
-    return this.exec();
-  }
-  async first() {
-    return this.exec().results[0] ?? null;
-  }
-}
-
-function openDb() {
-  const sql = new DatabaseSync(":memory:");
-  const dir = new URL("../migrations/", import.meta.url);
-  for (const file of readdirSync(dir).sort()) sql.exec(readFileSync(new URL(file, dir), "utf8"));
-  const db = {
-    prepare: (text: string) => new Stmt(sql, text),
-    async batch(stmts: Stmt[]) {
-      sql.exec("BEGIN");
-      try {
-        const out = stmts.map((s) => s.exec());
-        sql.exec("COMMIT");
-        return out;
-      } catch (err) {
-        sql.exec("ROLLBACK");
-        throw err;
-      }
-    },
-  };
-  return { sql, db: db as unknown as D1Database };
-}
+import { addHero, openDb, type Row } from "./d1";
 
 let sql: DatabaseSync;
 let db: D1Database;
@@ -107,12 +62,7 @@ beforeEach(() => {
   vi.useFakeTimers({ toFake: ["Date"] });
   at(T0);
   ({ sql, db } = openDb());
-  for (const [id, name] of [["ann", "Ann"], ["bo", "Bo"]] as const) {
-    sql.prepare("INSERT INTO players (id, name, created_at) VALUES (?, ?, ?)").run(id, name, T0);
-    sql.prepare("INSERT INTO characters (player_id, name, class_id, status, str, int_stat, vit, agi, dex, gold, created_at) VALUES (?, ?, 'qa_paladin', 'active', 9, 5, 5, 5, 9, 100, ?)").run(id, name, T0);
-    sql.prepare("INSERT OR IGNORE INTO crews (id, name, created_by, created_at) VALUES ('CREWAA', 'Crew', ?, ?)").run(id, T0);
-    sql.prepare("INSERT INTO crew_members (crew_id, player_id, joined_at) VALUES ('CREWAA', ?, ?)").run(id, T0);
-  }
+  for (const [id, name] of [["ann", "Ann"], ["bo", "Bo"]] as const) addHero(sql, { id, name, str: 9, dex: 9, crew: "CREWAA", at: T0 });
 });
 
 afterEach(() => {

@@ -39,7 +39,7 @@
 // gives (hit points, armor, weapon power); with gear in hand it offers to
 // sell it or send it home instead. Where
 // things lie is remembered per browser (ui/packLayout.ts); the server only
-// counts squares. Stats, traits and skills are in the logbook (Logbook.tsx).
+// counts squares. Stats and skills are in the logbook (Logbook.tsx).
 //
 // A thing sent between the bag and a chest is drawn where it is going at
 // once, before the server has answered: the moves are sent one at a time, in
@@ -261,7 +261,7 @@ interface Props {
   onLogbook?(): void;
   /** On the atlas: a lodestone can be put from here into the slot of the place picked. */
   stones?: StoneSlot;
-  /** Opened during a voyage: gear can be changed, but the catch stays at home. */
+  /** Opened on a map: gear can be changed, but the catch stays at home. */
   onIsland?: boolean;
   /** A chest of the hut, open beside the bag. `refresh` must re-read the hut as well. */
   chest?: OpenChest | null;
@@ -1303,7 +1303,7 @@ export function InventoryScreen({ me, refresh, onClose, onLogbook, onIsland = fa
             <>
               <strong className="bag-who">{c.name}</strong>
               <span className="spacer" />
-              <span className="bag-stat" title="Hit points at the start of a voyage"><Icon name="crowned-heart" color="#d8342a" size={18} flat />{maxHpFor(stats, c.level)}</span>
+              <span className="bag-stat" title="Hit points when you set out"><Icon name="crowned-heart" color="#d8342a" size={18} flat />{maxHpFor(stats, c.level)}</span>
               <span className="bag-stat" title={`Armor: each enemy hit is reduced by ${armorBlock(loadout.armor)}, up to half the hit`}><Icon name="round-shield" color="#7fc4e8" size={18} flat />{loadout.armor}</span>
               <span className="bag-stat" title="Weapon power: added to the damage of every ability"><Icon name="broadsword" color="#f4c64e" size={18} flat />+{loadout.weaponPower}</span>
             </>

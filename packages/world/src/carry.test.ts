@@ -2,7 +2,7 @@
 
 import { STARTING_STATS } from "@gantt-quest/core";
 import { describe, expect, it } from "vitest";
-import { CARRY_BASE, PACK_CELLS, PACK_COLS, PACK_ROWS, SLOT_SIZE, STACK_MAX, WEAPON_SIZE, addStats, itemCells, itemSize, addedSlots, materialSlots, stackSlots, carryLimit, carryProblem, carryRoom, lootPlace, lootPlaceText, storeProblem, takeProblem, sideProblem } from "./index";
+import { CARRY_BASE, PACK_CELLS, PACK_COLS, PACK_ROWS, SLOT_SIZE, STACK_MAX, WEAPON_SIZE, itemCells, itemSize, addedSlots, materialSlots, stackSlots, carryLimit, carryProblem, carryRoom, lootPlace, lootPlaceText, storeProblem, takeProblem, sideProblem } from "./index";
 
 describe("the pack", () => {
   it("is the same grid for every hero, whatever their Strength", () => {
