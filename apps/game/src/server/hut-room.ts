@@ -205,6 +205,7 @@ export class HutRoom extends DurableObject<Env> {
     const { player, msg } = heard;
 
     if (msg.type === "say") return this.here.say(player, msg.text);
+    if (msg.type === "emote") return this.here.emote(player, msg.emote);
     const hut = await this.load(ownerId);
 
     if (msg.type === "move") {

@@ -31,13 +31,13 @@
 // written on the socket itself, which outlives the room's hibernation.
 
 import { DurableObject } from "cloudflare:workers";
-import { THROWABLE_KINDS, ZONE_CLIENT_ACTIONS, createZone, ensureMouth, hiddenEnemies, stepZone, zoneAwaiting, zoneHero, zoneOptions, zoneView, type ZoneAction, type ZoneEvent, type ZoneState } from "@gantt-quest/world";
+import { EMOTE_MIN_MS, THROWABLE_KINDS, ZONE_CLIENT_ACTIONS, createZone, ensureMouth, hiddenEnemies, stepZone, zoneAwaiting, zoneHero, zoneOptions, zoneView, validEmote, type ZoneAction, type ZoneEvent, type ZoneState } from "@gantt-quest/world";
 import { consumablesOf, gainConsumables, kitStatements, spendConsumables, type Consumables } from "./consumables";
 import { applyZoneGrant, crewFor, heroInitFor, refreshHarbor, type Env } from "./db";
 import { isDev } from "./dev";
 import { clearNode } from "./atlas";
 import { clearPresence, getZoneRow, saveZoneStatement, setPresence, zoneStatus } from "./zones";
-import { closeBack, tellTrades } from "./walk-room";
+import { closeBack, sendTo, tellTrades } from "./walk-room";
 
 /** How long a turn in a fight may take before it ends itself. */
 export const ZONE_TURN_MS = 90_000;
@@ -127,6 +127,8 @@ export class ZoneRoom extends DurableObject<Env> {
   private queue: Promise<unknown> = Promise.resolve();
   /** Whether each player here was last written down as fighting, so presence is only rewritten when it changes. */
   private fighting = new Map<string, boolean>();
+  /** When each player last emoted, so a held key cannot flood the map. In memory only: a hibernation resets it. */
+  private emotedAt = new Map<string, number>();
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -192,7 +194,7 @@ export class ZoneRoom extends DurableObject<Env> {
 
   async webSocketMessage(ws: WebSocket, message: string | ArrayBuffer): Promise<void> {
     if (typeof message !== "string" || message.length > 8000) return;
-    let msg: { type?: string; action?: unknown; n?: unknown };
+    let msg: { type?: string; action?: unknown; n?: unknown; emote?: unknown };
     try {
       msg = JSON.parse(message);
     } catch {
@@ -208,6 +210,7 @@ export class ZoneRoom extends DurableObject<Env> {
       });
       return;
     }
+    if (msg.type === "emote") return this.serial(() => this.emote(playerId, msg.emote));
     if (msg.type !== "action") return;
     // The client's own number for this action, sent back with its answer so it can tell which of its actions was answered.
     const n = typeof msg.n === "number" && Number.isSafeInteger(msg.n) && msg.n >= 0 ? msg.n : undefined;
@@ -375,6 +378,22 @@ export class ZoneRoom extends DurableObject<Env> {
     this.ctx.waitUntil(
       Promise.all(ids.map(crewOf)).then((crews) => Promise.all([...new Set([crewId, ...crews])].map((crew) => refreshHarbor(this.env, crew)))),
     );
+  }
+
+  /**
+   * An emote (see EMOTES), shown to everyone here and not kept: only for show, so the
+   * reducer never hears of it, and in a fight it costs nothing and takes no turn. Not from a hero who is down, and at
+   * most one per EMOTE_MIN_MS.
+   */
+  private async emote(playerId: string, asked: unknown) {
+    const emote = validEmote(asked);
+    const now = Date.now();
+    if (!emote || now - (this.emotedAt.get(playerId) ?? -Infinity) < EMOTE_MIN_MS) return;
+    const zone = await this.load();
+    const hero = zone.units.find((u) => u.id === playerId);
+    if (!hero || hero.down) return;
+    this.emotedAt.set(playerId, now);
+    for (const ws of this.ctx.getWebSockets()) sendTo(ws, { type: "emoted", id: playerId, emote });
   }
 
   /** Players connected right now. */

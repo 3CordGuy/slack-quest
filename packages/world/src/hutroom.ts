@@ -6,7 +6,7 @@
 // are, where a furnishing may stand, and that furniture is walked around.
 
 import { allHexesInGrid, posKey, type HexGrid, type HexPos } from "@gantt-quest/core";
-import { harborPoi, type HarborPlayer, type LookMessage, type LookRequest, type XpMessage } from "./harbor";
+import { harborPoi, type HarborPlayer, type EmoteMessage, type EmoteRequest, type LookMessage, type LookRequest, type XpMessage } from "./harbor";
 import { FURNISHINGS, HUT_TIERS, SEATS, type Furnishing, type HutTier } from "./hut";
 import { BASE_HEIGHT, findPath, poiAt, tileAt, type Tile, type WorldMap } from "./map";
 import type { Footprint } from "./hut";
@@ -672,12 +672,14 @@ export type HutServerMessage =
   /** Sent only to whoever asked for something that was not allowed. */
   | { type: "refused"; reason: string }
   | LookMessage
+  | EmoteMessage
   | XpMessage;
 
 export type HutClientMessage =
   | { type: "move"; to: HexPos }
   | { type: "say"; text: string }
   | LookRequest
+  | EmoteRequest
   /** Back to the door, for a stuck or lost hero. */
   | { type: "unstick" }
   /** After a new look (or gear) is saved: re-read the hero and show everyone here. */

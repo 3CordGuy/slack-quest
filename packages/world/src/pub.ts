@@ -13,7 +13,7 @@ import type { CrewRequest, CrewView } from "./crew";
 import type { DiceRequest, DiceView } from "./dice";
 import type { ShoalsRequest, ShoalsView } from "./shoals";
 import type { TideRequest, TideView } from "./tide";
-import { harborPoi, type HarborPlayer, type LookMessage, type LookRequest, type XpMessage } from "./harbor";
+import { harborPoi, type HarborPlayer, type EmoteMessage, type EmoteRequest, type LookMessage, type LookRequest, type XpMessage } from "./harbor";
 import { SEATS } from "./hut";
 import { HEX_DIRS, buildRoom, hutPath, wallFaces } from "./hutroom";
 import type { WorldMap } from "./map";
@@ -158,12 +158,14 @@ export type PubServerMessage =
   | { type: "tide"; table: TideView | null }
   | { type: "tideError"; text: string }
   | LookMessage
+  | EmoteMessage
   | XpMessage;
 
 export type PubClientMessage =
   | { type: "move"; to: HexPos }
   | { type: "say"; text: string }
   | LookRequest
+  | EmoteRequest
   /** Back to the door, for a stuck or lost hero. */
   | { type: "unstick" }
   | { type: "dice"; action: DiceRequest }

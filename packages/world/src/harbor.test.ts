@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { HARBOR_APOTHECARY, HARBOR_LAPIDARY, HARBOR_BOATS, HARBOR_BRIDGE, HARBOR_BUILDINGS, HARBOR_CAVE, HARBOR_CAVE_STEPS, HARBOR_CHEST, HARBOR_COURT, HARBOR_DECOR, HARBOR_FIXTURES, HARBOR_FORECOURT, HARBOR_GALLEY, HARBOR_MAX_PATH, HARBOR_GATE, HARBOR_GATHER, HARBOR_HEART_AT, HARBOR_HOME_ROADS, HARBOR_LIGHTHOUSE, HARBOR_MOLE, HARBOR_PUB, HARBOR_WAYGATE, HARBOR_WRECK, HARBOR_SMITHY, HARBOR_GRID, HARBOR_BOARD, HARBOR_PIERS, HARBOR_PLOTS, HARBOR_RING, HARBOR_SHOP, HARBOR_SPAWN, HARBOR_SQUARE, HARBOR_WORKS, HARBOR_OAK, HARBOR_ROADS, HARBOR_SIDES, findPath, footing, frontOf, generateHarbor, roadHexes, harborDoor, harborPath, tileAt } from "./index";
+import { EMOTES, emoteTyped, validEmote, HARBOR_APOTHECARY, HARBOR_LAPIDARY, HARBOR_BOATS, HARBOR_BRIDGE, HARBOR_BUILDINGS, HARBOR_CAVE, HARBOR_CAVE_STEPS, HARBOR_CHEST, HARBOR_COURT, HARBOR_DECOR, HARBOR_FIXTURES, HARBOR_FORECOURT, HARBOR_GALLEY, HARBOR_MAX_PATH, HARBOR_GATE, HARBOR_GATHER, HARBOR_HEART_AT, HARBOR_HOME_ROADS, HARBOR_LIGHTHOUSE, HARBOR_MOLE, HARBOR_PUB, HARBOR_WAYGATE, HARBOR_WRECK, HARBOR_SMITHY, HARBOR_GRID, HARBOR_BOARD, HARBOR_PIERS, HARBOR_PLOTS, HARBOR_RING, HARBOR_SHOP, HARBOR_SPAWN, HARBOR_SQUARE, HARBOR_WORKS, HARBOR_OAK, HARBOR_ROADS, HARBOR_SIDES, findPath, footing, frontOf, generateHarbor, roadHexes, harborDoor, harborPath, tileAt } from "./index";
 
 type Hex = { q: number; r: number };
 const key = (p: Hex) => `${p.q},${p.r}`;
@@ -715,5 +715,23 @@ describe("harbor map", () => {
     const walk = harborPath(map, HARBOR_SPAWN, HARBOR_GATHER.quarry)!;
     expect(walk.at(-1)).toEqual(HARBOR_GATHER.quarry);
     for (const p of lane.slice(0, -1)) expect(tileAt(map, p)!.path || tileAt(map, p)!.biome === "cobble", key(p)).toBeTruthy();
+  });
+});
+
+describe("emotes", () => {
+  it("knows its emotes and nothing else", () => {
+    for (const e of EMOTES) expect(validEmote(e)).toBe(e);
+    expect(validEmote("moonwalk")).toBeNull();
+    expect(validEmote(undefined)).toBeNull();
+    expect(validEmote(["wave"])).toBeNull();
+  });
+
+  it("reads an emote typed into chat", () => {
+    expect(emoteTyped("/wave")).toBe("wave");
+    expect(emoteTyped("  /DANCE ")).toBe("dance");
+    expect(emoteTyped("/breakdance")).toBe("breakdance");
+    expect(emoteTyped("/bow please")).toBeNull();
+    expect(emoteTyped("wave")).toBeNull();
+    expect(emoteTyped("/shrug")).toBeNull();
   });
 });

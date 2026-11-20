@@ -20,11 +20,12 @@
 //                     stand), walkerFrom (who they are), admit, then the
 //                     room's own snapshot and a "joined" to everyone else
 //   webSocketMessage  read; "move" is hexAsked, the room's own path, walk;
-//                     "look", "unstick" and "say" are look, unstick and say
+//                     "look", "unstick", "say" and "emote" are look, unstick, say
+//                     and emote
 //   webSocketClose    closed
 
 import type { HexPos } from "@gantt-quest/core";
-import { HARBOR_MAX_SAY, LOOK_MIN_MS, UNSTICK_COOLDOWN_MS, validLook, type HarborPlayer, type HeroInit, type LookMessage, type XpMessage } from "@gantt-quest/world";
+import { EMOTE_MIN_MS, HARBOR_MAX_SAY, LOOK_MIN_MS, UNSTICK_COOLDOWN_MS, validEmote, validLook, type EmoteMessage, type HarborPlayer, type HeroInit, type LookMessage, type XpMessage } from "@gantt-quest/world";
 import { readXpPost, relayXp } from "./harbor-xp";
 
 /** What every walk-in room tells its sockets about the people in it. Each room's own messages include these. */
@@ -35,6 +36,7 @@ export type WalkerMessage =
   | { type: "placed"; id: string; pos: HexPos }
   | { type: "said"; id: string; name: string; text: string }
   | LookMessage
+  | EmoteMessage
   | XpMessage;
 
 /** A room's own messages, given that they include the ones sent from here. For a room whose messages lack one of those, nothing can be sent at all. */
@@ -120,6 +122,8 @@ export class Walkers<Out> {
   private unstuckAt = new Map<string, number>();
   /** When each player's look was last passed on, so a waving pointer cannot flood the room. */
   private lookedAt = new Map<string, number>();
+  /** When each player last emoted, so a held key cannot flood the room. */
+  private emotedAt = new Map<string, number>();
 
   constructor(private ctx: DurableObjectState) {
     // Pings are answered by the runtime, without waking the room.
@@ -237,6 +241,15 @@ export class Walkers<Out> {
   say(player: HarborPlayer, said: unknown): void {
     const text = String(said ?? "").replace(/\s+/g, " ").trim().slice(0, HARBOR_MAX_SAY);
     if (text) this.tell({ type: "said", id: player.id, name: player.name, text });
+  }
+
+  /** An emote (a wave, a dance and so on), shown to everyone here (the one emoting too) and not kept. At most one per EMOTE_MIN_MS from each player. */
+  emote(player: HarborPlayer, asked: unknown): void {
+    const emote = validEmote(asked);
+    const now = Date.now();
+    if (emote === null || now - (this.emotedAt.get(player.id) ?? -Infinity) < EMOTE_MIN_MS) return;
+    this.emotedAt.set(player.id, now);
+    this.tell({ type: "emoted", id: player.id, emote });
   }
 
   /** Something about a hero that everyone sees has changed (their gear, a bedroll laid out): kept on their socket, and everyone is shown them again. */

@@ -16,8 +16,9 @@
 // first update only, and they are carried over into every one after.
 
 import { useCallback, useRef, useState } from "react";
-import type { ZoneAction, ZoneEvent, ZoneView } from "@gantt-quest/world";
+import type { Emote, EmoteMessage, ZoneAction, ZoneEvent, ZoneView } from "@gantt-quest/world";
 import { PROFILE } from "./api";
+import { emotes } from "./emotes";
 import { useRoomSocket } from "./useRoom";
 
 /** An action as the client sends it: who it is from is the server's to say. */
@@ -34,6 +35,8 @@ export interface ZoneConnection {
   send(action: ZoneSend): number | null;
   /** Your gear has changed: have the server read your hero again. */
   resheet(): void;
+  /** Wave, cheer, bow, dance or breakdance where your hero stands (in a fight too, for nothing; the server drops one from a hero who is down). */
+  emote(emote: Emote): void;
   clearError(): void;
 }
 
@@ -49,7 +52,8 @@ export interface ZoneHandlers {
 type ZoneMessage =
   | { type: "update"; state: ZoneView; events: ZoneEvent[]; online: string[]; acks?: unknown; ack?: unknown }
   | { type: "error"; message: string; ack?: unknown }
-  | { type: "trades" };
+  | { type: "trades" }
+  | EmoteMessage;
 
 export function useZone(code: string, handlers: ZoneHandlers): ZoneConnection {
   const [state, setState] = useState<ZoneView | null>(null);
@@ -108,6 +112,8 @@ export function useZone(code: string, handlers: ZoneHandlers): ZoneConnection {
         if (typeof msg.ack === "number") handler.current.onRefused(msg.ack);
       } else if (msg.type === "trades") {
         setTrades((n) => n + 1);
+      } else if (msg.type === "emoted") {
+        emotes.emoted(msg.id, msg.emote);
       }
     },
   });
@@ -123,6 +129,9 @@ export function useZone(code: string, handlers: ZoneHandlers): ZoneConnection {
   const resheet = useCallback(() => {
     post({ type: "sheet" });
   }, []);
+  const emote = useCallback((emote: Emote) => {
+    post({ type: "emote", emote });
+  }, []);
   const clearError = useCallback(() => setError(null), []);
-  return { state, online, status: socket.status, error: socket.error, trades, send, resheet, clearError };
+  return { state, online, status: socket.status, error: socket.error, trades, send, resheet, emote, clearError };
 }

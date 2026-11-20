@@ -95,7 +95,7 @@ export function OptionsMenu({ reset, resetBlocked, title = "The Harbor of Heylet
         e.stopPropagation();
         setOpen(false);
         gear.current?.focus();
-      } else if (!document.querySelector(".overlay, .look-dialog-backdrop") && !(e.target as HTMLElement | null)?.closest?.("input, textarea, select")) {
+      } else if (!document.querySelector(".overlay, .look-dialog-backdrop, .emote-veil") && !(e.target as HTMLElement | null)?.closest?.("input, textarea, select")) {
         setOpen(true);
       }
     };

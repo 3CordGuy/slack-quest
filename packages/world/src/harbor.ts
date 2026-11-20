@@ -768,12 +768,14 @@ export type HarborServerMessage =
   /** The crew's muster as it now stands (muster.ts): someone is setting out and asks who is coming. Null: there is none any more. */
   | { type: "muster"; muster: Muster | null }
   | LookMessage
+  | EmoteMessage
   | XpMessage;
 
 export type HarborClientMessage =
   | { type: "move"; to: HexPos }
   | { type: "say"; text: string }
   | LookRequest
+  | EmoteRequest
   /** "I changed my gear or level": the server re-reads the sender's character and tells everyone. */
   | { type: "refresh" }
   /** "I have just rested here": lay the sender's bedroll out where they stand, for everyone to see. */
@@ -801,6 +803,28 @@ export const lookYaw = (step: number) => (step / LOOK_STEPS) * Math.PI * 2;
 /** A look as a client sent it, if it is one: a whole step in range. */
 export function validLook(look: unknown): number | null {
   return typeof look === "number" && Number.isInteger(look) && look >= 0 && look < LOOK_STEPS ? look : null;
+}
+
+/**
+ * Emotes: a hero waves, cheers, bows, dances or breakdances where they stand, for everyone in the same place to see. Only for
+ * show, like a look: relayed to everyone there (the one emoting too) and never kept, at most one per EMOTE_MIN_MS.
+ * In the Harbor, a hut, the pub and on a map, in a fight too (free, taking no turn), though not while down.
+ */
+export const EMOTES = ["wave", "cheer", "bow", "dance", "breakdance"] as const;
+export type Emote = (typeof EMOTES)[number];
+export const EMOTE_MIN_MS = 800;
+/** "I am waving" (or cheering, bowing, dancing). */
+export type EmoteRequest = { type: "emote"; emote: Emote };
+/** "They are waving". Sent to everyone in the place, whoever asked too. */
+export type EmoteMessage = { type: "emoted"; id: string; emote: Emote };
+/** An emote as a client sent it, if it is one. */
+export function validEmote(emote: unknown): Emote | null {
+  return (EMOTES as readonly unknown[]).includes(emote) ? (emote as Emote) : null;
+}
+/** The emote a line typed into chat asks for (`/wave`, `/cheer`, `/bow`, `/dance`, `/breakdance`), or null for a line to say. */
+export function emoteTyped(text: string): Emote | null {
+  const m = /^\/(\w+)$/.exec(text.trim().toLowerCase());
+  return m ? validEmote(m[1]) : null;
 }
 
 /** How often a hero may ask to be put back where they arrive (Harbor, hut or pub), per connection. */

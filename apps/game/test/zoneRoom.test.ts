@@ -147,6 +147,37 @@ describe("ZoneRoom", () => {
     expect(bo.errors.at(-1)).toMatch(/not yours/);
   });
 
+  it("shows an emote to everyone on the map, in a fight too, without touching the map, and none from a hero who is down", async () => {
+    const { code, zone, ann } = await arrive();
+    const bo = await connect(zone, code, "bo");
+    const emote = (ws: FakeSocket, value: unknown) => zone.webSocketMessage(ws as unknown as WebSocket, JSON.stringify({ type: "emote", emote: value }));
+    const seen = (ws: FakeSocket) => (ws.sent as unknown as { type: string; id?: string; emote?: string }[]).filter((m) => m.type === "emoted");
+    const before = JSON.stringify(saved(code));
+    await emote(ann, "wave");
+    expect(seen(bo)).toEqual([{ type: "emoted", id: "ann", emote: "wave" }]);
+    expect(seen(ann)).toHaveLength(1);
+    // Only for show: the map's state is not touched.
+    expect(JSON.stringify(saved(code))).toBe(before);
+    await emote(bo, "moonwalk");
+    expect(seen(ann)).toHaveLength(1);
+    await pickFight(zone, ann);
+    vi.useFakeTimers({ now: Date.now() + 5000 });
+    try {
+      // In a fight it is relayed too, and it neither spends the turn nor changes what is saved.
+      const turn = JSON.stringify(saved(code).encounter);
+      await emote(ann, "dance");
+      expect(seen(bo).at(-1)).toEqual({ type: "emoted", id: "ann", emote: "dance" });
+      expect(JSON.stringify(saved(code).encounter)).toBe(turn);
+      // A hero who is down cannot.
+      (zone as unknown as { zone: ZoneState }).zone.units.find((u) => u.id === "ann")!.down = true;
+      vi.advanceTimersByTime(5000);
+      await emote(ann, "cheer");
+      expect(seen(bo)).toHaveLength(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("starts a fight with a turn clock when a hero walks within sight of a group", async () => {
     const { code, zone, ann } = await arrive();
     await pickFight(zone, ann);
