@@ -29,7 +29,7 @@ In your local, gitignored `apps/game/wrangler.jsonc`, add the `env.production` b
 | `ai` | `AI` |
 | `send_email` | `EMAIL`, remote |
 | `vars` | `AI_MODE: "live"`, `MAIL_FROM_ADDRESS: "noreply@heylets.party"`, `MAIL_FROM_NAME: "Gantt Quest"` |
-| `durable_objects` | `RUN_ROOM`, `HARBOR_ROOM`, `HUT_ROOM`, `PUB_ROOM` |
+| `durable_objects` | `HARBOR_ROOM`, `HUT_ROOM`, `PUB_ROOM`, `ZONE_ROOM` |
 
 The top level of the file stays local-only (mock AI, all-zeros D1 id). That means a build made without `CLOUDFLARE_ENV` can't reach production: its deploy fails on the fake database id.
 
@@ -55,7 +55,7 @@ The binding list should show `DB (gantt-quest-game)`, `EMAIL`, `AI`, `AI_MODE ("
     ```bash
     gh secret set WRANGLER_GAME_CONFIG < apps/game/wrangler.jsonc
     ```
-  - `CLOUDFLARE_API_TOKEN` already exists for the legacy deploy. It also needs these permissions (edit the token in the dashboard, or make a new one and update the secret):
+  - `CLOUDFLARE_API_TOKEN` needs these permissions (edit the token in the dashboard, or make a new one and update the secret):
     - Account: Workers Scripts Edit, D1 Edit, Workers AI Read;
     - Zone `heylets.party`: Workers Routes Edit and DNS Edit, for the custom domain.
 
@@ -93,7 +93,7 @@ There are 15 files today, `0001_init.sql` to `0015_content_overrides.sql` (more 
    - create a character and found a crew;
    - walk the Harbor, which proves the HarborRoom DO and its WebSocket;
    - enter the hut and the pub, and say one line to the barkeep (live AI);
-   - start a voyage and check the story text is not the canned mock;
+   - open the atlas at the waygate, set out for a place beside the Harbor and win a fight there, which proves the ZoneRoom DO;
    - attach an email and receive the code from `noreply@heylets.party`;
    - after the `ADMIN_EMAILS` secret is set, check that the admin link shows for that account.
 4. Watch errors live while you play:
@@ -118,10 +118,10 @@ There are 15 files today, `0001_init.sql` to `0015_content_overrides.sql` (more 
     wrangler d1 time-travel restore DB --env production --bookmark <bookmark>
     ```
     This throws away **every** write since that bookmark, players' progress included. The CI job logs a bookmark just before it migrates. By hand, take one with `wrangler d1 time-travel info DB --env production`.
-  - **Durable Object migrations.** Cloudflare won't roll back past a version that added a DO class (a new migration tag). Roll forward instead.
-  - **DO storage.** Voyages, huts and pub tables already saved by newer code stay saved. Older code has to tolerate state it doesn't know about.
+  - **Durable Object migrations.** Cloudflare won't roll back past a version that added or deleted a DO class (a new migration tag). Roll forward instead.
+  - **DO storage.** Maps, huts and pub tables already saved by newer code stay saved. Older code has to tolerate state it doesn't know about.
   - **Secrets and the custom domain.** A rollback leaves both untouched.
-- **Turn production off completely:** remove the custom domain in the dashboard (Workers > gantt-quest-game > Domains), or deploy with the `routes` entry taken out. The old game at the legacy domain is not affected either way.
+- **Turn production off completely:** remove the custom domain in the dashboard (Workers > gantt-quest-game > Domains), or deploy with the `routes` entry taken out.
 
 ## 7. Deploying after launch (CI)
 
@@ -169,9 +169,7 @@ Checked in the code on 2026-11-12:
 
 Production runs `AI_MODE: "live"` on `@cf/meta/llama-3.3-70b-instruct-fp8-fast`, the largest model in use. Calls come from:
 
-- one story per voyage (`generateFill`);
-- each NPC reply in a voyage (`npcTurn`);
-- each epilogue;
+- a name for each newly rolled hero (`heroName`);
 - **each barkeep line** (`POST /api/pub/talk`).
 
 Every call has a `max_tokens` cap. When a call fails (an outage, or the account's allocation running out), the game falls back to canned text, so a cap on spend can't break play.
@@ -182,9 +180,9 @@ What's missing: **any per-player or per-day limit**. Sign-in is an ungated guest
 2. found a crew;
 3. post to `/api/pub/talk` in a loop.
 
-Each post is a 70B call, and `?p=` makes new guests trivial. The same goes for NPC talk inside a voyage. Before announcing the URL publicly:
+Each post is a 70B call, and `?p=` makes new guests trivial. Before announcing the URL publicly:
 
-1. **Add a rate limit** to `/api/pub/talk` and the voyage `npc_call` path. The Workers Rate Limiting binding is the easiest, keyed by player id, for example 10 per minute. Optionally add a per-crew daily count in D1, with canned replies once it's spent.
+1. **Add a rate limit** to `/api/pub/talk`. The Workers Rate Limiting binding is the easiest, keyed by player id, for example 10 per minute. Optionally add a per-crew daily count in D1, with canned replies once it's spent.
 2. **Set a spend alert** in the Cloudflare dashboard (Billing > Notifications) for Workers AI. Workers AI has no hard cap you can set; the free daily allocation is shared across the account (equipflow and the other Workers too).
 3. **Consider a WAF rate-limiting rule** on `harbor.heylets.party/api/auth/*`. Email codes already have a 30-second cooldown per address and an attempt limit, but nothing stops one client requesting codes for many addresses, which can hurt the sending domain's reputation.
 

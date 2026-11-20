@@ -1,58 +1,12 @@
 // The dev toolbox's seeding (src/server/dev.ts), against a real SQLite
-// database with the game's migrations applied (the same stand-in for D1 as
-// storage.test.ts).
+// database with the game's migrations applied (the stand-in for D1 in d1.ts).
 
-import { readFileSync, readdirSync } from "node:fs";
-import { DatabaseSync } from "node:sqlite";
+import type { DatabaseSync } from "node:sqlite";
 import { beforeEach, describe, expect, it } from "vitest";
 import { CARRY_BASE, GEAR_BASES, STACK_MAX, WEAPONS, itemCells, itemOfRef, makeRng, slotOfRef } from "@gantt-quest/world";
 import { carryState } from "../src/server/db";
 import { SEED_MAX, isDev, seedGear, seedGold, seedMaterial } from "../src/server/dev";
-
-type Row = Record<string, unknown>;
-
-class Stmt {
-  constructor(private sql: DatabaseSync, private text: string, private args: unknown[] = []) {}
-  bind(...args: unknown[]) {
-    return new Stmt(this.sql, this.text, args);
-  }
-  exec() {
-    const stmt = this.sql.prepare(this.text);
-    if (/^\s*(SELECT|WITH)/i.test(this.text)) return { results: stmt.all(...(this.args as never[])) as Row[], meta: { changes: 0, last_row_id: 0 } };
-    const res = stmt.run(...(this.args as never[]));
-    return { results: [] as Row[], meta: { changes: Number(res.changes), last_row_id: Number(res.lastInsertRowid) } };
-  }
-  async run() {
-    return this.exec();
-  }
-  async all() {
-    return this.exec();
-  }
-  async first() {
-    return this.exec().results[0] ?? null;
-  }
-}
-
-function openDb() {
-  const sql = new DatabaseSync(":memory:");
-  const dir = new URL("../migrations/", import.meta.url);
-  for (const file of readdirSync(dir).sort()) sql.exec(readFileSync(new URL(file, dir), "utf8"));
-  const db = {
-    prepare: (text: string) => new Stmt(sql, text),
-    async batch(stmts: Stmt[]) {
-      sql.exec("BEGIN");
-      try {
-        const out = stmts.map((s) => s.exec());
-        sql.exec("COMMIT");
-        return out;
-      } catch (err) {
-        sql.exec("ROLLBACK");
-        throw err;
-      }
-    },
-  };
-  return { sql, db: db as unknown as D1Database };
-}
+import { addHero, openDb, type Row } from "./d1";
 
 let sql: DatabaseSync;
 let db: D1Database;
@@ -70,8 +24,7 @@ function fillPack(n: number) {
 beforeEach(() => {
   ({ sql, db } = openDb());
   const at = Date.now();
-  sql.prepare("INSERT INTO players (id, name, created_at) VALUES ('ann', 'Ann', ?)").run(at);
-  sql.prepare("INSERT INTO characters (player_id, name, class_id, status, level, str, int_stat, vit, agi, dex, gold, created_at) VALUES ('ann', 'Ann', 'qa_paladin', 'active', 4, 5, 5, 5, 5, 5, 50, ?)").run(at);
+  addHero(sql, { id: "ann", name: "Ann", level: 4, gold: 50, at });
   // Someone who has signed in but not made a hero yet.
   sql.prepare("INSERT INTO players (id, name, created_at) VALUES ('new', 'New', ?)").run(at);
 });

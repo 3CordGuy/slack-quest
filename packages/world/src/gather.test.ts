@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import {
-  ENEMY_DROP_UNITS,
   ANGLE_MAX,
   ANGLE_MIN,
   CHOP_GAP_MS,
@@ -23,10 +22,8 @@ import {
   replayStrikes,
   splitGrade,
   splitMotion,
-  type TreeSize,
   GATHER_DAILY_OUTINGS,
   REST_COOLDOWN_MS,
-  REST_OUTINGS,
   restProblem,
   restReadyAt,
   GATHER_MAX_STEPS,
@@ -247,9 +244,9 @@ describe("gathering", () => {
           }
         }
       }
-      // The best possible outing is worth about a fight: no more than three enemies' drops.
+      // The best possible outing pays a handful of pieces: four at least, and never more than nine.
       expect(best).toBeGreaterThanOrEqual(4);
-      expect(best).toBeLessThanOrEqual(3 * ENEMY_DROP_UNITS[1]);
+      expect(best).toBeLessThanOrEqual(9);
     }
     // Tens of thousands of outings: about 2s locally, but past the 5s default
     // on a busy CI runner, where it failed a staging deploy.
@@ -630,11 +627,6 @@ describe("resting", () => {
     expect(restProblem({ day: today, used: 2, rested_at: noon - REST_COOLDOWN_MS }, noon)).toBeNull();
     expect(restReadyAt(null)).toBe(0);
     expect(restReadyAt(noon)).toBe(noon + 20 * 60_000);
-  });
-
-  it("gives back one outing on a bedroll and all of them at home", () => {
-    expect(REST_OUTINGS.bedroll).toBe(1);
-    expect(REST_OUTINGS.hut).toBe(GATHER_DAILY_OUTINGS);
   });
 });
 

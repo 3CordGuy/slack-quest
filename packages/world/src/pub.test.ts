@@ -1,6 +1,32 @@
 import { describe, expect, it } from "vitest";
 import { hexDistance } from "@gantt-quest/core";
-import { PUB_BARKEEP_POS, PUB_BUFF_CAPS, PUB_COUNTER, PUB_CREW, PUB_DEALER_POS, PUB_DEALER_STAND, PUB_DICE, PUB_FITTINGS, PUB_GRID, PUB_MENU, PUB_REGULAR_SPOTS, PUB_SALESMAN_POS, PUB_SEATS, PUB_SHOALS, PUB_TRADER, capPubBuff, hutGrid, poiAt, pubBuff, pubPath, pubRoom, tileAt } from "./index";
+import {
+  HEX_DIRS,
+  PUB_BARKEEP_POS,
+  PUB_COUNTER,
+  PUB_CREW,
+  PUB_DEALER_POS,
+  PUB_DEALER_STAND,
+  PUB_DICE,
+  PUB_FITTINGS,
+  PUB_GRID,
+  PUB_LEADERBOARD,
+  PUB_MENU,
+  PUB_MOUNT_SLOTS,
+  PUB_REGULAR_SPOTS,
+  PUB_SALESMAN_POS,
+  PUB_SEATS,
+  PUB_SHOALS,
+  PUB_TIDE,
+  PUB_TRADER,
+  hutGrid,
+  poiAt,
+  pubMountSpots,
+  pubPath,
+  pubRoom,
+  tileAt,
+  wallFaces,
+} from "./index";
 
 describe("the pub", () => {
   const room = pubRoom();
@@ -25,7 +51,7 @@ describe("the pub", () => {
     expect(pubPath(room, door, PUB_FITTINGS[0])).toBeNull();
   });
 
-  it("puts the contract dealer beside the pillar, with room in front to walk up", () => {
+  it("puts the dealer beside the pillar, with room in front to walk up", () => {
     const pillar = PUB_FITTINGS.find((f) => f.model === "pillar")!;
     expect(hexDistance(pillar, PUB_DEALER_POS)).toBe(1);
     expect(hexDistance(PUB_DEALER_STAND, PUB_DEALER_POS)).toBe(1);
@@ -52,16 +78,43 @@ describe("the pub", () => {
     }
   });
 
-  it("counts one drink and one meal, whatever is ordered", () => {
-    expect(pubBuff(["ale"])).toEqual({ focus: 0, potions: 0, maxHp: 2, xpPct: 0 });
-    expect(pubBuff(["rum", "stew"])).toEqual({ focus: 1, potions: 0, maxHp: 4, xpPct: 0 });
-    // A second drink does not stack, and an unknown item is ignored.
-    expect(pubBuff(["ale", "rum", "moonshine"])).toEqual({ focus: 0, potions: 0, maxHp: 2, xpPct: 0 });
+  it("sells two meals, at the prices they always had", () => {
+    expect(PUB_MENU.map((i) => [i.id, i.price])).toEqual([["stew", 12], ["pie", 18]]);
   });
+});
 
-  it("never lets a buff exceed what the menu can give", () => {
-    expect(capPubBuff({ focus: 9, potions: 9, maxHp: 99, xpPct: 99 })).toEqual(PUB_BUFF_CAPS);
-    expect(PUB_BUFF_CAPS.potions).toBe(0);
-    for (const item of PUB_MENU) expect(item.price).toBeGreaterThan(0);
+describe("the pub's wall", () => {
+  it("has a clear spot for every record fish, none of them behind the bar", () => {
+    const spots = pubMountSpots(PUB_MOUNT_SLOTS);
+    expect(spots).toHaveLength(PUB_MOUNT_SLOTS);
+    const fitted = new Set(PUB_FITTINGS.map((f) => `${f.q},${f.r}`));
+    for (const s of spots) expect(fitted.has(`${s.pos.q + HEX_DIRS[s.side].q},${s.pos.r + HEX_DIRS[s.side].r}`)).toBe(false);
+  });
+});
+
+describe("the pub's leaderboard", () => {
+  it("stands against the back wall, across two faces, beside clear floor, and blocks no one's way", () => {
+    const room = pubRoom();
+    const { pos, stand } = PUB_LEADERBOARD;
+    const k = (p: { q: number; r: number }) => `${p.q},${p.r}`;
+    const step = (p: { q: number; r: number }, side: number) => ({ q: p.q + HEX_DIRS[side].q, r: p.r + HEX_DIRS[side].r });
+    // Its two northern neighbours are back-wall hexes, each with a face onto it: the faces it stands across.
+    const behind = [5, 0].map((side) => step(pos, side));
+    expect(behind.every((w) => w.r === 0)).toBe(true);
+    const faces = wallFaces(room).filter((f) => k(step(f.pos, f.side)) === k(pos));
+    expect(faces).toHaveLength(2);
+    // No record fish hangs on either face it covers.
+    expect(pubMountSpots(PUB_MOUNT_SLOTS).filter((f) => k(step(f.pos, f.side)) === k(pos))).toEqual([]);
+    const stations = [PUB_DICE, PUB_SHOALS, PUB_CREW, PUB_TIDE, PUB_COUNTER, PUB_TRADER, PUB_DEALER_STAND, ...PUB_REGULAR_SPOTS.map((s) => s.stand)];
+    const taken = new Set([...PUB_FITTINGS, ...stations, ...PUB_REGULAR_SPOTS.map((s) => s.pos), PUB_DEALER_POS, PUB_SALESMAN_POS, PUB_BARKEEP_POS].map(k));
+    expect(taken.has(k(pos))).toBe(false);
+    expect(taken.has(k(stand))).toBe(false);
+    expect(hexDistance(pos, stand)).toBe(1);
+    // Not beside a regular: standing beside one gives a button on the hex too.
+    for (const p of PUB_REGULAR_SPOTS.map((s) => s.pos)) expect(hexDistance(p, stand)).toBeGreaterThan(1);
+    // It is walked around, and every place to stand can still be reached from the door.
+    const door = room.pois.find((p) => p.kind === "door")!.pos;
+    expect(pubPath(room, door, pos)).toBeNull();
+    for (const p of [stand, ...stations]) expect(pubPath(room, door, p)).not.toBeNull();
   });
 });

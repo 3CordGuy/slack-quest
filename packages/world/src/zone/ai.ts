@@ -32,7 +32,7 @@
 import { hexDistance, posKey, type HexPos } from "@gantt-quest/core";
 import { apForMove, checkCommon, doCommon, enemyAct, leavesReach, shiftInto, shoveDest, walk, walkAp } from "./combat";
 import { attackContext, defenceOf, has, saveBonus, unseen, type Ctx } from "./engine";
-import { blast, close, elevOf, flies, heldAgainst, inFight, pathIn, reachFrom, sameHex, seesFor, stepCost, strikes, zoneReach, type Reached } from "./geometry";
+import { HIGH_REACH, blast, close, elevOf, flies, heldAgainst, inFight, pathIn, reachFrom, sameHex, seesFor, stepCost, strikes, zoneReach, type Reached } from "./geometry";
 import { AP_MAX, COMMON_ACTIONS, ENEMY_BURST, ENEMY_KIT, ITEM_AP, enemyShove, enemyStrikes, jumpRange, type EnemyStrike } from "./kit";
 import { modsOf } from "./mods";
 import { diceAverage, hitChance } from "./rules";
@@ -48,7 +48,10 @@ interface Option {
 /** Whether an attack of an enemy's reaches from `pos` to a hero: a blow by hand, by the rules of reach (strikes); a shot, by its range (further from above) and a clear line. */
 export function strikeReaches(state: ZoneState, enemy: Unit, pos: HexPos, attack: EnemyStrike, hero: Unit): boolean {
   if (attack.range === 1) return strikes(state.map, pos, hero.pos);
-  return hexDistance(pos, hero.pos) <= reachFrom(state.map, pos, hero.pos, attack.range) && seesFor(state, enemy.side, pos, hero.pos);
+  // The lie of the land is looked up only where it could settle it: height adds up to HIGH_REACH to a range and takes nothing from it.
+  const far = hexDistance(pos, hero.pos);
+  if (far > attack.range + HIGH_REACH) return false;
+  return (far <= attack.range || far <= reachFrom(state.map, pos, hero.pos, attack.range)) && seesFor(state, enemy.side, pos, hero.pos);
 }
 
 /** The best attack an enemy could make standing on `pos`, and what it is worth, or null if it has none from there. */
@@ -209,9 +212,11 @@ export function enemyTurn(ctx: Ctx, enemy: Unit, budget: Budget): void {
       for (const reached of clean.values()) {
         if (!reached.stop || reached.cost > afoot) continue;
         const from = { ...enemy, pos: reached.pos };
+        // The way to where it would leap from is the same wherever it would land: found once, when first wanted.
+        let path: HexPos[] | undefined;
         for (const land of blast(state.map, reached.pos, range)) {
           if (clean.has(posKey(land)) || checkCommon(state, from, "jump", { at: land }, budget)) continue;
-          const path = pathIn(clean, reached.pos) ?? [];
+          path ??= pathIn(clean, reached.pos) ?? [];
           const w = weigh(land, path, reached.cost + 2);
           if (w.attacks && w.score - 0.5 > best.score) best = { path, score: w.score - 0.5, attacks: true, leap: land };
         }
@@ -269,16 +274,35 @@ export function enemyTurn(ctx: Ctx, enemy: Unit, budget: Budget): void {
    */
   const approach = (targets: Unit[]): { path: HexPos[]; leap?: HexPos } | null => {
     const movement = budget.move + walkAp(budget) * budget.stride;
-    const blowFrom = (pos: HexPos) =>
-      blows.some((a) => targets.some((h) => (a.burst ? hexDistance(pos, h.pos) <= ENEMY_BURST && seesFor(state, enemy.side, pos, h.pos) : strikeReaches(state, enemy, pos, a, h))));
+    // Whether a blow could be struck from a hex is asked of the same hexes look after look (and by the flood as well as
+    // of what it found), and nothing it depends on changes while a way is being looked for: each answer is kept.
+    const blowAt = new Map<string, boolean>();
+    const blowFrom = (pos: HexPos): boolean => {
+      const key = posKey(pos);
+      let can = blowAt.get(key);
+      if (can === undefined) {
+        can = blows.some((a) => targets.some((h) => (a.burst ? hexDistance(pos, h.pos) <= ENEMY_BURST && seesFor(state, enemy.side, pos, h.pos) : strikeReaches(state, enemy, pos, a, h))));
+        blowAt.set(key, can);
+      }
+      return can;
+    };
     const shuts = air || harmful.size === 0 ? [undefined] : [harmful, undefined];
     for (const ground of [state, { ...state, units: [enemy] }]) {
+      // The looks that took in all the ground there is to reach and found no goal on it: looking further would find the same.
+      const done = new Set<ReadonlySet<string> | undefined>();
       for (const far of APPROACH_LOOKS) {
         for (const shut of shuts) {
-          const reach = zoneReach(ground, enemy, far, shut);
+          if (done.has(shut)) continue;
+          // The goal is the nearest hex a blow could be struck from, so the flood stops at the first it comes to (zoneReach
+          // `enough`): any other as near is in the Map already, and the choice among them below falls as it always did.
+          const told = { short: false };
+          const reach = zoneReach(ground, enemy, far, shut, undefined, (r) => r.stop && blowFrom(r.pos), told);
           let goal: Reached | undefined;
           for (const r of reach.values()) if (r.stop && (!goal || r.cost < goal.cost) && blowFrom(r.pos)) goal = r;
-          if (!goal) continue;
+          if (!goal) {
+            if (!told.short) done.add(shut);
+            continue;
+          }
           const whole = pathIn(reach, goal.pos) ?? [];
           const walked = along(whole, movement);
           return { path: walked.path, leap: ground === state ? undefined : leapOver(whole, walked) };

@@ -81,33 +81,59 @@ async function tabsOf(db: D1Database, crewId: string): Promise<TabRow[]> {
   return (await read()).results;
 }
 
+type GearRow = TownGear & { tab_id: number };
+type StackRow = { tab_id: number; kind: string; qty: number };
+/** SQL for the rows of a table that lie in tab `tabs` (SQL for one tab's id, or for several). */
+const gearIn = (tabs: string) => `SELECT id, tab_id, ${GEAR_COLS} FROM town_gear WHERE tab_id IN (${tabs}) ORDER BY id`;
+const stacksIn = (tabs: string) => `SELECT tab_id, kind, qty FROM town_stacks WHERE tab_id IN (${tabs}) AND qty > 0 ORDER BY kind`;
+
+/** A tab as it is sent: its row, and whichever of these rows of gear and stacks lie in it. */
+function tabView(t: TabRow, gear: GearRow[], stacks: StackRow[]): TownTab {
+  return {
+    id: t.id,
+    name: t.name,
+    kind: TAB_KINDS.includes(t.kind as TabKind) ? (t.kind as TabKind) : "general",
+    color: cleanTabColor(t.color),
+    gear: gear.filter((g) => g.tab_id === t.id).map(({ tab_id: _tab, ...g }) => g),
+    // Only what is a stack at all: anything else in the table is not shown, and cannot be taken.
+    stacks: stacks.filter((s) => s.tab_id === t.id && stackSort(s.kind)).map(({ kind, qty }) => ({ kind, qty })),
+  };
+}
+
 /** A crew's town chest: every tab, and what is in it. */
 export async function chestFor(db: D1Database, crewId: string): Promise<ChestView> {
-  const tabs = await tabsOf(db, crewId);
-  const ids = tabs.map((t) => t.id).join(",") || "0";
-  const [gear, stacks] = await Promise.all([
-    db.prepare(`SELECT id, tab_id, ${GEAR_COLS} FROM town_gear WHERE tab_id IN (${ids}) ORDER BY id`).all<TownGear & { tab_id: number }>(),
-    db.prepare(`SELECT tab_id, kind, qty FROM town_stacks WHERE tab_id IN (${ids}) AND qty > 0 ORDER BY kind`).all<{ tab_id: number; kind: string; qty: number }>(),
+  // What is in the tabs is read beside the tabs themselves, by the crew they belong to: an open chest asks every
+  // few seconds. (Tabs made by this very read have nothing in them yet.)
+  const ofCrew = "SELECT id FROM town_tabs WHERE crew_id = ?";
+  const [tabs, gear, stacks] = await Promise.all([
+    tabsOf(db, crewId),
+    db.prepare(gearIn(ofCrew)).bind(crewId).all<GearRow>(),
+    db.prepare(stacksIn(ofCrew)).bind(crewId).all<StackRow>(),
   ]);
   const general = tabs.filter((t) => t.kind === "general").length;
   return {
-    tabs: tabs.map((t) => ({
-      id: t.id,
-      name: t.name,
-      kind: TAB_KINDS.includes(t.kind as TabKind) ? (t.kind as TabKind) : "general",
-      color: cleanTabColor(t.color),
-      gear: gear.results.filter((g) => g.tab_id === t.id).map(({ tab_id: _tab, ...g }) => g),
-      // Only what is a stack at all: anything else in the table is not shown, and cannot be taken.
-      stacks: stacks.results.filter((s) => s.tab_id === t.id && stackSort(s.kind)).map(({ kind, qty }) => ({ kind, qty })),
-    })),
+    tabs: tabs.map((t) => tabView(t, gear.results, stacks.results)),
     nextTab: tabs.length >= TOWN_TABS_MAX ? null : townTabCost(general),
   };
+}
+
+/** One of a crew's tabs and what is in it, read by itself rather than out of the whole chest. Null if it is not theirs. */
+async function oneTab(db: D1Database, crewId: string, tabId: number): Promise<TownTab | null> {
+  if (!Number.isSafeInteger(tabId)) return null;
+  const [row, gear, stacks] = await Promise.all([
+    db.prepare("SELECT id, name, kind, color FROM town_tabs WHERE id = ? AND crew_id = ?").bind(tabId, crewId).first<TabRow>(),
+    db.prepare(gearIn("?")).bind(tabId).all<GearRow>(),
+    db.prepare(stacksIn("?")).bind(tabId).all<StackRow>(),
+  ]);
+  return row ? tabView(row, gear.results, stacks.results) : null;
 }
 
 /** One of a crew's tabs as it stands: what kind it is, how many of its squares are filled, and what stacks it holds. Null if it is not theirs. */
 async function tabOf(db: D1Database, crewId: string, tabId: unknown) {
   if (!whole(tabId)) return null;
-  const tab = (await chestFor(db, crewId)).tabs.find((t) => t.id === tabId);
+  // A tab not found by itself is looked for in the whole chest, as every tab used to be: that read makes a crew's
+  // first tabs when they are still to be made, and so may find it after all.
+  const tab = (await oneTab(db, crewId, tabId)) ?? (await chestFor(db, crewId)).tabs.find((t) => t.id === tabId);
   if (!tab) return null;
   const held = Object.fromEntries(tab.stacks.map((s) => [s.kind, s.qty]));
   return { ...tab, held, used: tabUsed(tab.gear.map((g) => itemCells({ slot: g.slot as Slot, ref: g.ref })), held) };

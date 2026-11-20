@@ -1,12 +1,27 @@
 // WebSocket connection to the crew's PubRoom: who is inside, where they
-// stand, the chat, and the dice table. Modelled on useHut.
+// stand, the chat, and the game tables. The connection itself and who is
+// inside are useRoom.ts.
+//
+// The room has one message for each game's table and one for a request it
+// refused there, named for the game ("dice", "diceError"). They are kept by
+// that name, whatever the game, so a new table game needs nothing here: its
+// messages in packages/world/src/pub.ts, and its entry in PubView's TABLES.
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import type { HexPos } from "@gantt-quest/core";
-import type { CrewView, DiceView, HarborPlayer, PubClientMessage, PubServerMessage, ShoalsView, TideView, XpMessage } from "@gantt-quest/world";
+import type { HarborPlayer, PubClientMessage, PubServerMessage, XpMessage } from "@gantt-quest/world";
 import { PROFILE } from "./api";
-import { gaze } from "./gaze";
-import type { HarborChatLine } from "./useHarbor";
+import { useRoomPeople, useRoomSocket, type ChatLine } from "./useRoom";
+
+/** A game's table, as the room sends it: the message's `type` is the game. */
+type TableMessage = Extract<PubServerMessage, { table: unknown }>;
+/** Each game's table as this player may see it, by game. Null: nobody has opened one. */
+export type PubTables = { [M in TableMessage as M["type"]]: M["table"] };
+/** A request at a game's table that the room refused: "diceError" for "dice". */
+type TableRefusal = Extract<PubServerMessage, { type: `${keyof PubTables}Error` }>;
+const isRefusal = (msg: PubServerMessage): msg is TableRefusal => msg.type.endsWith("Error");
+/** `map` with `key` set to `value`, or `map` itself where that changes nothing (left out is the same as null). */
+const put = <M extends object, K extends keyof M>(map: M, key: K, value: M[K]): M => ((map[key] ?? null) === value ? map : { ...map, [key]: value });
 
 export interface PubConnection {
   you: string | null;

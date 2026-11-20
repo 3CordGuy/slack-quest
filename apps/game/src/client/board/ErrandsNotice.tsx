@@ -1,4 +1,4 @@
-// The contract dealer's word on the pub's regulars: who is in today, what each
+// The dealer's word on the pub's regulars: who is in today, what each
 // wants, and where this hero stands with each job (including jobs held with
 // regulars who are not in today). Read-only; the jobs are taken and handed in
 // at the pub.
@@ -41,7 +41,7 @@ export function ErrandsNotice() {
           return (
             <li key={r.regular}>
               <strong>{who.name} <span className="muted">· {job.kind === "fetch" ? "fetch" : job.kind === "trade" ? "trade" : "small job"}</span></strong>
-              <span className="contract-reward"><RewardChips {...pay(job)} /> <span className="errand-xp">+{job.reward.xp} XP</span></span>
+              <span className="errand-reward"><RewardChips {...pay(job)} /> <span className="errand-xp">+{job.reward.xp} XP</span></span>
               <span className="muted">{ask(job)} {status}</span>
             </li>
           );
@@ -51,7 +51,7 @@ export function ErrandsNotice() {
           return (
             <li key={a.errand.id} className="away">
               <strong>{who.name} <span className="muted">· not in today</span></strong>
-              <span className="contract-reward"><RewardChips {...pay(a.errand)} /> <span className="errand-xp">+{a.errand.reward.xp} XP</span></span>
+              <span className="errand-reward"><RewardChips {...pay(a.errand)} /> <span className="errand-xp">+{a.errand.reward.xp} XP</span></span>
               <span className="muted">{ask(a.errand)} {a.ready ? <span className="good">Yours, ready to hand in when they are back.</span> : <span className="gold-text">Yours, under way.</span>}</span>
             </li>
           );

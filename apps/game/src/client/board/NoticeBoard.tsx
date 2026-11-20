@@ -2,8 +2,6 @@
 // first (see src/releases.ts). Reading it marks the newest release as read, so
 // the "!" over the board goes until the next one.
 //
-// Contracts and the crew's goal moved to the contract dealer in the pub.
-//
 // Above the releases, the crew's newest fishing records: who landed what, and
 // when. Every kind's full list is on the Record Board at the bar.
 
@@ -105,7 +103,7 @@ export function NoticeBoard({ seen, onSeen, onClose }: {
           <span className="spacer" />
           <button className="small" onClick={onClose}>Close</button>
         </header>
-        <p className="muted">News from the Harbor: what has changed with each new release. Contracts and the crew's goal are with the dealer in the pub now.</p>
+        <p className="muted">News from the Harbor: what has changed with each new release.</p>
         <CrewRecords />
         {RELEASES.length === 0 ? (
           <p className="muted">Nothing pinned up yet.</p>

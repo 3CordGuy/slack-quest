@@ -56,9 +56,8 @@ export function addStats(base: Stats, ...bonuses: Partial<Stats>[]): Stats {
 
 /**
  * XP needed to go from `level` to `level + 1`, on the original game's curve
- * (`xpForLevel`): 100, 248, 374, 490, 599… A won voyage pays very roughly 150
- * to 200, so the first level comes in one voyage and each later one takes
- * longer than the last.
+ * (`xpForLevel`): 100, 248, 374, 490, 599… Each level takes longer than the
+ * last.
  */
 export function xpToNext(level: number): number {
   return xpForLevel(level + 1) - xpForLevel(level);

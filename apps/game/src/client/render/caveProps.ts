@@ -21,7 +21,7 @@ import { OVERLAY_LAYER } from "./post";
 export const LID_OPEN = -1.95;
 /** The hoard's lid, before it is opened: pushed up a crack by what is inside. */
 const HOARD_AJAR = -0.3;
-/** Places are set back from their hex's middle by this much (WorldRenderer's placeOf): models are built this far forward. */
+/** Places are set back from their hex's middle by this much (placeOf in places/placing.ts): models are built this far forward. */
 const FORWARD = 0.28;
 
 type ChestKind = "chest" | "vault" | "hoard";
@@ -65,6 +65,14 @@ function box(w: number, h: number, d: number): THREE.BufferGeometry {
 }
 const gem = new THREE.OctahedronGeometry(1, 0);
 const disc = new THREE.CircleGeometry(1, 32);
+/** Whether a shape is one of the shared ones above, kept for every chest and crate: not to be disposed with one model. */
+export const sharedShape = (geo: THREE.BufferGeometry): boolean => geo === gem || geo === disc || geometries.get(boxKey(geo)) === geo;
+/** The key a box of this shape would be kept under (see box), or "" if it is no plain box. */
+function boxKey(geo: THREE.BufferGeometry): string {
+  if (!(geo instanceof THREE.BoxGeometry)) return "";
+  const { width, height, depth } = geo.parameters;
+  return `${width.toFixed(3)}|${height.toFixed(3)}|${depth.toFixed(3)}`;
+}
 
 /** Light falling off softly from the middle to nothing at the edge, for the pools round what glows. */
 let falloff: THREE.Texture | null = null;

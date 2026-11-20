@@ -5,7 +5,6 @@
 // whole multiple with `image-rendering: pixelated` to match the sprites.
 
 export type CrewFace = 1 | 5 | 6;
-export const CREW_ART_PX = 16;
 export const CREW_FACE_NAME: Record<CrewFace, string> = { 6: "Ship", 5: "Captain", 1: "Kraken" };
 export const isCrewFace = (v: number): v is CrewFace => v === 1 || v === 5 || v === 6;
 /** The rim round a picture: gold for ship and captain, red for the Kraken. */

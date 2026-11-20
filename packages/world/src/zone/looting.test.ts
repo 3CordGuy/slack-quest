@@ -5,55 +5,28 @@
 // And what is in each of them: the tables by what an enemy was, a chest's pay, the lodestones of a place.
 
 import { describe, expect, it } from "vitest";
-import { STARTING_STATS, allHexesInGrid, hexDistance, posKey, type HexGrid, type HexPos } from "@gantt-quest/core";
+import { at, fails, flatBoard, must, standEnemy, standHero, unit } from "../test/zoneBoard";
+import { hexDistance, posKey, type HexPos } from "@gantt-quest/core";
 import { ENEMIES } from "../content";
 import { rollItem } from "../gear";
 import { SPOIL_STONES, STONE_MODS, cleanStone, rollStone, spoilStones } from "../lodestone";
-import type { Biome, Tile } from "../map";
 import { makeRng } from "../rng";
-import { DEFAULT_ZONE_OPTIONS } from "./gen";
+import { ZONE_MODS } from "./mods";
 import { ITEM_AP, AP_TURN } from "./kit";
 import { CHEST_PAY, SPOILS_ID, bountyPay, leaveBody, lootFor, unlooted } from "./loot";
 import { BOSS_LOOT, ENEMY_FAMILY, FAMILY_LOOT, rollBody, rollChest, rollSpoils, type Family } from "./spoils";
-import { standInHero, stepZone, zoneView } from "./zone";
+import { stepZone, zoneView } from "./zone";
 import type { LootItem, LootSpot, Unit, ZoneAction, ZoneEffect, ZoneEvent, ZoneState } from "./types";
 
 // ---------- helpers ----------
 
-const GRID: HexGrid = { cols: 16, rows: 12 };
-const at = (col: number, row: number): HexPos => ({ q: col - Math.floor(row / 2), r: row });
 
 /** A flat, open board with nothing on it, the enemy's AI off. */
-function board(options: Partial<ZoneState["options"]> = {}): ZoneState {
-  const tiles: Tile[] = allHexesInGrid(GRID).map((p) => ({ q: p.q, r: p.r, biome: "plains" as Biome, h: 0.3, elev: 0 }));
-  return { v: 1, code: "TEST", seed: "test", rng: 777, options: { ...DEFAULT_ZONE_OPTIONS, party: 2, ...options }, map: { grid: GRID, tiles, pois: [] }, start: at(1, 1), units: [], groups: {}, surfaces: {}, encounter: null, seq: 100, aiOff: true };
-}
+const board = (options: Partial<ZoneState["options"]> = {}): ZoneState => flatBoard({ rng: 777, start: at(1, 1), options: { party: 2, ...options }, flags: { aiOff: true } });
 /** A hero of a player's own, or (`controller`) a stand-in that player plays. */
-function hero(state: ZoneState, id: string, pos: HexPos, controller?: string): Unit {
-  const sheet = standInHero("qa_paladin", id, 2)!;
-  const unit: Unit = { id, side: "hero", name: id, kind: "qa_paladin", level: 2, pos, hp: sheet.maxHp, maxHp: sheet.maxHp, focus: 2, maxFocus: 2, stats: STARTING_STATS.qa_paladin, armor: 0, power: 0, abilities: ["bash"], conditions: [], down: false, cooldowns: {}, items: { healing: 1 }, ...(controller ? { controller } : {}) };
-  state.units.push(unit);
-  return unit;
-}
-function enemy(state: ZoneState, kind: string, pos: HexPos, group = "g1", level = 1): Unit {
-  state.groups[group] ??= { alerted: false };
-  const unit: Unit = { id: `e${++state.seq}`, side: "enemy", name: ENEMIES[kind].name, kind, level, pos, hp: ENEMIES[kind].hp, maxHp: ENEMIES[kind].hp, focus: 0, maxFocus: 0, armor: 0, power: 0, abilities: [], conditions: [], down: false, cooldowns: {}, items: {}, group, home: pos };
-  state.units.push(unit);
-  return unit;
-}
-function must(state: ZoneState, action: ZoneAction, events: ZoneEvent[] = [], effects: ZoneEffect[] = []): ZoneState {
-  const step = stepZone(state, action);
-  if (!step.ok) throw new Error(`${action.type} failed: ${step.error}`);
-  events.push(...step.events);
-  effects.push(...step.effects);
-  return step.state;
-}
-const fails = (state: ZoneState, action: ZoneAction): string => {
-  const step = stepZone(state, action);
-  if (step.ok) throw new Error(`${action.type} should have failed`);
-  return step.error;
-};
-const unit = (state: ZoneState, id: string) => state.units.find((u) => u.id === id)!;
+const hero = (state: ZoneState, id: string, pos: HexPos, controller?: string, level = 2): Unit =>
+  standHero(state, id, pos, { classId: "qa_paladin", level, armor: 0, power: 0, abilities: ["bash"], items: { healing: 1 }, controller });
+const enemy = (state: ZoneState, kind: string, pos: HexPos, group = "g1", level = 1): Unit => standEnemy(state, kind, pos, group, { level });
 const spotOf = (state: ZoneState, id: string): LootSpot => state.loot!.find((s) => s.id === id)!;
 const startFight = (state: ZoneState, events: ZoneEvent[] = []) => must(state, { type: "dev", by: "ann", dev: { op: "start_fight" } }, events);
 /** Every enemy in the fight falls at once. */
@@ -618,11 +591,122 @@ describe("the spoils of a place the atlas made", () => {
     let plain = board();
     hero(plain, "ann", at(5, 6));
     enemy(plain, "bandit", at(7, 6));
-    const told: ZoneEvent[] = [];
-    plain = win(startFight(plain), told);
+    const [told, paid]: [ZoneEvent[], ZoneEffect[]] = [[], []];
+    plain = win(startFight(plain), told, paid);
     expect(told.some((e) => e.t === "cleared")).toBe(true);
     expect(told.some((e) => e.t === "bounty")).toBe(false);
+    // The fight's XP and no more.
+    expect(paid).toHaveLength(1);
+    expect(plain.bounty).toBeUndefined();
     expect(plain.loot!.map((s) => s.kind)).toEqual(["body"]);
+  });
+});
+
+describe("the bounty for clearing a map the atlas made", () => {
+  /** Ann at level 1, a stand-in of hers, and a bandit they are fighting, on a map for a party of one. Winning it is one dev action. */
+  function fight(options: Partial<ZoneState["options"]> = {}, level = 1): ZoneState {
+    const state = board({ party: 1, ...options });
+    state.rng = 4242;
+    state.start = at(2, 6);
+    hero(state, "ann", at(5, 6), undefined, 1);
+    hero(state, "s1", at(4, 6), "ann", 1);
+    enemy(state, "bandit", at(8, 6), "g1", level);
+    return startFight(state);
+  }
+
+  /** The lodestones Ann takes out of the spoils of a place cleared, in the order they lay there. */
+  const stonesTaken = (options: Partial<ZoneState["options"]>, rng: number) => {
+    const start = fight(options);
+    start.rng = rng;
+    const effects: ZoneEffect[] = [];
+    must(win(start, [], []), { type: "take", by: "ann", unit: "ann", spot: SPOILS_ID }, [], effects);
+    return effects.flatMap((e) => (e.stone ? [e.stone] : []));
+  };
+
+  it("always holds a lodestone, each one fit to keep, and more of them the more the stone that opened the place carried; a chart-less map has no spoils at all", () => {
+    const tries = 80;
+    const mean: Record<number, number> = {};
+    for (const carried of [0, 1, 3]) {
+      let total = 0;
+      for (let i = 0; i < tries; i++) {
+        const stones = stonesTaken({ tier: 6, stone: carried }, i * 9973 + 11);
+        // Never none. The first is as good as the stone that opened the place, or a thing better.
+        expect(stones.length, `${carried} ${i}`).toBeGreaterThanOrEqual(1);
+        expect([carried, Math.min(STONE_MODS, carried + 1)], `${carried} ${i}`).toContain(stones[0].length);
+        for (const stone of stones) {
+          expect(cleanStone(stone)).toEqual(stone);
+          expect(stone.length).toBeLessThanOrEqual(STONE_MODS);
+        }
+        total += stones.length;
+      }
+      mean[carried] = total / tries;
+    }
+    expect(mean[1]).toBeGreaterThan(mean[0]);
+    expect(mean[3]).toBeGreaterThan(mean[1]);
+    // A place beside the Harbor is opened by no stone at all: it is reckoned as a plain one.
+    for (let i = 0; i < 20; i++) expect(stonesTaken({ tier: 1 }, i + 1).length).toBeGreaterThanOrEqual(1);
+    // A map the atlas did not make has no spoils to take, and what fell on it carried no stone.
+    const plain = win(fight({}), [], []);
+    expect(plain.loot!.map((s) => s.kind)).toEqual(["body"]);
+    const [events, effects]: [ZoneEvent[], ZoneEffect[]] = [[], []];
+    unit(plain, "ann").pos = at(7, 6);
+    must(plain, { type: "take", by: "ann", unit: "ann", spot: plain.loot![0].id }, events, effects);
+    expect(effects.some((e) => e.stone)).toBe(false);
+  });
+
+  it("is more the further out, and more again for each modifier", () => {
+    expect(bountyPay(6, 0).xp).toBeGreaterThan(bountyPay(3, 0).xp);
+    expect(bountyPay(6, 0).gold[0]).toBeGreaterThan(bountyPay(3, 0).gold[1] - 12);
+    expect(bountyPay(3, 0.4).xp).toBeGreaterThan(bountyPay(3, 0).xp);
+    expect(bountyPay(3, 0.4).gear).toBeGreaterThan(bountyPay(3, 0).gear);
+    expect(bountyPay(40, 2).gear).toBe(1);
+    expect(bountyPay(40, 2).quality).toBe(0.9);
+
+    const [events, effects]: [ZoneEvent[], ZoneEffect[]] = [[], []];
+    win(fight({ tier: 3, mods: ["hardy", "numerous"] }), events, effects);
+    expect(effects[1].xp).toBe(bountyPay(3, ZONE_MODS.hardy.pay + ZONE_MODS.numerous.pay).xp);
+  });
+
+  it("waits, in a delve, until the last chest is open; anywhere else a chest left shut holds nothing up", () => {
+    const chest = { id: "chest1", kind: "cache" as const, pos: at(6, 6), hidden: false, cleared: false, usedBy: [], enemies: [], loot: "chest" as const };
+    let state = fight({ tier: 2, delve: true });
+    state.map.pois.push({ ...chest });
+    const [events, effects]: [ZoneEvent[], ZoneEffect[]] = [[], []];
+    state = win(state, events, effects);
+    expect(events.some((e) => e.t === "cleared")).toBe(true);
+    expect(events.some((e) => e.t === "bounty")).toBe(false);
+    expect(effects).toHaveLength(1);
+    expect(state.bounty).toBeUndefined();
+
+    const [opened, paid]: [ZoneEvent[], ZoneEffect[]] = [[], []];
+    state = must(state, { type: "open", by: "ann", unit: "ann", poi: "chest1" }, opened, paid);
+    // The chest's own XP, then the bounty's.
+    expect(paid.map((e) => [e.heroId, e.xp])).toEqual([["ann", CHEST_PAY.chest.xp], ["ann", bountyPay(2, 0).xp]]);
+    expect(opened).toContainEqual({ t: "bounty", spot: SPOILS_ID });
+    expect(state.bounty).toBe(true);
+    // The chest and the spoils are two heaps, each on a hex of its own.
+    const spots = state.loot!.filter((s) => s.kind !== "body");
+    expect(spots.map((s) => s.kind).sort()).toEqual(["chest", "spoils"]);
+    expect(posKey(spots[0].pos)).not.toBe(posKey(spots[1].pos));
+
+    // Under the sky the place is cleared when nobody is left to fight: its chest is the party's to open or to leave.
+    let open = fight({ tier: 2 });
+    open.map.pois.push({ ...chest });
+    const told: ZoneEvent[] = [];
+    open = win(open, told, []);
+    expect(told).toContainEqual({ t: "bounty", spot: SPOILS_ID });
+    expect(open.bounty).toBe(true);
+  });
+
+  it("makes a fight on such a map pay by the level of what fell", () => {
+    const worth = (options: Partial<ZoneState["options"]>, level: number) => {
+      const effects: ZoneEffect[] = [];
+      win(fight(options, level), [], effects);
+      return effects[0].xp;
+    };
+    expect(worth({}, 5)).toBe(ENEMIES.bandit.xp);
+    expect(worth({ tier: 5 }, 1)).toBe(ENEMIES.bandit.xp);
+    expect(worth({ tier: 5 }, 5)).toBe(Math.round(ENEMIES.bandit.xp * 1.6));
   });
 });
 

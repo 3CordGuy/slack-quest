@@ -1,61 +1,16 @@
 // The pub's leaderboard, against a real SQLite database with the game's
-// migrations applied (the same stand-in for D1 as fishing.test.ts): a
+// migrations applied (the stand-in for D1 in d1.ts): a
 // finished game is written in the batch that pays its pot, wins and gold add
 // up per crew, game and player, streaks reset on a loss, and the board reads
 // back in order.
 
-import { readFileSync, readdirSync } from "node:fs";
-import { DatabaseSync } from "node:sqlite";
+import type { DatabaseSync } from "node:sqlite";
 import { beforeEach, describe, expect, it } from "vitest";
 import type { HarborPlayer } from "@gantt-quest/world";
 import type { Env } from "../src/server/db";
 import { pubLeaderboard, scoreStatements, type PubLeaderboard, type PubResult } from "../src/server/pub-scores";
 import { CREW_RULES, StakeTable } from "../src/server/stake-table";
-
-type Row = Record<string, unknown>;
-
-class Stmt {
-  constructor(private sql: DatabaseSync, private text: string, private args: unknown[] = []) {}
-  bind(...args: unknown[]) {
-    return new Stmt(this.sql, this.text, args);
-  }
-  exec() {
-    const stmt = this.sql.prepare(this.text);
-    if (/^\s*(SELECT|WITH)/i.test(this.text)) return { results: stmt.all(...(this.args as never[])) as Row[], meta: { changes: 0, last_row_id: 0 } };
-    const res = stmt.run(...(this.args as never[]));
-    return { results: [] as Row[], meta: { changes: Number(res.changes), last_row_id: Number(res.lastInsertRowid) } };
-  }
-  async run() {
-    return this.exec();
-  }
-  async all() {
-    return this.exec();
-  }
-  async first() {
-    return this.exec().results[0] ?? null;
-  }
-}
-
-function openDb() {
-  const sql = new DatabaseSync(":memory:");
-  const dir = new URL("../migrations/", import.meta.url);
-  for (const file of readdirSync(dir).sort()) sql.exec(readFileSync(new URL(file, dir), "utf8"));
-  const db = {
-    prepare: (text: string) => new Stmt(sql, text),
-    async batch(stmts: Stmt[]) {
-      sql.exec("BEGIN");
-      try {
-        const out = stmts.map((s) => s.exec());
-        sql.exec("COMMIT");
-        return out;
-      } catch (err) {
-        sql.exec("ROLLBACK");
-        throw err;
-      }
-    },
-  };
-  return { sql, db: db as unknown as D1Database };
-}
+import { addCrew, addHero, openDb } from "./d1";
 
 const CREW = "CREWAA";
 const OTHER = "CREWBB";
@@ -63,19 +18,15 @@ const OTHER = "CREWBB";
 let sql: DatabaseSync;
 let db: D1Database;
 
-function addPlayer(id: string, name: string, crew: string | null, gold = 100) {
-  const at = Date.now();
-  sql.prepare("INSERT INTO players (id, name, created_at) VALUES (?, ?, ?)").run(id, name, at);
-  sql.prepare("INSERT INTO characters (player_id, name, class_id, status, str, int_stat, vit, agi, dex, gold, created_at) VALUES (?, ?, 'cleric', 'active', 5, 5, 5, 5, 5, ?, ?)").run(id, name, gold, at);
-  if (crew) sql.prepare("INSERT INTO crew_members (crew_id, player_id, joined_at) VALUES (?, ?, ?)").run(crew, id, at);
-}
+/** A player with a hero, in `crew` if one is named (the crews are made in `beforeEach`). */
+const addPlayer = (id: string, name: string, crew: string | null, gold = 100) => addHero(sql, { id, name, classId: "cleric", gold, crew });
 
 beforeEach(() => {
   ({ sql, db } = openDb());
   const at = Date.now();
   addPlayer("ann", "Ann", null);
-  sql.prepare("INSERT INTO crews (id, name, created_by, created_at) VALUES (?, 'Crew', 'ann', ?)").run(CREW, at);
-  sql.prepare("INSERT INTO crews (id, name, created_by, created_at) VALUES (?, 'Others', 'ann', ?)").run(OTHER, at);
+  addCrew(sql, CREW, "ann", at);
+  addCrew(sql, OTHER, "ann", at, "Others");
   sql.prepare("INSERT INTO crew_members (crew_id, player_id, joined_at) VALUES (?, 'ann', ?)").run(CREW, at);
   addPlayer("bob", "Bob", CREW);
   addPlayer("cat", "Cat", CREW);

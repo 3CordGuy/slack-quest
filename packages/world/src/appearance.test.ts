@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { DEFAULT_APPEARANCE, INK_COLORS, INK_LEVELS, INK_REGIONS, MAX_INK_CELLS, appearanceKey, decodeInk, encodeInk, inkCell, parseAppearance, parseInk } from "./appearance";
+import { DEFAULT_APPEARANCE, INK_COLORS, INK_REGIONS, MAX_INK_CELLS, appearanceKey, decodeInk, encodeInk, inkCell, parseAppearance, parseInk } from "./appearance";
 
 describe("ink", () => {
   const cols = INK_REGIONS.head.cols;

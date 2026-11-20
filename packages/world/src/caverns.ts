@@ -1,6 +1,6 @@
-// The Haunted Caverns: a short delve under the rocks at the back of the
-// Harbor. No story: the crew goes down, explores, and climbs back out with
-// whatever they found before their torches burn down.
+// The Haunted Caverns: the lie of the rock under a delve. This lays the
+// caverns out; zone/delve.ts makes the layout into a map a party walks and
+// fights on.
 //
 // Every delve is carved fresh from its seed. A handful of chambers are
 // scattered through the rock and joined by tunnels into a tree, sometimes
@@ -29,7 +29,7 @@ export const CAVE_PICKUPS: { find: ResourceKind; count: number; ground: Biome[] 
   { find: "iron", count: 1, ground: ["cave"] },
 ];
 
-/** Who lurks in a chamber: the fights the caverns' balance is pitched on (balance.ts). */
+/** Who lurks in a chamber. A delve sizes each band for its party by the band's lead (zone/delve.ts). */
 export const LURKERS: string[][] = [
   ["skeleton", "skeleton"],
   ["skeleton", "bat", "bat"],
@@ -138,10 +138,9 @@ function connected(map: WorldMap, from: HexPos, to: HexPos, shut: Set<string>): 
 }
 
 /**
- * Deterministic caverns from a seed string. The mouth is `landing`, so
- * resting and being carried back work as on an island. Bands that lurk in a
- * chamber are `camp`s, the hoard's guardians a `lair`, chests `cache`s and
- * locked doors `gate`s.
+ * Deterministic caverns from a seed string. The mouth is `landing`. Bands
+ * that lurk in a chamber are `camp`s, the hoard's guardians a `lair`, chests
+ * `cache`s and locked doors `gate`s.
  */
 export function generateCaverns(seed: string, grid: HexGrid = CAVERN_GRID): WorldMap {
   const rng = makeRng(seedFromString(`caverns|${seed}`));
@@ -285,23 +284,3 @@ export function generateCaverns(seed: string, grid: HexGrid = CAVERN_GRID): Worl
   scatterPickups(map, seed, mouth, CAVE_PICKUPS, 1);
   return map;
 }
-
-/**
- * Days of torchlight a delve starts with: there and back to the hoard at the
- * slowest hero's pace, with half again for detours, and a few days to open
- * chests and rest. `pace` is hexes a turn.
- */
-export function torchDays(map: WorldMap, pace: number): number {
-  const mouth = map.pois.find((p) => p.id === "landing")!.pos;
-  const hoard = map.pois.find((p) => p.id === "lair")?.pos ?? mouth;
-  const cost = findPath(map, mouth, hoard, Infinity, (t) => (t.biome === "cave" || t.biome === "gate" ? 1 : Infinity))?.cost ?? 10;
-  return Math.max(10, Math.ceil(((2 * cost) / pace) * 1.5) + 3);
-}
-
-/** A torch bought at the cave mouth: what it costs, and the days of light it gives the whole crew. */
-export const TORCH_PRICE = 15;
-/** Or crafted from this much wood instead of paying. */
-export const TORCH_WOOD = 2;
-export const TORCH_DAYS = 5;
-/** The most torches one hero can carry down. */
-export const TORCHES_EACH = 4;

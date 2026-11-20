@@ -1,7 +1,7 @@
 // WebSocket connection to a zone's ZoneRoom: the map's state as the server
-// last told it, and a way to send what you do. Like useRun, it reconnects
-// with a growing pause, and gives up when the zone has been opened in
-// another tab.
+// last told it, and a way to send what you do. The connection itself is
+// useRoom.ts: it reconnects with a growing pause, and gives up when the zone
+// has been opened in another tab, or when it could never be opened at all.
 //
 // Each action sent carries a number, and the server's answer to it (the
 // update that shows what it did, or the error that refused it) carries the
@@ -15,9 +15,10 @@
 // connection says it keeps them (`lean`), so the server sends them with the
 // first update only, and they are carried over into every one after.
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import type { ZoneAction, ZoneEvent, ZoneView } from "@gantt-quest/world";
 import { PROFILE } from "./api";
+import { useRoomSocket } from "./useRoom";
 
 /** An action as the client sends it: who it is from is the server's to say. */
 export type ZoneSend = ZoneAction extends infer A ? (A extends { by: string } ? Omit<A, "by"> : never) : never;
@@ -44,13 +45,16 @@ export interface ZoneHandlers {
   onRefused(n: number): void;
 }
 
+/** What the room sends, as far as it is read here. */
+type ZoneMessage =
+  | { type: "update"; state: ZoneView; events: ZoneEvent[]; online: string[]; acks?: unknown; ack?: unknown }
+  | { type: "error"; message: string; ack?: unknown }
+  | { type: "trades" };
+
 export function useZone(code: string, handlers: ZoneHandlers): ZoneConnection {
   const [state, setState] = useState<ZoneView | null>(null);
   const [online, setOnline] = useState<string[]>([]);
-  const [status, setStatus] = useState<ZoneConnection["status"]>("connecting");
-  const [error, setError] = useState<string | null>(null);
   const [trades, setTrades] = useState(0);
-  const socket = useRef<WebSocket | null>(null);
   const latest = useRef<ZoneView | null>(null);
   const handler = useRef(handlers);
   handler.current = handlers;
@@ -58,14 +62,16 @@ export function useZone(code: string, handlers: ZoneHandlers): ZoneConnection {
   const sent = useRef(0);
   /** Whether the server on this connection sends an action's number back with its answer. */
   const answers = useRef(false);
+  /** The map's tiles, as this connection was first sent them. */
+  const tiles = useRef<ZoneView["map"]["tiles"] | null>(null);
 
-  useEffect(() => {
-    let closed = false;
-    let attempts = 0;
-    let retry: ReturnType<typeof setTimeout> | undefined;
-    let everOpened = false;
-    const connect = () => {
-      const proto = location.protocol === "https:" ? "wss:" : "ws:";
+  const socket = useRoomSocket<ZoneMessage>({
+    key: code,
+    elsewhere: "This map was opened in another tab.",
+    unopened: { error: "Could not reach that map. Check the code, and that you have a character." },
+    // What the map refused stays up through a reconnection, until the view clears it.
+    keepError: true,
+    path() {
       // Arriving by teleport: the crewmate to turn up beside, said once.
       let near = "";
       try {
@@ -75,68 +81,48 @@ export function useZone(code: string, handlers: ZoneHandlers): ZoneConnection {
         // Storage is off: the map's start it is.
       }
       const query = ["lean=1", PROFILE && `p=${encodeURIComponent(PROFILE)}`, near && `near=${encodeURIComponent(near)}`].filter(Boolean).join("&");
-      const ws = new WebSocket(`${proto}//${location.host}/api/zone/${code}/ws?${query}`);
-      /** The map's tiles, as this connection was first sent them. */
-      let tiles: ZoneView["map"]["tiles"] | null = null;
-      socket.current = ws;
+      return `/api/zone/${code}/ws?${query}`;
+    },
+    onOpen() {
+      // A new connection: nothing is known of it yet.
       answers.current = false;
-      setStatus("connecting");
-      ws.onopen = () => {
-        attempts = 0;
-        everOpened = true;
-        setStatus("open");
-        // A trade may have changed while there was no connection to hear of it.
+      tiles.current = null;
+      // A trade may have changed while there was no connection to hear of it.
+      setTrades((n) => n + 1);
+    },
+    onMessage(msg, ws) {
+      if (msg.type === "update") {
+        // The tiles came with this connection's first update; later ones leave them out.
+        if (msg.state.map.tiles) tiles.current = msg.state.map.tiles;
+        else if (tiles.current) msg.state.map.tiles = tiles.current;
+        // An update with no tiles to go with it cannot be drawn: start again with a fresh connection, which is sent them.
+        else return ws.close();
+        answers.current = msg.acks === true;
+        const prev = latest.current;
+        latest.current = msg.state;
+        setState(msg.state);
+        setOnline(msg.online);
+        handler.current.onUpdate(msg.state, msg.events, prev, typeof msg.ack === "number" ? msg.ack : undefined);
+      } else if (msg.type === "error") {
+        socket.setError(msg.message);
+        if (typeof msg.ack === "number") handler.current.onRefused(msg.ack);
+      } else if (msg.type === "trades") {
         setTrades((n) => n + 1);
-      };
-      ws.onmessage = (e) => {
-        if (e.data === "pong") return;
-        const msg = JSON.parse(e.data);
-        if (msg.type === "update") {
-          // The tiles came with this connection's first update; later ones leave them out.
-          if (msg.state.map.tiles) tiles = msg.state.map.tiles;
-          else if (tiles) msg.state.map.tiles = tiles;
-          // An update with no tiles to go with it cannot be drawn: start again with a fresh connection, which is sent them.
-          else return ws.close();
-          answers.current = msg.acks === true;
-          const prev = latest.current;
-          latest.current = msg.state;
-          setState(msg.state);
-          setOnline(msg.online);
-          handler.current.onUpdate(msg.state, msg.events, prev, typeof msg.ack === "number" ? msg.ack : undefined);
-        } else if (msg.type === "error") {
-          setError(msg.message);
-          if (typeof msg.ack === "number") handler.current.onRefused(msg.ack);
-        } else if (msg.type === "trades") {
-          setTrades((n) => n + 1);
-        }
-      };
-      ws.onclose = (e) => {
-        if (closed) return;
-        setStatus("closed");
-        if (e.code === 4000) return setError("This map was opened in another tab.");
-        if (!everOpened) return setError("Could not reach that map. Check the code, and that you have a character.");
-        if (attempts++ < 6) retry = setTimeout(connect, Math.min(8000, 500 * 2 ** attempts));
-      };
-    };
-    connect();
-    const ping = setInterval(() => socket.current?.readyState === WebSocket.OPEN && socket.current.send("ping"), 25_000);
-    return () => {
-      closed = true;
-      clearInterval(ping);
-      clearTimeout(retry);
-      socket.current?.close();
-    };
-  }, [code]);
+      }
+    },
+  });
 
+  const { send: post, setError } = socket;
   const send = useCallback((action: ZoneSend) => {
-    if (socket.current?.readyState !== WebSocket.OPEN) return null;
-    const n = ++sent.current;
-    socket.current.send(JSON.stringify({ type: "action", action, n }));
+    // The number is used up only by an action that was sent.
+    const n = sent.current + 1;
+    if (!post({ type: "action", action, n })) return null;
+    sent.current = n;
     return answers.current ? n : null;
   }, []);
   const resheet = useCallback(() => {
-    if (socket.current?.readyState === WebSocket.OPEN) socket.current.send(JSON.stringify({ type: "sheet" }));
+    post({ type: "sheet" });
   }, []);
   const clearError = useCallback(() => setError(null), []);
-  return { state, online, status, error, trades, send, resheet, clearError };
+  return { state, online, status: socket.status, error: socket.error, trades, send, resheet, clearError };
 }

@@ -1,16 +1,10 @@
-// A hero as a fighter. The voyage (world.ts) and the Harbor's sparring ring
-// both build their combatants here, so a practice bout plays exactly like
-// the real thing.
+// A hero as a fighter: what a fight on the tiles needs to know about them
+// (zone/zone.ts builds its heroes from a HeroSheet).
 
 import type { Stats } from "@gantt-quest/core";
-import type { Combatant } from "./battle";
-import { statPct } from "./check";
-import { classAbilitiesOf, withClassAbilities } from "./classabilities";
-import { abilitiesFor } from "./content";
 import { isLanternHelm, loadoutOf, outfitOf, type ItemDef, type Outfit } from "./gear";
-import { addStats, maxFocusFor, maxHpFor } from "./progression";
 
-/** The parts of a hero that decide how they fight. A `HeroInit` or a `Hero` satisfies this. */
+/** The parts of a hero that decide how they fight. */
 export interface HeroSheet {
   id: string;
   name: string;
@@ -21,24 +15,22 @@ export interface HeroSheet {
   /** Sum of equipped gear bonuses. */
   bonus: Partial<Stats>;
   weapon: string;
+  /** Damage bonus from the equipped weapon. */
   weaponPower: number;
+  /** Armor total from equipped gear. */
   armor: number;
+  /** What the hero is visibly wearing, for drawing them. */
   outfit?: Outfit;
   /** A lantern helm on the head, shown or hidden (isLanternHelm): it lights the dark round them in the caves. */
   lantern?: boolean;
-  /** Class traits picked so far (traits.ts). */
-  traits?: string[];
-  /** The class abilities chosen for the hero's slots (classabilities.ts). Fought with on top of the weapon's, in zone fights and voyage battles alike. */
+  /** The class abilities chosen for the hero's slots (classabilities.ts). Fought with on top of the weapon's. They are changed only in the Harbor. */
   abilityLoadout?: (string | null)[];
 }
 
-/** What a fight wears down. */
-export interface Vitals {
-  hp: number;
-  maxHp: number;
-  focus: number;
-  maxFocus: number;
-  potions: number;
+/** What the server knows about a character wherever they turn up: the Harbor, a hut, the pub or a map. */
+export interface HeroInit extends HeroSheet {
+  xp: number;
+  unspent: number;
 }
 
 /** What equipped items contribute to a hero. With no weapon in hand the hero is unarmed (`weapon` is ""), and fights with bare hands. */
@@ -53,37 +45,5 @@ export function gearSheet(classId: string, worn: ItemDef[]): Pick<HeroSheet, "bo
     armor: loadout.armor,
     outfit: outfitOf(worn),
     ...(hat && isLanternHelm(classId, hat) ? { lantern: true } : {}),
-  };
-}
-
-/** A rested hero: full HP and focus and one potion. How a hero boards a ship, and how every sparring bout starts. */
-export function freshVitals(sheet: Pick<HeroSheet, "base" | "bonus" | "level">): Vitals {
-  const maxHp = maxHpFor(addStats(sheet.base, sheet.bonus), sheet.level);
-  const maxFocus = maxFocusFor(sheet.level);
-  return { hp: maxHp, maxHp, focus: maxFocus, maxFocus, potions: 1 };
-}
-
-/** The hero as a combatant. Pass the hero's current `vitals` mid-voyage; without them the hero is rested. */
-export function heroCombatant(sheet: HeroSheet, vitals: Pick<Vitals, "hp" | "maxHp" | "focus" | "potions"> = freshVitals(sheet)): Combatant {
-  const stats = addStats(sheet.base, sheet.bonus);
-  return {
-    id: sheet.id,
-    side: "hero",
-    name: sheet.name,
-    kind: sheet.classId,
-    level: sheet.level,
-    hp: vitals.hp,
-    maxHp: vitals.maxHp,
-    pct: { str: statPct(stats.str), int_stat: statPct(stats.int_stat), vit: statPct(stats.vit), agi: statPct(stats.agi), dex: statPct(stats.dex) },
-    outfit: sheet.outfit,
-    power: sheet.weaponPower ?? 0,
-    armor: sheet.armor ?? 0,
-    speed: statPct(stats.agi),
-    focus: vitals.focus,
-    potions: vitals.potions,
-    abilities: withClassAbilities(abilitiesFor(sheet.weapon), classAbilitiesOf(sheet.classId, sheet.level, sheet.abilityLoadout)),
-    effects: [],
-    down: false,
-    traits: [...(sheet.traits ?? [])],
   };
 }

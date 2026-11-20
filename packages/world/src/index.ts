@@ -1,4 +1,4 @@
-// Pure game logic for the overworld game. No I/O: importable from the
+// Pure game logic for The Harbor of Heylets. No I/O: importable from the
 // Worker, the Durable Object, the browser and tests alike.
 
 export * from "./rng";
@@ -8,20 +8,14 @@ export * from "./gear";
 export * from "./appearance";
 export * from "./map";
 export * from "./caverns";
-export * from "./battle";
 export * from "./hero";
 export * from "./progression";
-export * from "./story";
-export * from "./npc";
-export * from "./world";
-export * from "./view";
 export * from "./harbor";
 export * from "./crew";
 export * from "./stakes";
 export * from "./dice";
 export * from "./hut";
 export * from "./hutroom";
-export * from "./contracts";
 export * from "./drops";
 export * from "./gather";
 export * from "./fishcatalog";
@@ -47,7 +41,6 @@ export * from "./tide";
 export * from "./trade";
 export * from "./carry";
 export * from "./catalogue";
-export * from "./traits";
 export * from "./classabilities";
 export * from "./zone";
 export * from "./atlas";

@@ -1,13 +1,6 @@
-/* A zone (ZoneView): the initiative order across the top, the roll card, the banner, and the card for what is under the pointer. */
+/* A zone (ZoneView): what lies over the map that is not the fight's own interface (zone/fight.css), such as the card for what is under the pointer. */
 
 .zone-view.picking .stage { cursor: crosshair; }
-
-/* The turn order, across the top: a face for everyone in the fight, left to right, with what each has
-   left under it. Whose turn it is stands taller in a bright frame; heroes who share a turn are joined up. */
-.zone-hp { display: flex; width: 100%; height: 4px; background: #1b1830; }
-.zone-hp i { display: block; height: 100%; background: #6ee06e; }
-/* A shield (Bolstered): pale, after the HP. */
-.zone-hp b { display: block; height: 100%; background: #d6dde8; }
 
 /* A refusal or a notice sits under the turn order, not over it. */
 .zone-view.in-fight .toast { top: 168px; }
@@ -60,7 +53,7 @@
 @media (max-width: 700px) {
   .zone-tip { top: 100px; }
 }
-@media (prefers-reduced-motion: reduce) { .zone-banner, .zone-order, .zone-intro-band, .zone-view.my-turn .zone-frame { animation: none; } }
+@media (prefers-reduced-motion: reduce) { .zone-order, .zone-intro-band, .zone-view.my-turn .zone-frame { animation: none; } }
 
 /* A question over the map that waits for an answer: the cave is clear, so leave now or look round first. */
 .zone-ask { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: rgba(8, 6, 14, 0.45); z-index: 30; }

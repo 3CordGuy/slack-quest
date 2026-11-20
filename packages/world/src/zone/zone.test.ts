@@ -1,23 +1,22 @@
 import { describe, expect, it } from "vitest";
-import { STARTING_STATS, allHexesInGrid, hexDistance, hexNeighbors, posKey, type HexGrid, type HexPos } from "@gantt-quest/core";
+import { GRID, at, fails, flatBoard, has, must, standEnemy as enemy, standHero, unit } from "../test/zoneBoard";
+import { STARTING_STATS, hexDistance, hexNeighbors, posKey, type HexPos } from "@gantt-quest/core";
 import { ABILITIES, EFFECT_TICK, ENEMIES, HERO_CLASSES, SUNDERED_DEFENCE, WEAPONS, abilitiesFor } from "../content";
-import { CLIMES, type Biome, type Tile } from "../map";
+import { CLIMES, type Tile } from "../map";
 import { makeRng } from "../rng";
-import { courseFor, moveLeft, walk, walkAp } from "./combat";
-import { addCondition, attackContext, burnOf, damage, kindle, shieldOf, type Ctx } from "./engine";
+import { abilityArea, checkAbility, courseFor, crateBlow, enemyAct, moveLeft, walk, walkAp, wayBetween } from "./combat";
+import { addCondition, attackContext, burnOf, damage, defenceOf, kindle, shieldOf, type Ctx } from "./engine";
 import { shantyOf, shantyRadius, songsOn } from "./song";
 import { chartOf, constellationLinks } from "./stars";
 import { ALERT_RANGE, DEFAULT_ZONE_OPTIONS, JOIN_RANGE, generateZone, zoneOptions } from "./gen";
-import { HEX_ROOM, adjacent, blast, blockerAt, flies, isDead, sees, seesFor, solid, stepCost, unitAt, zoneReach } from "./geometry";
+import { HEX_ROOM, adjacent, blast, blockerAt, flies, isDead, seesFor, solid, stepCost, unitAt, zoneReach } from "./geometry";
 import { propOf } from "./props";
 import { SITE_IDS, backdropOf, siteInside, type SiteId } from "./sites";
 import { ACTION_AP, AP_MAX, AP_TURN, SUMMON_AP_TURN, AURAS, CHART, COMMON_ACTIONS, BLOCK, BONUS_AP, BOLSTER, GUARD_UP, STAND_STRONG, STURDY, ENEMY_BURST, ENEMY_HP_SCALE, ENEMY_KIT, ENEMY_MOVE_AP, EXPLORE_ROUND_MS, FLEE_RANGE, LIGHT_RADIUS, SHIELD_SET_ASIDE, TACTICS, TORCH_GROUND_ROUNDS, TORCH_HELD_ROUNDS, TORCH_ROUND_MS, abilityDice as abilityDiceFor, commonCost, enemyHp, enemyMove, enemyStrikes, tacticOf } from "./kit";
 import { MAX_CATCHUP_ROUNDS } from "./clock";
-import { defenceOf } from "./engine";
-import { abilityArea, checkAbility, crateBlow, enemyAct, wayBetween } from "./combat";
 import { d20, diceAverage, diceFor, heroMove, hitChance } from "./rules";
 import { createZone, ensureMouth, spentOut, standInHero, stepZone, zoneView } from "./zone";
-import { DELVE_CRATES, generateDelve } from "./delve";
+import { DELVE_CRATES, DELVE_GLOWCAPS as GLOWCAP_COUNT, generateDelve } from "./delve";
 import { litHexes } from "./light";
 import { poolFor } from "../classabilities";
 import { DEFAULT_APPEARANCE } from "../appearance";
@@ -26,14 +25,10 @@ import { CHEST_PAY, unopened } from "./loot";
 import { CRATE_HP, CRATE_PAY } from "./crates";
 import { NOISE_RANGE } from "./doors";
 import { GLOWCAP_MUSHROOMS } from "./forage";
-import { DELVE_GLOWCAPS as GLOWCAP_COUNT } from "./delve";
 import type { SurfaceKind, Unit, ZoneAction, ZoneEffect, ZoneEvent, ZoneState } from "./types";
 
 // ---------- helpers ----------
 
-const GRID: HexGrid = { cols: 16, rows: 12 };
-/** Offset coordinates (column, row) to a hex, so tests can talk about a flat board. */
-const at = (col: number, row: number): HexPos => ({ q: col - Math.floor(row / 2), r: row });
 /** A Diving Helm on the head: a Paladin in it has no lantern helm to light the dark. */
 const IN_A_DIVING_HELM: Outfit = { helmet: { icon: "heavy-helm", ref: "hardhat", rarity: "common" } };
 /** The Lighthouse Paladin's starter hat on the head: the lantern helm. */
@@ -42,44 +37,15 @@ const IN_THE_LANTERN_HELM: Outfit = { helmet: { icon: LANTERN_HELM_ICON, ref: GA
 const IN_A_KNIT_CAP: Outfit = { helmet: { icon: "knit-cap", ref: GARB_HAT, rarity: "common" } };
 
 /** A flat, open board with nothing on it. */
-function board(edit: (tile: Tile) => void = () => {}): ZoneState {
-  const tiles: Tile[] = allHexesInGrid(GRID).map((p) => ({ q: p.q, r: p.r, biome: "plains" as Biome, h: 0.3, elev: 0 }));
-  tiles.forEach(edit);
-  return { v: 1, code: "TEST", seed: "test", rng: 12345, options: { ...DEFAULT_ZONE_OPTIONS, party: 1 }, map: { grid: GRID, tiles, pois: [] }, start: at(2, 6), units: [], groups: {}, surfaces: {}, encounter: null, seq: 100, shareTurns: true };
-}
+const board = (edit: (tile: Tile) => void = () => {}): ZoneState => flatBoard({ rng: 12345, start: at(2, 6), options: { party: 1 }, flags: { shareTurns: true }, edit });
 const tileEdit = (pos: HexPos, change: Partial<Tile>) => (t: Tile) => { if (t.q === pos.q && t.r === pos.r) Object.assign(t, change); };
 
-function hero(state: ZoneState, id: string, classId: string, pos: HexPos): Unit {
-  const sheet = standInHero(classId, id, 1)!;
-  const unit: Unit = {
-    id, side: "hero", name: id, kind: classId, level: 1, pos, hp: sheet.maxHp, maxHp: sheet.maxHp, focus: 2, maxFocus: 2,
-    stats: STARTING_STATS[classId], armor: 2, power: 1, abilities: classId === "refactor_rogue" ? ["bow_shot", "stab"] : classId === "devops_mage" ? ["shock", "mend"] : ["bash", "block"],
-    conditions: [], down: false, cooldowns: {}, items: { healing: 2, poison: 2, fire: 1, oil: 1, water: 1 },
-  };
-  state.units.push(unit);
-  return unit;
-}
-
-function enemy(state: ZoneState, kind: string, pos: HexPos, group = "g1"): Unit {
-  state.groups[group] ??= { alerted: false };
-  const unit: Unit = { id: `e${++state.seq}`, side: "enemy", name: ENEMIES[kind].name, kind, level: 1, pos, hp: ENEMIES[kind].hp, maxHp: ENEMIES[kind].hp, focus: 0, maxFocus: 0, armor: 0, power: 0, abilities: [], conditions: [], down: false, cooldowns: {}, items: {}, group, home: pos };
-  state.units.push(unit);
-  return unit;
-}
-
-/** Apply an action that must succeed; events are added to `sink`. */
-function must(state: ZoneState, action: ZoneAction, sink: ZoneEvent[] = []): ZoneState {
-  const step = stepZone(state, action);
-  if (!step.ok) throw new Error(`${action.type} failed: ${step.error}`);
-  sink.push(...step.events);
-  return step.state;
-}
-const fails = (state: ZoneState, action: ZoneAction): string => {
-  const step = stepZone(state, action);
-  if (step.ok) throw new Error(`${action.type} should have failed`);
-  return step.error;
-};
-const unit = (state: ZoneState, id: string) => state.units.find((u) => u.id === id)!;
+const hero = (state: ZoneState, id: string, classId: string, pos: HexPos): Unit =>
+  standHero(state, id, pos, {
+    classId, level: 1, armor: 2, power: 1,
+    abilities: classId === "refactor_rogue" ? ["bow_shot", "stab"] : classId === "devops_mage" ? ["shock", "mend"] : ["bash", "block"],
+    items: { healing: 2, poison: 2, fire: 1, oil: 1, water: 1 },
+  });
 const zoneBlastCount = (state: ZoneState, pos: HexPos) => blast(state.map, pos, 1).length;
 const paint = (state: ZoneState, kind: SurfaceKind | null, hexes: HexPos[]) => must(state, { type: "dev", by: "dev", dev: { op: "paint", kind, hexes } });
 /** Set the nearest group on a hero where they stand, without anyone having to walk up to anyone. */
@@ -97,6 +63,33 @@ function duel(kind = "bandit", classId = "qa_paladin", heroAt = at(5, 6), enemyA
   expect(state.encounter?.acting).toEqual(["ann"]);
   return { state, foe: foe.id };
 }
+
+/** Ann uses an ability, at a target or a hex if it takes one. */
+const use = (ability: string, aim: { target?: string; at?: HexPos } = {}): ZoneAction => ({ type: "use", by: "ann", unit: "ann", ability, ...aim });
+/** Everyone sharing ann's turn ends it (conditions run down as a shared turn ends, not as each one in it does). A stand-in or a summon is ended by whoever plays it. */
+function endShared(state: ZoneState, sink: ZoneEvent[] = []): ZoneState {
+  for (const id of [...state.encounter!.acting]) if (!state.encounter!.done.includes(id) && !unit(state, id).down) state = must(state, { type: "end_turn", by: unit(state, id).controller ?? id, unit: id }, sink);
+  return state;
+}
+/** On to ann's next turn. */
+function nextTurn(state: ZoneState, sink: ZoneEvent[] = []): ZoneState {
+  state = endShared(state, sink);
+  while (!state.encounter!.acting.includes("ann") || state.encounter!.done.includes("ann")) state = must(state, { type: "timeout" }, sink);
+  return state;
+}
+/** The action tried on fresh seeds until it hits `target` and `want` holds: the state after, and what it said. */
+const untilHit = (state: ZoneState, action: ZoneAction, target: string, want: (events: ZoneEvent[]) => boolean = () => true) => {
+  for (let seed = 1; seed < 120; seed++) {
+    const tryState = structuredClone(state);
+    tryState.rng = seed;
+    const events: ZoneEvent[] = [];
+    const next = must(tryState, action, events);
+    if (events.some((e) => e.t === "hit" && e.target === target) && want(events)) return { state: next, events };
+  }
+  throw new Error("never landed");
+};
+const failedSave = (events: ZoneEvent[]) => events.some((e) => e.t === "roll" && e.roll.kind === "save" && !e.roll.ok);
+const savedAll = (events: ZoneEvent[]) => events.some((e) => e.t === "roll" && e.roll.kind === "save") && !failedSave(events);
 
 // ---------- the dice ----------
 
@@ -397,15 +390,6 @@ describe("turns", () => {
     const turn = state.encounter!.turnNo;
     state = must(state, { type: "end_turn", by: "ann", unit: "ann" });
     expect(state.encounter!.turnNo).toBeGreaterThan(turn);
-  });
-
-  it("gives heroes next to each other in the order a turn each, one right after the other, whatever they rolled", () => {
-    let state = rolled({ ann: 15, bo: 14 }, false);
-    expect(state.encounter!.acting).toEqual(["ann"]);
-    expect(fails(state, { type: "end_turn", by: "bo", unit: "bo" })).toMatch(/not your turn/);
-    const turn = state.encounter!.turnNo;
-    state = must(state, { type: "end_turn", by: "ann", unit: "ann" });
-    expect(state.encounter).toMatchObject({ turnNo: turn + 1, acting: ["bo"] });
   });
 
   it("spends AP on anything, in any order, and refuses what it cannot pay for", () => {
@@ -2751,17 +2735,6 @@ describe("the Paladin's class abilities", () => {
     expect(hexDistance(unit(state, "ann").pos, dummy.pos)).toBe(1);
     return { state, dummy: dummy.id, spare };
   }
-  /** Everyone sharing ann's turn ends it (conditions run down as a shared turn ends, not as each one in it does). */
-  function endShared(state: ZoneState, sink: ZoneEvent[] = []): ZoneState {
-    for (const id of [...state.encounter!.acting]) if (!state.encounter!.done.includes(id) && !unit(state, id).down) state = must(state, { type: "end_turn", by: id, unit: id }, sink);
-    return state;
-  }
-  /** On to ann's next turn. */
-  function nextTurn(state: ZoneState, sink: ZoneEvent[] = []): ZoneState {
-    state = endShared(state, sink);
-    while (!state.encounter!.acting.includes("ann") || state.encounter!.done.includes("ann")) state = must(state, { type: "timeout" }, sink);
-    return state;
-  }
   const sameHexes = (a: HexPos, b: HexPos) => a.q === b.q && a.r === b.r;
   const lasts = (state: ZoneState, kind: string) => unit(state, "ann").conditions.find((c) => c.kind === kind)?.rounds;
 
@@ -2871,7 +2844,7 @@ describe("the Paladin's class abilities", () => {
     expect(hits).toBeGreaterThan(0);
   });
 
-  const shieldOf = (state: ZoneState, id: string) => unit(state, id).conditions.find((c) => c.kind === "bolstered")?.amount;
+  const wardOf = (state: ZoneState, id: string) => unit(state, id).conditions.find((c) => c.kind === "bolstered")?.amount;
 
   it("Bolster: an Action that shields the Paladin and allies within 2 hexes, not anyone further off", () => {
     let { state } = party();
@@ -2881,9 +2854,9 @@ describe("the Paladin's class abilities", () => {
     const size = BOLSTER.shield + unit(state, "ann").level;
     // The event says how big the shield is, for the bars to show it as the fight is played out.
     expect(events.filter((e) => e.t === "condition" && e.kind === "bolstered").map((e) => e.t === "condition" && [e.target, e.amount])).toEqual([["ann", size], ["bo", size]]);
-    expect(shieldOf(state, "ann")).toBe(size);
-    expect(shieldOf(state, "bo")).toBe(size);
-    expect(shieldOf(state, "cy")).toBeUndefined();
+    expect(wardOf(state, "ann")).toBe(size);
+    expect(wardOf(state, "bo")).toBe(size);
+    expect(wardOf(state, "cy")).toBeUndefined();
     expect(fails(nextTurn(state), { type: "use", by: "ann", unit: "ann", ability: "bolster" })).toMatch(/not ready/);
   });
 
@@ -2894,13 +2867,13 @@ describe("the Paladin's class abilities", () => {
     const ctx: Ctx = { state: structuredClone(state), rng: makeRng(3), events, effects: [] };
     const bo = unit(ctx.state, "bo");
     const hp = bo.hp;
-    const size = shieldOf(ctx.state, "bo")!;
+    const size = wardOf(ctx.state, "bo")!;
     expect(damage(ctx, bo, size - 3, { actor: null, what: "test" })).toBe(0);
     expect(bo.hp).toBe(hp);
-    expect(shieldOf(ctx.state, "bo")).toBe(3);
+    expect(wardOf(ctx.state, "bo")).toBe(3);
     expect(damage(ctx, bo, 5, { actor: null, what: "test" })).toBe(2);
     expect(bo.hp).toBe(hp - 2);
-    expect(shieldOf(ctx.state, "bo")).toBeUndefined();
+    expect(wardOf(ctx.state, "bo")).toBeUndefined();
     expect(events.filter((e) => e.t === "hit").map((e) => e.t === "hit" && [e.amount, e.blocked])).toEqual([[0, size - 3], [2, 3]]);
   });
 
@@ -2942,7 +2915,8 @@ describe("the Paladin's class abilities", () => {
     // The straight way is barred (by what is left of a wall: nobody walks through it, anyone sees over it): the walk goes round.
     const between = at(4, 6);
     expect(hexDistance(annPos, between) + hexDistance(between, boPos)).toBe(hexDistance(annPos, boPos));
-    state.map.tiles.find((t) => sameHexes(t, between))!.prop = "wall_broken";
+    // (A new array with a new tile in it: a state's tiles are shared from step to step, so one is never changed where it lies.)
+    state.map.tiles = state.map.tiles.map((t) => (sameHexes(t, between) ? { ...t, prop: "wall_broken" } : t));
     const way = wayBetween(state, unit(state, "ann"), boPos);
     expect(way).toHaveLength(4);
     expect(way.some((p) => sameHexes(p, between))).toBe(false);
@@ -3001,15 +2975,6 @@ describe("the Mage's class abilities", () => {
     while (!state.encounter!.acting.includes("ann")) state = must(state, { type: "timeout" });
     return { state, dummy: dummy.id };
   }
-  function endShared(state: ZoneState, sink: ZoneEvent[] = []): ZoneState {
-    for (const id of [...state.encounter!.acting]) if (!state.encounter!.done.includes(id) && !unit(state, id).down) state = must(state, { type: "end_turn", by: id, unit: id }, sink);
-    return state;
-  }
-  function nextTurn(state: ZoneState, sink: ZoneEvent[] = []): ZoneState {
-    state = endShared(state, sink);
-    while (!state.encounter!.acting.includes("ann") || state.encounter!.done.includes("ann")) state = must(state, { type: "timeout" }, sink);
-    return state;
-  }
   /** Put a dummy down somewhere, in the fight. */
   function addDummy(state: ZoneState, pos: HexPos): string {
     const e = enemy(state, "dummy", pos);
@@ -3018,7 +2983,6 @@ describe("the Mage's class abilities", () => {
     return e.id;
   }
   const healsOf = (events: ZoneEvent[], id: string) => events.filter((e) => e.t === "heal" && e.what === "soothing_rain" && e.target === id).length;
-  const has = (state: ZoneState, id: string, kind: string) => unit(state, id).conditions.some((c) => c.kind === kind);
 
   it("are all in the Mage's pool", () => {
     expect(poolFor("devops_mage").map((e) => e.id)).toEqual(["soothing_rain", "chain_lightning", "roar_of_thunder", "trade_winds", "tidal_wave"]);
@@ -3182,18 +3146,11 @@ describe("the Rogue's class abilities", () => {
     state.encounter!.init[e.id] = 0;
     return e.id;
   }
-  function nextTurn(state: ZoneState, sink: ZoneEvent[] = []): ZoneState {
-    for (const id of [...state.encounter!.acting]) if (!state.encounter!.done.includes(id) && !unit(state, id).down) state = must(state, { type: "end_turn", by: id, unit: id }, sink);
-    while (!state.encounter!.acting.includes("ann") || state.encounter!.done.includes("ann")) state = must(state, { type: "timeout" }, sink);
-    return state;
-  }
   const step = (state: ZoneState, action: ZoneAction) => {
     const s = stepZone(state, action);
     if (!s.ok) throw new Error(s.error);
     return s;
   };
-  const has = (state: ZoneState, id: string, kind: string) => unit(state, id).conditions.some((c) => c.kind === kind);
-  const use = (ability: string, aim: { target?: string; at?: HexPos } = {}): ZoneAction => ({ type: "use", by: "ann", unit: "ann", ability, ...aim });
   const rock = (...hexes: HexPos[]) => (t: Tile) => { if (hexes.some((p) => p.q === t.q && p.r === t.r)) t.biome = "rock"; };
 
   it("are all in the Rogue's pool", () => {
@@ -3379,7 +3336,10 @@ describe("the Rogue's class abilities", () => {
     unit(state, dummy).pos = at(6, 6);
     state = must(state, use("tactical_retreat", { target: dummy }));
     expect(unit(state, "ann").pos).toEqual(at(5, 6));
-    expect(fails(party().state, use("tactical_retreat", { target: dummy, at: at(10, 6) }))).toBeTruthy();
+    // A hex further off than that is refused.
+    const far = party();
+    unit(far.state, far.dummy).pos = at(6, 6);
+    expect(fails(far.state, use("tactical_retreat", { target: far.dummy, at: at(10, 6) }))).toBe("Too far.");
   });
 
   it("Tactical Retreat: hits harder than a Stab", () => {
@@ -3454,17 +3414,6 @@ describe("the Druid's class abilities", () => {
     state.encounter!.init[e.id] = -5;
     return e.id;
   }
-  function endShared(state: ZoneState, sink: ZoneEvent[] = []): ZoneState {
-    for (const id of [...state.encounter!.acting]) if (!state.encounter!.done.includes(id) && !unit(state, id).down) state = must(state, { type: "end_turn", by: unit(state, id).controller ?? id, unit: id }, sink);
-    return state;
-  }
-  function nextTurn(state: ZoneState, sink: ZoneEvent[] = []): ZoneState {
-    state = endShared(state, sink);
-    while (!state.encounter!.acting.includes("ann") || state.encounter!.done.includes("ann")) state = must(state, { type: "timeout" }, sink);
-    return state;
-  }
-  const has = (state: ZoneState, id: string, kind: string) => unit(state, id).conditions.some((c) => c.kind === kind);
-  const use = (ability: string, aim: { target?: string; at?: HexPos } = {}): ZoneAction => ({ type: "use", by: "ann", unit: "ann", ability, ...aim });
   const cuts = (events: ZoneEvent[], id: string) => events.filter((e) => e.t === "hit" && e.what === "coral_field" && e.target === id).length;
   const turtleOf = (state: ZoneState) => state.units.filter((u) => u.summon?.by === "ann");
 
@@ -3720,14 +3669,8 @@ describe("the Bard's shanties", () => {
     while (!["ann", "bo", "cy"].every((id) => state.encounter!.acting.includes(id))) state = must(state, { type: "timeout" });
     return { state, dummy: dummy.id };
   }
-  function nextTurn(state: ZoneState, sink: ZoneEvent[] = []): ZoneState {
-    for (const id of [...state.encounter!.acting]) if (!state.encounter!.done.includes(id) && !unit(state, id).down) state = must(state, { type: "end_turn", by: id, unit: id }, sink);
-    while (!state.encounter!.acting.includes("ann") || state.encounter!.done.includes("ann")) state = must(state, { type: "timeout" }, sink);
-    return state;
-  }
   const sing = (kind: string): ZoneAction => ({ type: "use", by: "ann", unit: "ann", ability: kind });
   const join = (who: string, bard = "ann"): ZoneAction => ({ type: "common", by: who, unit: who, what: "join", target: bard });
-  const has = (state: ZoneState, id: string, kind: string) => unit(state, id).conditions.some((c) => c.kind === kind);
   const song = (state: ZoneState) => shantyOf(unit(state, "ann"))!;
   const hitMods = (state: ZoneState, id: string, dummy: string) => attackContext(state, unit(state, id), unit(state, dummy), { melee: false }).mods;
 
@@ -3994,13 +3937,7 @@ describe("the Sage's stars", () => {
     while (!["ann", "bo", "cy"].every((id) => state.encounter!.acting.includes(id))) state = must(state, { type: "timeout" });
     return { state, foes: ids };
   }
-  function nextTurn(state: ZoneState, sink: ZoneEvent[] = []): ZoneState {
-    for (const id of [...state.encounter!.acting]) if (!state.encounter!.done.includes(id) && !unit(state, id).down) state = must(state, { type: "end_turn", by: id, unit: id }, sink);
-    while (!state.encounter!.acting.includes("ann") || state.encounter!.done.includes("ann")) state = must(state, { type: "timeout" }, sink);
-    return state;
-  }
   const cast = (ability: string, aim: { target?: string; at?: HexPos } = {}): ZoneAction => ({ type: "use", by: "ann", unit: "ann", ability, ...aim });
-  const has = (state: ZoneState, id: string, kind: string) => unit(state, id).conditions.some((c) => c.kind === kind);
   const hurt = (state: ZoneState, id: string) => unit(state, id).maxHp - unit(state, id).hp;
 
   it("are all in the Sage's pool", () => {
@@ -4106,7 +4043,8 @@ describe("the Sage's stars", () => {
     state = must(state, cast("chart_a_course", { at: at(13, 6) }));
     const move = 5;
     // Rock in the way along row 6 a hex past bo: the walk has to go round it, a step off the row and back.
-    for (const t of state.map.tiles) if (t.q === at(9, 6).q && t.r === 6) t.biome = "rock";
+    // (A new array with a new tile in it: a state's tiles are shared from step to step, so one is never changed where it lies.)
+    state.map.tiles = state.map.tiles.map((t) => (t.q === at(9, 6).q && t.r === 6 ? { ...t, biome: "rock" } : t));
     unit(state, "cy").pos = at(11, 2);
     const reach = zoneReach(state, unit(state, "bo"), move, undefined, { marks: [at(13, 6)], left: 3 });
     expect(reach.get(posKey(at(10, 6)))?.cost).toBeLessThan(3);
@@ -4193,13 +4131,6 @@ describe("the Warden's wall", () => {
     while (!["ann", "bo"].every((id) => state.encounter!.acting.includes(id))) state = must(state, { type: "timeout" });
     return { state, foes: ids };
   }
-  function nextTurn(state: ZoneState, sink: ZoneEvent[] = []): ZoneState {
-    for (const id of [...state.encounter!.acting]) if (!state.encounter!.done.includes(id) && !unit(state, id).down) state = must(state, { type: "end_turn", by: id, unit: id }, sink);
-    while (!state.encounter!.acting.includes("ann") || state.encounter!.done.includes("ann")) state = must(state, { type: "timeout" }, sink);
-    return state;
-  }
-  const use = (ability: string, aim: { target?: string; at?: HexPos } = {}): ZoneAction => ({ type: "use", by: "ann", unit: "ann", ability, ...aim });
-  const has = (state: ZoneState, id: string, kind: string) => unit(state, id).conditions.some((c) => c.kind === kind);
   const rock = (...hexes: HexPos[]) => (t: Tile) => { if (hexes.some((p) => p.q === t.q && p.r === t.r)) t.biome = "rock"; };
 
   it("are all in the Warden's pool, and on none of its weapons", () => {
@@ -4283,7 +4214,7 @@ describe("the Warden's wall", () => {
       for (const u of [unit(state, "ann"), unit(state, foes[0])]) expect(stepCost(state, u, { q: p.q - 1, r: p.r }, p).cost).toBe(Infinity);
     }
     // Out of reach, and nowhere to raise it.
-    expect(fails(state, use("fortify", { at: at(11, 6) }))).toBeTruthy();
+    expect(fails(state, use("fortify", { at: at(11, 6) }))).toMatch(/Out of range/);
     ({ state } = party([at(8, 6)]));
     expect(fails(state, use("fortify", { at: at(8, 6) }))).toMatch(/room/);
   });
@@ -4407,13 +4338,6 @@ describe("the Warlock's drowning", () => {
     while (!["ann", "bo"].every((id) => state.encounter!.acting.includes(id))) state = must(state, { type: "timeout" });
     return { state, foes: ids };
   }
-  function nextTurn(state: ZoneState, sink: ZoneEvent[] = []): ZoneState {
-    for (const id of [...state.encounter!.acting]) if (!state.encounter!.done.includes(id) && !unit(state, id).down) state = must(state, { type: "end_turn", by: unit(state, id).controller ?? id, unit: id }, sink);
-    while (!state.encounter!.acting.includes("ann") || state.encounter!.done.includes("ann")) state = must(state, { type: "timeout" }, sink);
-    return state;
-  }
-  const use = (ability: string, aim: { target?: string; at?: HexPos } = {}): ZoneAction => ({ type: "use", by: "ann", unit: "ann", ability, ...aim });
-  const has = (state: ZoneState, id: string, kind: string) => unit(state, id).conditions.some((c) => c.kind === kind);
   const cond = (state: ZoneState, id: string, kind: string) => unit(state, id).conditions.find((c) => c.kind === kind);
   const stacks = (state: ZoneState, id: string) => cond(state, id, "drowning")?.amount ?? 0;
   const sailors = (state: ZoneState) => state.units.filter((u) => u.summon?.by === "ann");
@@ -4540,7 +4464,7 @@ describe("the Warlock's drowning", () => {
     expect(has(state, foes[2], "red_sky")).toBe(false);
     expect(has(state, "bo", "red_sky")).toBe(false);
     expect(attackContext(state, unit(state, foes[0]), unit(state, "bo"), { melee: true }).adv).toBe(-1);
-    expect(fails(state, { ...use("red_sky_at_morning", { at: at(11, 6) }) })).toBeTruthy();
+    expect(fails(state, { ...use("red_sky_at_morning", { at: at(11, 6) }) })).toMatch(/Out of range/);
   });
 
   it("Unholy Waters: a Bonus action, 5 hexes, 2 turns to wait; water over 7 hexes, but fire under each enemy in them", () => {
@@ -4589,7 +4513,9 @@ describe("the Warlock's drowning", () => {
     let { state } = party([at(13, 6)]);
     // Rock all round the hex but one side, and that side is the Mage's: no room for the second.
     const walled = party([at(13, 6)], { bo: at(6, 6) }).state;
-    for (const p of hexNeighbors(at(7, 6), walled.map.grid)) if (posKey(p) !== posKey(at(6, 6))) walled.map.tiles.find((t) => t.q === p.q && t.r === p.r)!.biome = "rock";
+    // (New tiles in a new array: a state's tiles are shared from step to step, so one is never changed where it lies.)
+    const round = new Set(hexNeighbors(at(7, 6), walled.map.grid).map(posKey).filter((key) => key !== posKey(at(6, 6))));
+    walled.map.tiles = walled.map.tiles.map((t) => (round.has(posKey(t)) ? { ...t, biome: "rock" } : t));
     expect(fails(walled, use("summon_sunken_sailors", { at: at(7, 6) }))).toMatch(/room for them all/);
     state = must(state, use("summon_sunken_sailors", { at: at(8, 6) }));
     const first = sailors(state).map((u) => u.id);
@@ -4729,18 +4655,6 @@ describe("Mage weapons", () => {
 });
 
 describe("Rogue weapons", () => {
-  /** The action tried on fresh seeds until it hits `target`: the state after, and what it said. */
-  const untilHit = (state: ZoneState, action: ZoneAction, target: string) => {
-    for (let seed = 1; seed < 80; seed++) {
-      const tryState = structuredClone(state);
-      tryState.rng = seed;
-      const events: ZoneEvent[] = [];
-      const next = must(tryState, action, events);
-      if (events.some((e) => e.t === "hit" && e.target === target)) return { state: next, events };
-    }
-    throw new Error("never landed");
-  };
-
   it("gives each weapon two abilities of its own, the second once a turn, Eviscerate longer", () => {
     expect(WEAPONS.daggers.abilities).toEqual(["stab", "eviscerate"]);
     expect(WEAPONS.shortbow.abilities).toEqual(["bow_shot", "take_aim"]);
@@ -4908,18 +4822,6 @@ describe("Druid weapons", () => {
 });
 
 describe("Bard weapons", () => {
-  /** The action tried on fresh seeds until it hits `target`: the state after, and what it said. */
-  const untilHit = (state: ZoneState, action: ZoneAction, target: string) => {
-    for (let seed = 1; seed < 80; seed++) {
-      const tryState = structuredClone(state);
-      tryState.rng = seed;
-      const events: ZoneEvent[] = [];
-      const next = must(tryState, action, events);
-      if (events.some((e) => e.t === "hit" && e.target === target)) return { state: next, events };
-    }
-    throw new Error("never landed");
-  };
-
   it("gives each weapon two abilities, the second once a turn, the Pipe's Soothing Tone and the Bell's Clarion Call longer", () => {
     expect(WEAPONS.lute.abilities).toEqual(["dissonance", "encore"]);
     expect(WEAPONS.flute.abilities).toEqual(["blasting_tone", "soothing_tone"]);
@@ -5073,20 +4975,6 @@ describe("Bard weapons", () => {
 });
 
 describe("Sage weapons", () => {
-  /** The action tried on fresh seeds until it hits `target`: the state after, and what it said. */
-  const untilHit = (state: ZoneState, action: ZoneAction, target: string, want: (events: ZoneEvent[]) => boolean = () => true) => {
-    for (let seed = 1; seed < 120; seed++) {
-      const tryState = structuredClone(state);
-      tryState.rng = seed;
-      const events: ZoneEvent[] = [];
-      const next = must(tryState, action, events);
-      if (events.some((e) => e.t === "hit" && e.target === target) && want(events)) return { state: next, events };
-    }
-    throw new Error("never landed");
-  };
-  const failedSave = (events: ZoneEvent[]) => events.some((e) => e.t === "roll" && e.roll.kind === "save" && !e.roll.ok);
-  const savedAll = (events: ZoneEvent[]) => events.some((e) => e.t === "roll" && e.roll.kind === "save") && !failedSave(events);
-
   it("gives the orb and scepter two abilities each, with St. Elmo's Fire and Rust Armor on a longer cooldown", () => {
     expect(WEAPONS.orb.abilities).toEqual(["starbeam", "st_elmos_fire"]);
     expect(WEAPONS.scepter.abilities).toEqual(["water_burst", "rust_armor"]);
@@ -5188,20 +5076,6 @@ describe("Sage weapons", () => {
 });
 
 describe("Warden weapons", () => {
-  /** The action tried on fresh seeds until it hits `target` and `want` holds: the state after, and what it said. */
-  const untilHit = (state: ZoneState, action: ZoneAction, target: string, want: (events: ZoneEvent[]) => boolean = () => true) => {
-    for (let seed = 1; seed < 120; seed++) {
-      const tryState = structuredClone(state);
-      tryState.rng = seed;
-      const events: ZoneEvent[] = [];
-      const next = must(tryState, action, events);
-      if (events.some((e) => e.t === "hit" && e.target === target) && want(events)) return { state: next, events };
-    }
-    throw new Error("never landed");
-  };
-  const failedSave = (events: ZoneEvent[]) => events.some((e) => e.t === "roll" && e.roll.kind === "save" && !e.roll.ok);
-  const savedAll = (events: ZoneEvent[]) => events.some((e) => e.t === "roll" && e.roll.kind === "save") && !failedSave(events);
-
   it("starts the Warden with the maul, and gives each weapon two abilities, the second once a turn, Guard and Throw Pike longer", () => {
     expect(HERO_CLASSES.find((c) => c.id === "sre_warden")!.weapons[0]).toBe("maul");
     expect(WEAPONS.maul.abilities).toEqual(["sturdy_blow", "stand_strong"]);
@@ -5395,16 +5269,6 @@ describe("Warlock weapons", () => {
 });
 
 describe("Ship's guns", () => {
-  const untilHit = (state: ZoneState, action: ZoneAction, target: string) => {
-    for (let seed = 1; seed < 80; seed++) {
-      const tryState = structuredClone(state);
-      tryState.rng = seed;
-      const events: ZoneEvent[] = [];
-      const next = must(tryState, action, events);
-      if (events.some((e) => e.t === "hit" && e.target === target)) return { state: next, events };
-    }
-    throw new Error("never landed");
-  };
   /** A Paladin on one hex and a dummy `gap` hexes off along the row. */
   const gap = (n: number) => {
     const d = duel("dummy", "qa_paladin", at(4, 6), at(4 + n, 6));

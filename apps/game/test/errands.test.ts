@@ -1,57 +1,12 @@
 // The pub's regulars against a real SQLite database with the game's
-// migrations applied, as in trade.test.ts: D1 is stood in for by Node's
-// built-in SQLite, and a batch is one transaction.
+// migrations applied (the stand-in for D1 in d1.ts, where a batch is one
+// transaction).
 
-import { readFileSync, readdirSync } from "node:fs";
-import { DatabaseSync } from "node:sqlite";
+import type { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ERRANDS_PER_DAY, HARBOR_XP_DAILY_CAP, RESOURCE_KINDS, TRADES_PER_DAY, errandFor, regularsOn, type Errand, type QuestGoal, type Resources } from "@gantt-quest/world";
 import { dropErrand, handInErrand, regularsView, takeErrand, tradeWithRegular, type ErrandPaid, type RegularsView } from "../src/server/errands";
-
-type Row = Record<string, unknown>;
-
-class Stmt {
-  constructor(private sql: DatabaseSync, private text: string, private args: unknown[] = []) {}
-  bind(...args: unknown[]) {
-    return new Stmt(this.sql, this.text, args);
-  }
-  exec() {
-    const stmt = this.sql.prepare(this.text);
-    if (/^\s*(SELECT|WITH)/i.test(this.text)) return { results: stmt.all(...(this.args as never[])) as Row[], meta: { changes: 0, last_row_id: 0 } };
-    const res = stmt.run(...(this.args as never[]));
-    return { results: [] as Row[], meta: { changes: Number(res.changes), last_row_id: Number(res.lastInsertRowid) } };
-  }
-  async run() {
-    return this.exec();
-  }
-  async all() {
-    return this.exec();
-  }
-  async first() {
-    return this.exec().results[0] ?? null;
-  }
-}
-
-function openDb() {
-  const sql = new DatabaseSync(":memory:");
-  const dir = new URL("../migrations/", import.meta.url);
-  for (const file of readdirSync(dir).sort()) sql.exec(readFileSync(new URL(file, dir), "utf8"));
-  const db = {
-    prepare: (text: string) => new Stmt(sql, text),
-    async batch(stmts: Stmt[]) {
-      sql.exec("BEGIN");
-      try {
-        const out = stmts.map((s) => s.exec());
-        sql.exec("COMMIT");
-        return out;
-      } catch (err) {
-        sql.exec("ROLLBACK");
-        throw err;
-      }
-    },
-  };
-  return { sql, db: db as unknown as D1Database };
-}
+import { addHero, openDb, type Row } from "./d1";
 
 const CREW = "CREWAA";
 let sql: DatabaseSync;
@@ -95,14 +50,7 @@ beforeEach(() => {
   vi.useFakeTimers({ toFake: ["Date"] });
   ({ sql, db } = openDb());
   const at = Date.UTC(2026, 9, 1);
-  for (const [id, name, crew] of [["ann", "Ann", CREW], ["bo", "Bo", CREW], ["cy", "Cy", null]] as const) {
-    sql.prepare("INSERT INTO players (id, name, created_at) VALUES (?, ?, ?)").run(id, name, at);
-    sql.prepare("INSERT INTO characters (player_id, name, class_id, status, str, int_stat, vit, agi, dex, gold, created_at) VALUES (?, ?, 'cleric', 'active', 5, 5, 5, 5, 5, 100, ?)").run(id, name, at);
-    if (crew) {
-      sql.prepare("INSERT OR IGNORE INTO crews (id, name, created_by, created_at) VALUES (?, ?, ?, ?)").run(crew, crew, id, at);
-      sql.prepare("INSERT INTO crew_members (crew_id, player_id, joined_at) VALUES (?, ?, ?)").run(crew, id, at);
-    }
-  }
+  for (const [id, name, crew] of [["ann", "Ann", CREW], ["bo", "Bo", CREW], ["cy", "Cy", null]] as const) addHero(sql, { id, name, classId: "cleric", crew, at });
 });
 afterEach(() => vi.useRealTimers());
 
@@ -305,14 +253,9 @@ describe("a quest", () => {
     if (goal === "give") {
       sql.prepare("INSERT INTO crew_project_gifts (crew_id, project_id, player_id, kind, qty, left_after, created_at) VALUES (?, 'smithy', 'ann', 'wood', 1, 0, ?)").run(CREW, at);
     }
-    if (goal === "voyage" || goal === "contract") {
-      sql.prepare("INSERT INTO runs (code, seed, status, created_by, created_at, updated_at) VALUES ('RUN1', 's', ?, 'ann', ?, ?)").run(goal === "voyage" ? "victory" : "defeat", at - 5000, at);
-      if (goal === "voyage") sql.prepare("INSERT INTO run_players (code, player_id, xp_earned, gold_earned) VALUES ('RUN1', 'ann', 10, 10)").run();
-      else sql.prepare("INSERT INTO run_contracts (code, player_id, contract_id, done, rewarded) VALUES ('RUN1', 'ann', 'swift', 1, 1)").run();
-    }
   }
 
-  for (const goal of ["rest", "give", "voyage", "contract"] as QuestGoal[]) {
+  for (const goal of ["rest", "give"] as QuestGoal[]) {
     it(`${goal}: counts only what is done after it is taken`, async () => {
       const { at, errand } = dayWhere((e) => e.kind === "quest" && e.goal === goal);
       if (errand.kind !== "quest") throw new Error();
@@ -324,7 +267,7 @@ describe("a quest", () => {
       expect((await view()).regulars.find((r) => r.regular === errand.regular)!.held).toMatchObject({ ready: false });
 
       vi.setSystemTime(at + 60_000);
-      sql.exec("DELETE FROM run_players; DELETE FROM run_contracts; DELETE FROM runs; DELETE FROM crew_project_gifts;");
+      sql.exec("DELETE FROM crew_project_gifts;");
       doDeed(goal, at + 30_000);
       expect((await view()).regulars.find((r) => r.regular === errand.regular)!.held).toMatchObject({ ready: true, problem: null });
       const res = paid(await handInErrand(db, "ann", errand.regular));
@@ -335,7 +278,7 @@ describe("a quest", () => {
   }
 
   it("is still held on a later day, and blocks a new job from the same regular until handed in", async () => {
-    const { at, errand } = dayWhere((e) => e.kind === "quest" && e.goal === "voyage");
+    const { at, errand } = dayWhere((e) => e.kind === "quest" && e.goal === "rest");
     vi.setSystemTime(at);
     await takeErrand(db, "ann", errand.regular);
     // The next day this regular is in with a job to take.
@@ -356,9 +299,21 @@ describe("a quest", () => {
     expect(here.held?.errand).toEqual(errand);
     expect(here.problem).toMatch(/Finish the job/);
     expect(await takeErrand(db, "ann", errand.regular)).toMatch(/Finish the job/);
-    doDeed("voyage", later);
+    doDeed("rest", later);
     vi.setSystemTime(later + 1);
     expect(typeof (await handInErrand(db, "ann", errand.regular))).toBe("object");
     expect(typeof (await takeErrand(db, "ann", errand.regular))).toBe("object");
+  });
+
+  it("lets go of a job held from before its kind was retired, once a new one is taken", async () => {
+    const { at, errand } = dayWhere((e) => e.kind === "quest");
+    vi.setSystemTime(at);
+    // Held since an earlier day: come home from a won voyage, which nothing can meet any more.
+    const old = { ...errand, id: `2026-01-01:${errand.regular}`, day: "2026-01-01", goal: "voyage" };
+    sql.prepare("INSERT INTO errands (player_id, regular, day, kind, errand_json, accepted_at) VALUES ('ann', ?, '2026-01-01', 'quest', ?, 1)").run(errand.regular, JSON.stringify(old));
+    const here = (await view()).regulars.find((r) => r.regular === errand.regular)!;
+    expect(here).toMatchObject({ held: null, problem: null });
+    expect(typeof (await takeErrand(db, "ann", errand.regular))).toBe("object");
+    expect(sql.prepare("SELECT day FROM errands WHERE player_id = 'ann'").all()).toEqual([{ day: new Date(at).toISOString().slice(0, 10) }]);
   });
 });

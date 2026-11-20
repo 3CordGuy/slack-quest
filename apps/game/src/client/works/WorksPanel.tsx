@@ -281,7 +281,7 @@ export function WorksPanel({ works, refresh, onClose }: { works: HarborWorks | u
       setFetched(res.works);
       setStock(res.stock);
       const xp = res.xp?.text ? ` ${res.xp.text}` : "";
-      setNotice((res.completed ? `The ${def.name} is built! The whole crew has it from the next voyage.` : `You gave ${projectAmountsText(amounts)} to the ${def.name}.`) + xp);
+      setNotice((res.completed ? `The ${def.name} is built! It stands in the Harbor for the whole crew.` : `You gave ${projectAmountsText(amounts)} to the ${def.name}.`) + xp);
       // Gold left the character sheet too.
       void refresh();
       return null;

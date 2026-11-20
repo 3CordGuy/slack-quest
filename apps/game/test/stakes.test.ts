@@ -1,67 +1,19 @@
 // Table stakes on the server, against a real SQLite database with the game's
-// migrations applied (the same stand-in for D1 as fishing.test.ts): a table
+// migrations applied (the stand-in for D1 in d1.ts): a table
 // opens free or at any whole stake up to STAKE_MAX, a free game moves no gold
 // at the start or the end, and a stake the seats cannot cover is refused.
 
-import { readFileSync, readdirSync } from "node:fs";
-import { DatabaseSync } from "node:sqlite";
+import type { DatabaseSync } from "node:sqlite";
 import { beforeEach, describe, expect, it } from "vitest";
 import { STAKE_MAX, diceSplit, type DiceRequest, type HarborPlayer } from "@gantt-quest/world";
 import type { Env } from "../src/server/db";
 import { DICE_RULES, StakeTable } from "../src/server/stake-table";
-
-type Row = Record<string, unknown>;
-
-class Stmt {
-  constructor(private sql: DatabaseSync, private text: string, private args: unknown[] = []) {}
-  bind(...args: unknown[]) {
-    return new Stmt(this.sql, this.text, args);
-  }
-  exec() {
-    const stmt = this.sql.prepare(this.text);
-    if (/^\s*(SELECT|WITH)/i.test(this.text)) return { results: stmt.all(...(this.args as never[])) as Row[], meta: { changes: 0, last_row_id: 0 } };
-    const res = stmt.run(...(this.args as never[]));
-    return { results: [] as Row[], meta: { changes: Number(res.changes), last_row_id: Number(res.lastInsertRowid) } };
-  }
-  async run() {
-    return this.exec();
-  }
-  async all() {
-    return this.exec();
-  }
-  async first() {
-    return this.exec().results[0] ?? null;
-  }
-}
-
-function openDb() {
-  const sql = new DatabaseSync(":memory:");
-  const dir = new URL("../migrations/", import.meta.url);
-  for (const file of readdirSync(dir).sort()) sql.exec(readFileSync(new URL(file, dir), "utf8"));
-  const db = {
-    prepare: (text: string) => new Stmt(sql, text),
-    async batch(stmts: Stmt[]) {
-      sql.exec("BEGIN");
-      try {
-        const out = stmts.map((s) => s.exec());
-        sql.exec("COMMIT");
-        return out;
-      } catch (err) {
-        sql.exec("ROLLBACK");
-        throw err;
-      }
-    },
-  };
-  return { sql, db: db as unknown as D1Database };
-}
+import { addHero, openDb } from "./d1";
 
 let sql: DatabaseSync;
 let db: D1Database;
 
-function addPlayer(id: string, name: string, gold: number) {
-  sql.prepare("INSERT INTO players (id, name, created_at) VALUES (?, ?, 0)").run(id, name);
-  sql.prepare("INSERT INTO characters (player_id, name, class_id, status, str, int_stat, vit, agi, dex, gold, created_at) VALUES (?, ?, 'cleric', 'active', 5, 5, 5, 5, 5, ?, 0)").run(id, name, gold);
-}
+const addPlayer = (id: string, name: string, gold: number) => addHero(sql, { id, name, classId: "cleric", gold, at: 0 });
 const gold = (id: string) => (sql.prepare("SELECT gold FROM characters WHERE player_id = ?").get(id) as { gold: number }).gold;
 /** Harbor XP used today, or 0 with no record. */
 const harborXp = (id: string) => (sql.prepare("SELECT used FROM harbor_xp WHERE player_id = ?").get(id) as { used: number } | undefined)?.used ?? 0;

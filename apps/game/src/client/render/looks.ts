@@ -111,7 +111,7 @@ export const LOOKS: Record<string, Look> = {
   regular_wen: { skin: "#c9a27c", hair: "#5a3d22", body: "#d8cfb4", legs: "#4a3a26", accent: "#e8dcc0", hat: "none", weapon: "club", bandana: "#5a3d22", sleeveless: true, apron: "#8a6440", boots: "#3a2c22" },
   regular_moss: { skin: "#f1c9a5", hair: "#ececec", body: "#3f6fa8", legs: "#2d357a", accent: "#f2d675", hat: "brim", hatColor: "#d1a83c", weapon: "lantern", coat: true, coatColor: "#d1a83c", coatTrim: "#a8862a", mustache: "bushy", boots: "#2a2420" },
   regular_dacey: { skin: "#b07a52", hair: "#1a1424", body: "#3a3030", legs: "#1f1f1f", accent: "#b9433d", hat: "none", weapon: "pack", bandana: "#b9433d", coat: true, coatColor: "#20242b", coatTrim: "#141820", straps: "#3a2a1c", boots: "#141414" },
-  // The contract dealer by the pillar in the pub (packages/world/src/pub.ts): a broker in a long coat with a scroll of terms.
+  // The dealer by the pillar in the pub (packages/world/src/pub.ts): a broker in a long coat with a scroll of terms.
   dealer: { skin: "#e3b48c", hair: "#3a2a20", body: "#e3dccb", legs: "#2a2228", accent: "#e0b12e", hat: "brim", hatColor: "#2a2228", weapon: "scroll", coat: true, coatColor: "#6b1f2a", coatTrim: "#c9a24a", vest: "#3a1418", boots: "#1f1a1c" },
   // The keepers of the smithy and the apothecary (packages/world/src/keepers.ts): the smith bare-armed in a leather apron
   // with her forging hammer, a red kerchief knotted at the side keeping her hair out of the fire; the apothecary in a long green coat and hood

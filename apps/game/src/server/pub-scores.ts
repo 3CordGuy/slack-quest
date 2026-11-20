@@ -6,7 +6,6 @@
 import { crewFor } from "./db";
 
 export type PubGame = "dice" | "shoals" | "crew" | "tide";
-export const PUB_GAMES: readonly PubGame[] = ["dice", "shoals", "crew", "tide"];
 
 /** How a game ended, as the board needs to know it. */
 export interface PubResult {

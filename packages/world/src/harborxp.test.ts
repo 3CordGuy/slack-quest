@@ -6,14 +6,12 @@ import {
   GATHER_MAX_UNITS,
   HARBOR_XP,
   HARBOR_XP_DAILY_CAP,
-  SPAR_XP_DAILY_BOUTS,
   gatherDay,
   gatherXp,
   harborXpAward,
   harborXpLeft,
   harborXpStatus,
   harborXpText,
-  sparBoutsLeft,
   xpToNext,
   type HarborXpRecord,
   type Progress,
@@ -43,10 +41,6 @@ describe("what the pastimes pay", () => {
   it("pays nothing for an outing still under way", () => {
     expect(gatherXp({ status: "active", haul: {} }, 3)).toBe(0);
   });
-
-  it("caps a day at a fraction of one won voyage (150 to 200 XP)", () => {
-    expect(HARBOR_XP_DAILY_CAP).toBeLessThanOrEqual(40);
-  });
 });
 
 describe("the daily cap", () => {
@@ -61,7 +55,7 @@ describe("the daily cap", () => {
   it("gives the whole amount while there is room", () => {
     const a = harborXpAward(hero(), null, 5, NOON);
     expect(a.granted).toBe(5);
-    expect(a.record).toEqual({ day: gatherDay(NOON), used: 5, spars: 0 });
+    expect(a.record).toEqual({ day: gatherDay(NOON), used: 5 });
     expect(a.next.xp).toBe(5);
   });
 
@@ -82,37 +76,16 @@ describe("the daily cap", () => {
   });
 
   it("opens again the next day", () => {
-    const full: HarborXpRecord = { day: gatherDay(NOON), used: HARBOR_XP_DAILY_CAP, spars: SPAR_XP_DAILY_BOUTS };
+    const full: HarborXpRecord = { day: gatherDay(NOON), used: HARBOR_XP_DAILY_CAP };
     const a = harborXpAward(hero(), full, 4, TOMORROW);
     expect(a.granted).toBe(4);
-    expect(a.record).toEqual({ day: gatherDay(TOMORROW), used: 4, spars: 0 });
+    expect(a.record).toEqual({ day: gatherDay(TOMORROW), used: 4 });
   });
 
   it("ignores nonsense amounts", () => {
     expect(harborXpAward(hero(), null, -5, NOON).granted).toBe(0);
     expect(harborXpAward(hero(), null, Number.NaN, NOON).granted).toBe(0);
     expect(harborXpAward(hero(), null, 3.9, NOON).granted).toBe(3);
-  });
-});
-
-describe("sparring", () => {
-  it("counts only the first few bouts a day", () => {
-    let record: HarborXpRecord | null = null;
-    const paid: number[] = [];
-    for (let i = 0; i < SPAR_XP_DAILY_BOUTS + 2; i++) {
-      const a = harborXpAward(hero(), record, HARBOR_XP.spar, NOON, true);
-      paid.push(a.granted);
-      record = a.record;
-    }
-    expect(paid.slice(0, SPAR_XP_DAILY_BOUTS).every((n) => n === HARBOR_XP.spar)).toBe(true);
-    expect(paid.slice(SPAR_XP_DAILY_BOUTS)).toEqual([0, 0]);
-    expect(sparBoutsLeft(record, NOON)).toBe(0);
-    expect(sparBoutsLeft(record, TOMORROW)).toBe(SPAR_XP_DAILY_BOUTS);
-  });
-
-  it("does not use up the spar allowance with other pastimes", () => {
-    const a = harborXpAward(hero(), null, HARBOR_XP.craft, NOON);
-    expect(a.record.spars).toBe(0);
   });
 });
 
@@ -148,16 +121,16 @@ describe("the result line", () => {
   });
 
   it("gives a bonus (perfect splits) whatever the cap, without using any of the day's", () => {
-    const full: HarborXpRecord = { day: gatherDay(NOON), used: HARBOR_XP_DAILY_CAP, spars: 0 };
-    const capped = harborXpAward(hero(), full, 6, NOON, false, 3);
+    const full: HarborXpRecord = { day: gatherDay(NOON), used: HARBOR_XP_DAILY_CAP };
+    const capped = harborXpAward(hero(), full, 6, NOON, 3);
     expect(capped.granted).toBe(0);
     expect(capped.bonus).toBe(3);
     expect(capped.next.xp).toBe(hero().xp + 3);
     expect(capped.record.used).toBe(HARBOR_XP_DAILY_CAP);
-    const fresh = harborXpAward(hero(), null, 6, NOON, false, 2);
+    const fresh = harborXpAward(hero(), null, 6, NOON, 2);
     expect(fresh.granted).toBe(6);
     expect(fresh.record.used).toBe(6);
     expect(fresh.next.xp).toBe(hero().xp + 8);
-    expect(harborXpAward(hero(), null, 0, NOON, false, Number.NaN).bonus).toBe(0);
+    expect(harborXpAward(hero(), null, 0, NOON, Number.NaN).bonus).toBe(0);
   });
 });

@@ -1,23 +1,19 @@
-// The apothecary and the smithy in D1: a hero's brew bag, brewing (for the
-// next voyage, and potions and flasks for the pack), working gear at the
-// forge, and what the keepers (those two, and the galley's cook) sell from
-// their own stock for gold, with the prices a customer talked them down to
-// (the foot of this file). Cooking itself is in galley.ts.
+// The apothecary and the smithy in D1: making potions and flasks for the
+// pack, working gear at the forge, and what the two keepers sell from their
+// own stock for gold, with the prices a customer talked them down to (the
+// foot of this file). The galley has only its room: whether it is built.
 //
 // The rules (recipes, costs, the +3 cap) live in packages/world/src/apothecary.ts
 // and smithy.ts. Each purchase here is one batch built on `spendStatements`:
-// the gold and materials are taken, and the brew or the upgrade is written,
+// the gold and materials are taken, and the flask or the upgrade is written,
 // together or not at all. The checks are made again inside the batch, so two
 // requests at once cannot both pay for the same thing.
 
 import {
   APOTHECARY_PROJECT,
-  DISHES,
   FLASK_RECIPES,
   GALLEY_PROJECT,
   KEEPER_PLACES,
-  POT_DAILY,
-  POT_PRICES,
   flaskYield,
   SHELF_DAILY,
   SHELF_PRICES,
@@ -25,9 +21,6 @@ import {
   THROWABLES,
   THROWABLE_KINDS,
   addedSlots,
-  brewBag,
-  brewById,
-  brewProblem,
   carryProblem,
   flaskProblem,
   forgeKey,
@@ -40,7 +33,6 @@ import {
   haggledPrice,
   isKeeperShop,
   itemCells,
-  potKey,
   shelfKey,
   smithyCost,
   smithyProblem,
@@ -48,7 +40,6 @@ import {
   upgradedName,
   workKey,
   type Deal,
-  type DishId,
   type HaggleAsk,
   type ItemDef,
   type ItemKind,
@@ -64,7 +55,6 @@ import {
 import { consumablesOf, type Consumables } from "./consumables";
 import { prepareXp, xpOutcome, type XpResult } from "./harbor-xp";
 import { carryState, crewFor, getCharacter, packHasRoomSql, paidItemStatement, spendStatements } from "./db";
-import { galleyView, type GalleyView } from "./galley";
 import { builtProjectIds, projectStock } from "./projects";
 
 async function crewBuilt(db: D1Database, playerId: string, projectId: string): Promise<boolean> {
@@ -79,15 +69,8 @@ async function holdings(db: D1Database, playerId: string): Promise<{ gold: numbe
 
 // ---------- the apothecary ----------
 
-/** The brews a hero carries, at most one of each, in catalogue order. */
-export async function brewBagOf(db: D1Database, playerId: string): Promise<string[]> {
-  const rows = await db.prepare("SELECT brew_id FROM brews WHERE player_id = ?").bind(playerId).all<{ brew_id: string }>();
-  return brewBag(rows.results.map((r) => r.brew_id));
-}
-
 export interface ApothecaryView {
   built: boolean;
-  bag: string[];
   gold: number;
   resources: Resources;
   /** The potions, flasks and bombs already in the pack, and how full the pack is: the first of a kind needs a square. */
@@ -101,9 +84,8 @@ export interface ApothecaryView {
 
 export async function apothecaryView(db: D1Database, playerId: string): Promise<ApothecaryView> {
   const day = dealDay();
-  const [built, bag, held, carried, carry, c, deals] = await Promise.all([
+  const [built, held, carried, carry, c, deals] = await Promise.all([
     crewBuilt(db, playerId, APOTHECARY_PROJECT),
-    brewBagOf(db, playerId),
     holdings(db, playerId),
     consumablesOf(db, playerId),
     carryState(db, playerId),
@@ -122,7 +104,7 @@ export async function apothecaryView(db: D1Database, playerId: string): Promise<
       : carry ? carryProblem(carry, addedSlots(carried[kind] ?? 0, qty)) : null;
     return { key, goods: { kind: "flask", flask: kind, qty }, list: SHELF_PRICES[kind], price, deal: dealOf(row), left, problem };
   });
-  return { built, bag, gold: held.gold, resources: held.resources, carried, carry, wares, chances: haggleChances(c?.class_id ?? "") };
+  return { built, gold: held.gold, resources: held.resources, carried, carry, wares, chances: haggleChances(c?.class_id ?? "") };
 }
 
 /**
@@ -145,32 +127,6 @@ export async function brewFlask(db: D1Database, playerId: string, kind: string):
     ...(xp?.statements() ?? []),
   ]);
   return res[spend.length].meta.changes > 0 ? { xp: xpOutcome(xp, res) } : "You no longer have what that takes, or the room in your pack for it.";
-}
-
-/** Brew one thing into the bag. Returns an error message, or null once it is in the bag. */
-export async function brew(db: D1Database, playerId: string, brewId: string): Promise<string | { xp?: XpResult }> {
-  const view = await apothecaryView(db, playerId);
-  const problem = brewProblem(brewId, view);
-  if (problem) return problem;
-  const def = brewById(brewId)!;
-  // The bag is checked again inside the batch: a second brew of the same kind spends nothing.
-  const notCarried = `NOT EXISTS (SELECT 1 FROM brews WHERE player_id = ?1 AND brew_id = '${def.id}')`;
-  const spend = spendStatements(db, playerId, 0, def.recipe, notCarried);
-  const xp = await prepareXp(db, playerId, HARBOR_XP.brew);
-  const res = await db.batch([
-    ...spend,
-    db.prepare("INSERT INTO brews (player_id, brew_id, brewed_at) SELECT ?1, ?2, ?3 WHERE changes() > 0").bind(playerId, def.id, Date.now()),
-    ...(xp?.statements() ?? []),
-  ]);
-  return res[spend.length].meta.changes > 0 ? { xp: xpOutcome(xp, res) } : "You no longer have what that takes, or it is already in your bag.";
-}
-
-/** A voyage has sailed: the brews each hero took aboard are used up. Brews made since boarding stay in the bag. */
-export async function clearBrews(db: D1Database, heroes: { id: string; brews?: string[] }[]): Promise<void> {
-  const stmts = heroes
-    .filter((h) => h.brews && h.brews.length > 0)
-    .map((h) => db.prepare(`DELETE FROM brews WHERE player_id = ? AND brew_id IN (${h.brews!.map(() => "?").join(",")})`).bind(h.id, ...h.brews!));
-  if (stmts.length > 0) await db.batch(stmts);
 }
 
 // ---------- the smithy ----------
@@ -272,13 +228,24 @@ export async function smithItem(db: D1Database, playerId: string, itemId: unknow
   return res[spend.length].meta.changes > 0 ? { name: upgradedName(item.name, item.upgrades + 1), xp: xpOutcome(xp, res) } : "You no longer have what that costs.";
 }
 
+// ---------- the galley ----------
+
+/** The galley as someone standing in it sees it: only whether their crew has built it. The cook sells and makes nothing. */
+export interface GalleyView {
+  built: boolean;
+}
+
+export async function galleyView(db: D1Database, playerId: string): Promise<GalleyView> {
+  return { built: await crewBuilt(db, playerId, GALLEY_PROJECT) };
+}
+
 // ---------- the keepers: their own stock, and haggling ----------
 
 /** One thing a keeper sells from their own stock, as one customer sees it today. */
 export interface KeeperWare {
-  /** What it is bought and haggled over by: "flask:healing", "gear:2", "dish:chowder". */
+  /** What it is bought and haggled over by: "flask:healing", "gear:2". */
   key: string;
-  goods: { kind: "flask"; flask: Throwable; qty: number } | { kind: "item"; item: ItemDef } | { kind: "dish"; dish: DishId };
+  goods: { kind: "flask"; flask: Throwable; qty: number } | { kind: "item"; item: ItemDef };
   /** The price on the shelf. */
   list: number;
   /** What it costs this customer today, after any haggling. */
@@ -311,34 +278,8 @@ async function dealsOf(db: D1Database, playerId: string, shop: KeeperShop, day: 
   return new Map(rows.results.map((r) => [r.entry, { ask: haggleAsk(r.ask)?.id ?? null, pct: r.pct, bought: r.bought }]));
 }
 
-/** The galley as a customer standing in it sees it: the crew's larder and what they could cook, and what the cook sells ready-made. */
-export interface GalleyKeeperView extends GalleyView {
-  /** Dishes the cook sells made up, for gold, straight into the crew's larder. */
-  wares: KeeperWare[];
-  /** The chance, in percent, that he agrees to each ask from this hero. */
-  chances: Record<HaggleAsk, number>;
-}
-
-export async function galleyKeeperView(db: D1Database, playerId: string): Promise<GalleyKeeperView> {
-  const [view, c, deals] = await Promise.all([galleyView(db, playerId), getCharacter(db, playerId), dealsOf(db, playerId, "galley", dealDay())]);
-  const wares = DISHES.map((d): KeeperWare => {
-    const key = potKey(d.id);
-    const row = deals.get(key);
-    const price = haggledPrice(POT_PRICES[d.id], row?.pct ?? 0);
-    const left = Math.max(0, POT_DAILY - (row?.bought ?? 0));
-    const problem = !view.inCrew ? "Join a crew first: the galley cooks for a crew's ship."
-      : !view.built ? "The crew has not built the galley yet."
-      : left <= 0 ? `That is all the ${d.plural} he will sell you today.`
-      : view.larder[d.id] >= d.cap ? `The larder already holds ${d.cap} ${d.plural}, as many as it takes.`
-      : view.gold < price ? "Not enough gold."
-      : null;
-    return { key, goods: { kind: "dish", dish: d.id }, list: POT_PRICES[d.id], price, deal: dealOf(row), left, problem };
-  });
-  return { ...view, wares, chances: haggleChances(c?.class_id ?? "") };
-}
-
 const keeperView = (db: D1Database, playerId: string, shop: KeeperShop) =>
-  shop === "apothecary" ? apothecaryView(db, playerId) : shop === "smithy" ? smithyView(db, playerId) : galleyKeeperView(db, playerId);
+  shop === "apothecary" ? apothecaryView(db, playerId) : smithyView(db, playerId);
 
 /**
  * Buy one thing from a keeper's own stock. Returns an error message, or what was had. The price is the
@@ -355,35 +296,11 @@ export async function buyFromKeeper(db: D1Database, playerId: string, shop: Keep
   const { goods } = ware;
   // Inlined into the spend, so only what the catalogue and the clock made: never the request's own text.
   if (!/^\d{4}-\d{2}-\d{2}$/.test(day) || !/^[a-z]+:[a-z0-9_]+$/.test(ware.key)) return "Not today.";
-  const limit = goods.kind === "flask" ? SHELF_DAILY : goods.kind === "dish" ? POT_DAILY : 1;
+  const limit = goods.kind === "flask" ? SHELF_DAILY : 1;
   const notSoldOut = `COALESCE((SELECT bought FROM keeper_deals WHERE player_id = ?1 AND shop = '${shop}' AND day = '${day}' AND entry = '${ware.key}'), 0) < ${limit}`;
   const counted = db
     .prepare("INSERT INTO keeper_deals (player_id, shop, day, entry, bought) SELECT ?1, ?2, ?3, ?4, 1 WHERE changes() > 0 ON CONFLICT(player_id, shop, day, entry) DO UPDATE SET bought = bought + 1")
     .bind(playerId, shop, day, ware.key);
-
-  if (goods.kind === "dish") {
-    // A dish goes into the crew's larder, not the pack: the galley still stands for this player's crew and the dish
-    // has room, checked again as the batch runs (as for cooking, in galley.ts).
-    const def = DISHES.find((d) => d.id === goods.dish)!;
-    const crewOf = "(SELECT crew_id FROM crew_members WHERE player_id = ?1)";
-    const larderOk = [
-      `EXISTS (SELECT 1 FROM crew_projects WHERE crew_id = ${crewOf} AND project_id = '${GALLEY_PROJECT}' AND built_at IS NOT NULL)`,
-      `COALESCE((SELECT qty FROM galley_larder WHERE crew_id = ${crewOf} AND dish_id = '${def.id}'), 0) < ${def.cap}`,
-    ].join(" AND ");
-    const spend = spendStatements(db, playerId, ware.price, {}, `${notSoldOut} AND ${larderOk}`);
-    const res = await db.batch([
-      ...spend,
-      counted,
-      db
-        .prepare(
-          `INSERT INTO galley_larder (crew_id, dish_id, qty) SELECT crew_id, ?2, 1 FROM crew_members WHERE player_id = ?1 AND changes() > 0
-           ON CONFLICT (crew_id, dish_id) DO UPDATE SET qty = qty + 1`,
-        )
-        .bind(playerId, def.id),
-    ]);
-    if (res[res.length - 1].meta.changes === 0) return "You no longer have the gold for that, or the larder has filled.";
-    return { got: def.name };
-  }
 
   const carry = shop === "apothecary" ? (view as ApothecaryView).carry : await carryState(db, playerId);
   const cells = goods.kind === "flask" ? addedSlots((view as ApothecaryView).carried[goods.flask] ?? 0, goods.qty) : itemCells(goods.item);

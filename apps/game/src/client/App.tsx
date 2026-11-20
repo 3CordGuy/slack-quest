@@ -34,6 +34,10 @@ const adminFromHash = () => location.hash === "#admin";
 const catchesFromHash = () => location.hash === "#catches";
 const hutFromHash = () => /^#hut\/([A-Za-z0-9-]{1,64})$/.exec(location.hash)?.[1] ?? null;
 const inviteFromHash = () => /^#crew\/([A-Za-z]{6})$/.exec(location.hash)?.[1].toUpperCase() ?? null;
+/** Never shown to an ordinary player (the admin page, the catch gallery, the dev toolbox), so fetched only when one is opened. */
+const AdminView = lazy(() => import("./admin/AdminView").then((m) => ({ default: m.AdminView })));
+const CatchGallery = lazy(() => import("./CatchGallery").then((m) => ({ default: m.CatchGallery })));
+const DevToolbox = lazy(() => import("./DevToolbox").then((m) => ({ default: m.DevToolbox })));
 /** A bench for the fight interface with made-up data (development only): #lab/fightui. */
 const FightUiLab = import.meta.env.DEV ? lazy(() => import("./zone/FightUiLab")) : null;
 /** A sample map carrying every kind of zone scenery, in any climate and over any backdrop (development only): #lab/scenery. */
@@ -86,7 +90,7 @@ export function App() {
   return (
     <>
       <Screen me={me} refresh={refresh} zone={zone} atlas={atlas} invite={invite} hut={hut} pub={pub} keeper={keeper} admin={admin} catches={catches} />
-      {me.devTools && <DevToolbox me={me} refresh={refresh} />}
+      {me.devTools && <Suspense fallback={null}><DevToolbox me={me} refresh={refresh} /></Suspense>}
     </>
   );
 }

@@ -1,38 +1,15 @@
 // Gear put on or taken off in the sea bag is shown before the server answers (client/wearAhead.ts). Here the
 // rule the bag shows it by is held against the server's own (equipItem and unequipItem, on a real SQLite
-// database with the game's migrations): after any run of changes the two agree on what is worn and what is
+// database with the game's migrations, d1.ts): after any run of changes the two agree on what is worn and what is
 // hidden. Also covered: a refused change goes back when it comes off the list, and which look is drawn for
 // your own hero while the room they stand in has yet to hear.
 
-import { readFileSync, readdirSync } from "node:fs";
-import { DatabaseSync } from "node:sqlite";
+import type { DatabaseSync } from "node:sqlite";
 import { beforeEach, describe, expect, it } from "vitest";
 import { makeRng, outfitKey, outfitOf, type ItemDef, type Outfit } from "@gantt-quest/world";
 import { equipItem, getInventory, insertItem, setGearHidden, unequipItem } from "../src/server/db";
 import { LOOK_HOLD_MS, lookToDraw, wornAhead, type LookAhead, type WearChange } from "../src/client/wearAhead";
-
-type Row = Record<string, unknown>;
-class Stmt {
-  constructor(private sql: DatabaseSync, private text: string, private args: unknown[] = []) {}
-  bind(...args: unknown[]) {
-    return new Stmt(this.sql, this.text, args);
-  }
-  exec() {
-    const stmt = this.sql.prepare(this.text);
-    if (/^\s*(SELECT|WITH)/i.test(this.text)) return { results: stmt.all(...(this.args as never[])) as Row[], meta: { changes: 0, last_row_id: 0 } };
-    const res = stmt.run(...(this.args as never[]));
-    return { results: [] as Row[], meta: { changes: Number(res.changes), last_row_id: Number(res.lastInsertRowid) } };
-  }
-  async run() {
-    return this.exec();
-  }
-  async all() {
-    return this.exec();
-  }
-  async first() {
-    return this.exec().results[0] ?? null;
-  }
-}
+import { addHero, openDb } from "./d1";
 
 let sql: DatabaseSync;
 let db: D1Database;
@@ -42,13 +19,8 @@ const piece = (ref: string, slot: ItemDef["slot"], extra: Partial<ItemDef> = {})
 const state = (rows: { id: number; equipped: number; hidden?: number }[]) => rows.map((r) => [r.id, r.equipped ? 1 : 0, r.hidden ? 1 : 0]);
 
 beforeEach(async () => {
-  sql = new DatabaseSync(":memory:");
-  const dir = new URL("../migrations/", import.meta.url);
-  for (const file of readdirSync(dir).sort()) sql.exec(readFileSync(new URL(file, dir), "utf8"));
-  db = { prepare: (text: string) => new Stmt(sql, text), batch: async (stmts: Stmt[]) => stmts.map((s) => s.exec()) } as unknown as D1Database;
-  const at = Date.now();
-  sql.prepare("INSERT INTO players (id, name, created_at) VALUES ('ann', 'Ann', ?)").run(at);
-  sql.prepare("INSERT INTO characters (player_id, name, class_id, status, level, str, int_stat, vit, agi, dex, gold, created_at) VALUES ('ann', 'Ann', 'qa_paladin', 'active', 3, 9, 4, 9, 4, 4, 100, ?)").run(at);
+  ({ sql, db } = openDb());
+  addHero(sql, { id: "ann", name: "Ann", level: 3, str: 9, int_stat: 4, vit: 9, agi: 4, dex: 4 });
   // Two helms (one worn, and hidden), two pairs of boots (neither worn), a coat (worn), and a helm above her level.
   for (const [item, worn] of [[piece("hat", "helmet"), true], [piece("helm", "helmet"), false], [piece("shoes", "boots"), false], [piece("seaboots", "boots"), false], [piece("coat", "body"), true], [piece("crown", "helmet", { levelReq: 9 }), false]] as const) {
     await insertItem(db, "ann", item, worn).run();

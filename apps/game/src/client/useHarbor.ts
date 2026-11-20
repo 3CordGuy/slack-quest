@@ -11,26 +11,24 @@
 // that is what was shown needs nothing more; one that is not (another way,
 // or no walk where one was shown) is shown as the room has it, and
 // everything shown ahead of it is forgotten.
+//
+// The connection itself, and what every walk-in place's room says the same
+// way (who left, XP, looks, the chat), is useRoom.ts.
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { HexPos } from "@gantt-quest/core";
 import { HARBOR_NAME, generateHarbor, harborPath, type HarborBoard, type HarborClientMessage, type HarborPlayer, type HarborServerMessage, type Muster, type XpMessage } from "@gantt-quest/world";
 import { PROFILE } from "./api";
 import { useAwake } from "./awake";
-import { gaze } from "./gaze";
 import { answeredWalk } from "./harborAhead";
-
-export interface HarborChatLine {
-  name: string;
-  text: string;
-}
+import { useRoomPeople, useRoomSocket, type ChatLine } from "./useRoom";
 
 export interface HarborConnection {
   you: string | null;
   crew: { id: string; name: string } | null;
   players: HarborPlayer[];
   board: HarborBoard;
-  chat: HarborChatLine[];
+  chat: ChatLine[];
   /** "paused": closed while the player is away; it opens again when they are back. */
   status: "connecting" | "open" | "closed" | "paused";
   error: string | null;
@@ -41,7 +39,7 @@ export interface HarborConnection {
   send(message: HarborClientMessage): void;
 }
 
-const EMPTY: HarborBoard = { members: [], ships: [], log: [] };
+const EMPTY: HarborBoard = { members: [] };
 
 /** The Harbor's map, made once: the same one the room walks on. */
 let harborMap: ReturnType<typeof generateHarbor> | null = null;
@@ -59,19 +57,23 @@ export function useHarbor(onMoved: (id: string, path: HexPos[]) => void, onXp?: 
   const [trades, setTrades] = useState(0);
   const [muster, setMuster] = useState<Muster | null>(null);
   const awake = useAwake();
-  const socket = useRef<WebSocket | null>(null);
+  const people = useRoomPeople(onMoved, onXp, onSaid);
+  const { you, players, chat, setPlayers, walked } = people;
   /** Where your own hero stands, to ask for again after a pause. */
   const standing = useRef<HexPos | null>(null);
   standing.current = (you && players.find((p) => p.id === you)?.pos) || null;
-  const moved = useRef(onMoved);
-  moved.current = onMoved;
-  const xpSeen = useRef(onXp);
-  xpSeen.current = onXp;
-  const said = useRef(onSaid);
-  said.current = onSaid;
   /** What was shown for each of your own walks not yet answered by the room, oldest first (null: nothing), and where the last of them leaves your hero. */
   const ahead = useRef<(HexPos[] | null)[]>([]);
   const believed = useRef<{ id: string; pos: HexPos; vessel: HarborPlayer["vessel"] } | null>(null);
+  /**
+   * Walks asked for while the connection was still opening (stepping out of a building, coming home from a map:
+   * the Harbor is on the screen at once, a moment before its room answers). They are shown at the click, from
+   * where your hero stands, and sent when the room is there.
+   */
+  const waiting = useRef<HarborClientMessage[]>([]);
+  const post = useRef<(message: unknown) => boolean>(() => false);
+  /** The connection is on its way up. (Lost for good, or the player away, nothing is kept to send.) */
+  const opening = useRef(false);
   /** A walk, as it is shown: the walker is at its end, and the renderer plays the way there. */
   const showWalk = (id: string, path: HexPos[]) => {
     const end = path[path.length - 1];

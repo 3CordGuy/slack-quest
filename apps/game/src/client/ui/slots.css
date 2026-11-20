@@ -1,8 +1,5 @@
 /* Slot grids, stacks and the split prompt (ui/Slots.tsx), and the sea bag window built from them. */
 
-.slot-grid { display: grid; grid-template-columns: repeat(auto-fill, 56px); gap: 4px; align-content: start; padding: 8px; background: rgba(0, 0, 0, 0.28); border: 1px solid var(--rule); }
-.slot-grid.over { border-color: var(--good); background: rgba(127, 227, 166, 0.08); }
-.slot-grid .tile { width: 56px; height: 56px; }
 .slot-empty { display: block; }
 .slot-over { display: contents; }
 .slot-over .tile { outline: 2px dashed var(--bad); outline-offset: -4px; }
@@ -147,17 +144,6 @@
   .overlay .bag.chest-window, .overlay .bag.trade-window { margin-left: 0; }
   .bag-card.over-doll { left: 14px; right: 14px; top: auto; }
 }
-
-/* ---------- Trading: your pack above, the two sides of the offer below ---------- */
-.trade-sides { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
-.trade-side { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
-.trade-side h3 { margin: 0; }
-.trade-side .slot-grid, .trade-compose .slot-grid { grid-template-columns: repeat(auto-fill, 46px); }
-.trade-side .slot-grid .tile, .trade-compose .slot-grid .tile { width: 46px; height: 46px; }
-.trade-gold { display: flex; align-items: center; gap: 8px; }
-.trade-gold input { width: 110px; }
-.trade-asks { display: flex; flex-wrap: wrap; gap: 4px; }
-@media (max-width: 620px) { .trade-sides { grid-template-columns: 1fr; } }
 
 /* ---------- The trade table, open beside the bag ----------
    The chest's window in the chest's place: the other player's side above, yours below, each a grid like the

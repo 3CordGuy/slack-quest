@@ -12,6 +12,7 @@ import { nearWater } from "../src/client/audio/gameSounds";
 import { TakePicker, chooseTakes, curveAt, distanceGain, expandFiles, nextGap, placeSound, resolveName, slug, untilNextLine } from "../src/client/audio/select";
 import { synthIndex } from "../src/client/audio/synth";
 import { readWav } from "../scripts/audio/wav";
+import { memoryStorage } from "./browser";
 
 describe("sounds placed in the world", () => {
   it("pan by where they are on screen, whichever way the camera is turned", () => {
@@ -122,10 +123,6 @@ describe("sound names", () => {
     expect(soundName.impact("Aimed Shot", "ranged")).toEqual(["impact.aimed_shot", "impact.ranged", "impact"]);
     expect(soundName.down({ side: "enemy", kind: "wolf" })).toEqual(["enemy.wolf.down", "enemy.down", "down"]);
   });
-  it("sound rewards only for the hero they belong to", () => {
-    expect(soundName.world({ t: "gold", heroId: "a", amount: 5 }, "a")).toEqual(["gold"]);
-    expect(soundName.world({ t: "gold", heroId: "b", amount: 5 }, "a")).toBeNull();
-  });
   it("play the first name that has files", () => {
     expect(resolveName(["impact.firebolt", "impact.magic", "impact"], (n) => n === "impact.magic" || n === "impact")).toBe("impact.magic");
     expect(resolveName(["a", "b"], () => false)).toBeNull();
@@ -186,7 +183,7 @@ describe("the mix", () => {
   });
   it("saves only the sliders a player moved, so the rest follow new defaults", () => {
     const saved = new Map<string, string>();
-    const storage = { getItem: (k: string) => saved.get(k) ?? null, setItem: (k: string, v: string) => void saved.set(k, v), removeItem: (k: string) => void saved.delete(k) };
+    const storage = memoryStorage(saved);
     const defaults = structuredClone(AUDIO.mix);
     const mix = new MixStore(defaults, storage);
     expect(mix.volume("music")).toBe(defaults.music.volume);

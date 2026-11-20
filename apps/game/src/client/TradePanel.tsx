@@ -1,4 +1,4 @@
-// Trading with a crewmate, in the Harbor and on an island.
+// Trading with a crewmate, in the Harbor and on a map.
 //
 // `Trading` is mounted by any view where trading is allowed. It asks the
 // server for the player's open trades when it opens, and again whenever the
@@ -56,13 +56,11 @@ interface Props {
   onWith(id: string | null): void;
   /** Reload the player's character and inventory. */
   refresh(): Promise<unknown>;
-  /** The voyage this is shown on, when on an island. */
-  run?: string;
   /** Counts up when the place's connection hears that this player's trades changed. */
   nudge: number;
 }
 
-export function Trading({ me, partners, withId, onWith, refresh, run, nudge }: Props) {
+export function Trading({ me, partners, withId, onWith, refresh, nudge }: Props) {
   const [list, setList] = useState<TradeList | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   /** Your side of the open table as you have it, ahead of what the server has been told. */
@@ -123,7 +121,7 @@ export function Trading({ me, partners, withId, onWith, refresh, run, nudge }: P
     if (!withId) return;
     let live = true;
     setSaid(null);
-    api.openTrade(withId, run).then(
+    api.openTrade(withId).then(
       () => live && void load(),
       (e: Error) => {
         if (!live) return;
@@ -134,7 +132,7 @@ export function Trading({ me, partners, withId, onWith, refresh, run, nudge }: P
     return () => {
       live = false;
     };
-  }, [withId, run, load]);
+  }, [withId, load]);
 
   const open = list?.open ?? [];
   const table = withId ? open.find((t) => t.with.id === withId) : undefined;
@@ -258,7 +256,6 @@ export function Trading({ me, partners, withId, onWith, refresh, run, nudge }: P
           refresh={refresh}
           // Closing the screen walks away from the table.
           onClose={() => cancel(table)}
-          onIsland={!!run}
           trade={{
             with: table.with.name,
             // A change of yours that is still on its way has already taken both acceptances back.

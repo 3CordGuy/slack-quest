@@ -3,11 +3,12 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { BAR_ROW, BAR_SLOTS, COMMON_ORDER, ITEM_ORDER, defaultBar, loadBar } from "../src/client/zone/hotbar";
 import { RACK } from "../src/client/ui/rackArt";
+import { memoryStorage } from "./browser";
 
 const store = new Map<string, string>();
 beforeEach(() => {
   store.clear();
-  (globalThis as { localStorage?: unknown }).localStorage = { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => store.set(k, v) };
+  (globalThis as { localStorage?: unknown }).localStorage = memoryStorage(store);
 });
 afterEach(() => {
   delete (globalThis as { localStorage?: unknown }).localStorage;

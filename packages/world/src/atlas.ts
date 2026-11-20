@@ -86,8 +86,6 @@ export interface AtlasNode {
   links: string[];
 }
 
-export type AtlasNodeState = "harbor" | "cleared" | "open" | "fogged";
-
 /** A node as a crew is shown it. A fogged one is only somewhere a route leads: no name, no ground, nothing about what is there. */
 export type AtlasNodeView =
   | (AtlasNode & { state: "harbor" | "cleared" | "open" })

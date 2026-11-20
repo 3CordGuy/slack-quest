@@ -7,8 +7,6 @@
 .pub-menu { list-style: none; margin: 0 0 8px; padding: 0; display: flex; flex-direction: column; gap: 6px; }
 .pub-menu li { display: flex; align-items: center; justify-content: space-between; gap: 8px; border: 1px solid var(--line); padding: 6px 8px; }
 .pub-menu li > .grow { flex: 1; min-width: 0; }
-.pub-having { display: inline-flex; align-items: center; gap: 3px; vertical-align: middle; }
-.pub-menu li.having { border-color: var(--gold); }
 .pub-menu button { flex: none; min-width: 64px; }
 .pub-talk { max-height: 150px; overflow-y: auto; border: 1px solid var(--line); padding: 6px 8px; margin-bottom: 6px; display: flex; flex-direction: column; gap: 4px; }
 .pub-bar .row { display: flex; gap: 6px; }
@@ -47,7 +45,6 @@
 @media (max-width: 760px) {
   /* On a phone the camera eases the regular to the middle of the screen, so their panel docks at the bottom instead of covering them, over the "Here" bar. */
   .story.pub-bar.regular-panel:not(.folded) { top: auto; bottom: 8px; max-height: calc(46vh / var(--ui-z, 1)); z-index: 14; }
-  .pub-view:has(.regular-panel:not(.folded)) .turnbar { display: none; }
 }
 
 /* The leaderboard on the back wall (PubLeaderboard). Its body scrolls when the crew is long. */
@@ -73,5 +70,4 @@
   .pub-board-table th, .pub-board-table td { padding: 3px 4px; }
   /* Docked at the bottom, as a regular's panel is, clear of the folded panels at the top and of the board itself, over the "Here" bar. */
   .story.pub-bar.pub-board:not(.folded) { top: auto; bottom: 8px; max-height: calc(50vh / var(--ui-z, 1)); z-index: 14; }
-  .pub-view:has(.pub-board:not(.folded)) .turnbar { display: none; }
 }

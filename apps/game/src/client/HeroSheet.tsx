@@ -2,8 +2,7 @@
 // panel (a tap on the map is for walking, never for this). Their
 // level, HP, focus and XP, the five stats with what gear adds, what they wear
 // on the paper doll, their weapon's abilities, the class passive and what
-// their hut gives them. Works for anyone in your crew or on your voyage, and
-// for yourself.
+// their hut gives them. Works for anyone in your crew, and for yourself.
 
 import { useCallback, useEffect, useState } from "react";
 import {
@@ -16,7 +15,6 @@ import {
   STAT_BLURB,
   STAT_KEYS,
   STAT_LABEL,
-  WEAPONS,
   armorBlock,
   healthBand,
   maxFocusFor,
@@ -31,7 +29,6 @@ import type { StatKey } from "@gantt-quest/core";
 import { api, type Me } from "./api";
 import { LogbookButton } from "./Logbook";
 import { ChangeLook, LOOK_CHANGED } from "./ChangeLook";
-import { perkText } from "./hutDrops";
 import { Icon, ItemDetail, ItemTile } from "./items";
 import { blurb, itemName, label } from "./labels";
 import { spriteDataUrl, withLook } from "./render/sprites";
@@ -41,14 +38,6 @@ const LEFT: Slot[] = ["helmet", "body", "amulet", "ring"];
 const RIGHT: Slot[] = ["main_hand", "off_hand", "legs", "boots"];
 /** A sheet fetched this recently is shown as it is; older ones are fetched again (gear changes). */
 const FRESH_MS = 20_000;
-
-/** On a voyage, how they stand right now. Off one, everyone is rested: full HP and focus. */
-export interface LiveVitals {
-  hp: number;
-  maxHp: number;
-  focus: number;
-  maxFocus: number;
-}
 
 const cache = new Map<string, { at: number; hero: PublicHero }>();
 // A look saved anywhere (the wardrobe at home, too) makes every kept sheet stale.
@@ -89,13 +78,11 @@ interface Props {
   id: string;
   you: string;
   onClose(): void;
-  /** On a voyage: their HP and focus as they are now. */
-  live?: LiveVitals;
   /** Your own hero as the logbook reads them, and how to open it: a button on your own sheet. */
   logbook?: { hero: NonNullable<Me["character"]>; open(): void };
 }
 
-export function HeroSheet({ id, you, onClose, live, logbook }: Props) {
+export function HeroSheet({ id, you, onClose, logbook }: Props) {
   // Bumped after they save a new look, to read their sheet again (with any starting clothes they were given).
   const [reload, setReload] = useState(0);
   const { hero, error } = useHero(id, reload);
@@ -149,15 +136,15 @@ export function HeroSheet({ id, you, onClose, live, logbook }: Props) {
   const worn = new Map<Slot, ItemDef>(hero.gear.map((g) => [g.slot, g]));
   const total = (k: StatKey) => hero.base[k] + (hero.bonus[k] ?? 0);
   const stats = { str: total("str"), int_stat: total("int_stat"), vit: total("vit"), agi: total("agi"), dex: total("dex") };
-  const maxHp = live?.maxHp ?? maxHpFor(stats, hero.level);
-  const hp = live?.hp ?? maxHp;
-  const maxFocus = live?.maxFocus ?? maxFocusFor(hero.level);
-  const focus = live?.focus ?? maxFocus;
+  // Seen in town, everyone is rested: full HP and focus.
+  const maxHp = maxHpFor(stats, hero.level);
+  const hp = maxHp;
+  const maxFocus = maxFocusFor(hero.level);
+  const focus = maxFocus;
   const need = xpToNext(hero.level);
   const cls = HERO_CLASSES.find((c) => c.id === hero.classId);
   const weapon = worn.get("main_hand");
   const abilities = abilitiesFor(weapon?.kind === "weapon" ? weapon.ref : null);
-  const perks = perkText(hero.hutPerks);
   const pickedItem = picked ? worn.get(picked) : undefined;
 
   const slot = (s: Slot) => {
@@ -220,8 +207,8 @@ export function HeroSheet({ id, you, onClose, live, logbook }: Props) {
         </div>
         <button className="small" onClick={onClose} aria-label="Close">✕</button>
       </header>
-      {/* Your own look and name can be changed here, but not on a voyage. */}
-      {hero.id === you && !live && (
+      {/* Your own look and name can be changed here. */}
+      {hero.id === you && (
         <div className="hs-own-actions">
           <button type="button" className="small" onClick={() => setChanging(true)}>
             Change look
@@ -244,11 +231,11 @@ export function HeroSheet({ id, you, onClose, live, logbook }: Props) {
       )}
 
       <div className="hs-bars">
-        <div className="bar" title={live ? "Hit points on this voyage" : "Rested: every voyage starts at full HP"}>
+        <div className="bar" title="Rested: every map starts at full HP">
           <div className={`bar-fill hs-hp ${healthBand(hp / maxHp)}`} style={{ width: `${(100 * hp) / maxHp}%` }} />
           <span>{hp} / {maxHp} HP</span>
         </div>
-        <div className="bar" title={live ? "Focus left on this voyage" : "Rested: every voyage starts with full focus"}>
+        <div className="bar" title="Rested: every map starts with full focus">
           <div className="bar-fill hs-focus" style={{ width: `${(100 * focus) / Math.max(1, maxFocus)}%` }} />
           <span>{focus} / {maxFocus} focus</span>
         </div>
@@ -297,12 +284,6 @@ export function HeroSheet({ id, you, onClose, live, logbook }: Props) {
         <section>
           <h4>Passive</h4>
           <p className="muted">{cls.passive}</p>
-        </section>
-      )}
-      {perks && (
-        <section>
-          <h4>Hut</h4>
-          <p className="muted">{perks} on each voyage</p>
         </section>
       )}
     </aside>

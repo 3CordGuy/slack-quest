@@ -1,7 +1,6 @@
 name: Deploy game
 
-# Deploys the revamp (apps/game) to staging or production. Separate from
-# deploy.yml, which deploys the legacy apps/web and apps/slack on pushes to main.
+# Deploys the game (apps/game) to staging or production.
 #
 #   - Manual run (Actions tab, or `gh workflow run deploy-game.yml -f target=…`):
 #     either environment.

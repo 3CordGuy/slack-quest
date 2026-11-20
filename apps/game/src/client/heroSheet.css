@@ -50,11 +50,6 @@
 .hs-stat span:last-child { text-align: right; }
 .hs-sheet .detail { margin-top: 6px; }
 
-/* On a voyage, a sheet opened from the Crew cards sits beside them rather than on top of them. */
-@media (min-width: 900px) {
-  :has(> .crew:not(.roster-panel):not(.folded)) > .hs-sheet { right: 232px; }
-}
-
 /* A phone: a sheet along the bottom, over the map, short enough to keep most of it in view. */
 @media (max-width: 640px) {
   .hs-sheet {

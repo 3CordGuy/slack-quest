@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { BOOK_PAGES, BOOK_SLOTS, FISH, FISH_IDS, WATERS, bookPage, type FishDef } from "./fishcatalog";
+import { BOOK_PAGES, FISH, FISH_IDS, WATERS, bookPage, type FishDef } from "./fishcatalog";
 import { holdFight, idleFight, playFight } from "./fishbot";
 import { EXHAUSTED, FIGHT_MAX_EDGES, FIGHT_MAX_MS, FIGHT_TICK_MS, LINE_M, PULSE_MS, SPENT_REEL_MPS, TAP_MS, edgesProblem, fightEase, fightTick, makeFightScript, pressureAt, replayFight, startFight, type FightEase } from "./fishfight";
 import { FISH_SPOTS, HAUL_SHARE, castMetres, marketPrice, rollCatch, rollSize, tamPrice } from "./fishing";
@@ -16,14 +16,6 @@ function hooked(def: FishDef, seed: number, reach = 0.5) {
 }
 
 describe("the catalogue", () => {
-  it("fills the Catch Book's pages, with Old Ironjaw outside the count", () => {
-    const sizes = Object.fromEntries(BOOK_PAGES.map((p) => [p, bookPage(p).length]));
-    expect(sizes).toEqual({ shallows: 10, mouth: 10, deep: 11, sea: 10, strays: 3, flotsam: 14, bonus: 1 });
-    expect(FISH_IDS).toHaveLength(59);
-    expect(BOOK_SLOTS).toBe(58);
-    expect(bookPage("bonus")[0].id).toBe("ironjaw");
-  });
-
   it("gives every entry sane ranges, a shape and colours", () => {
     for (const f of Object.values(FISH)) {
       expect(f.lengthCm[0], f.id).toBeGreaterThan(0);

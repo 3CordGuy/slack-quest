@@ -2,11 +2,11 @@ import { describe, expect, it } from "vitest";
 import { GARB_HAT, LANTERN_HELM_ICON, parseGarbIcon, starterGarb, wearsLanternHelm } from "./gear";
 import { gearSheet } from "./hero";
 import {
+  ABILITIES,
   RARITIES,
   SLOTS,
   WEAPONS,
-  afterArmor,
-  createBattle,
+  abilitiesFor,
   equipProblem,
   itemPrice,
   kindOfSlot,
@@ -15,11 +15,11 @@ import {
   rollItem,
   sellPrice,
   shopStock,
-  stepBattle,
   weaponItem,
-  type Combatant,
   type ItemDef,
 } from "./index";
+
+const item = (over: Partial<ItemDef>): ItemDef => ({ kind: "armor", ref: "x", name: "x", rarity: "common", slot: "body", power: 0, statBonus: {}, levelReq: 1, icon: "chest-armor", ...over });
 
 describe("item generation", () => {
   it("always produces a well-formed item the class can use", () => {
@@ -82,8 +82,6 @@ describe("shop stock", () => {
 });
 
 describe("what gear does", () => {
-  const item = (over: Partial<ItemDef>): ItemDef => ({ kind: "armor", ref: "x", name: "x", rarity: "common", slot: "body", power: 0, statBonus: {}, levelReq: 1, icon: "chest-armor", ...over });
-
   it("adds up a loadout", () => {
     const loadout = loadoutOf([
       weaponItem("mace", "epic", 4, { str: 1 }),
@@ -94,35 +92,48 @@ describe("what gear does", () => {
     expect(loadout).toEqual({ weapon: "mace", weaponPower: 4, armor: 8, bonus: { str: 2, vit: 3, dex: 2 } });
     expect(loadoutOf([]).weapon).toBeNull();
   });
+});
 
-  it("blunts hits by armor, but never by more than half and never to zero", () => {
-    expect(afterArmor(8, 0)).toBe(8);
-    expect(afterArmor(8, 6)).toBe(6);
-    expect(afterArmor(8, 30)).toBe(4);
-    expect(afterArmor(1, 30)).toBe(1);
-    expect(afterArmor(0, 30)).toBe(0);
+describe("gearSheet", () => {
+  /** A paladin's real gear: a greatsword, a breastplate, a cap and a ring. */
+  const WORN: ItemDef[] = [
+    item({ kind: "weapon", ref: "greatsword", name: "Breakwater Greatsword", slot: "main_hand", power: 3, statBonus: { str: 2 }, icon: "greatsword" }),
+    item({ kind: "armor", ref: "plate", name: "Breastplate", slot: "body", power: 6, statBonus: { vit: 2 }, icon: "plate" }),
+    item({ kind: "armor", ref: "cap", name: "Cap", slot: "helmet", power: 2, icon: "cap" }),
+    item({ kind: "trinket", ref: "band", name: "Band", slot: "ring", statBonus: { agi: 1, vit: 1 }, icon: "band" }),
+  ];
+
+  it("sums what is worn", () => {
+    const sheet = gearSheet("qa_paladin", WORN);
+    expect(sheet.weapon).toBe("greatsword");
+    expect(sheet.weaponPower).toBe(3);
+    expect(sheet.armor).toBe(8);
+    expect(sheet.bonus).toEqual({ str: 2, vit: 3, agi: 1 });
+    expect(sheet.outfit?.main_hand?.ref).toBe("greatsword");
   });
 
-  it("changes a real fight: weapon power adds damage and armor reduces it", () => {
-    const hero = (over: Partial<Combatant>): Combatant => ({
-      id: "h", side: "hero", name: "h", kind: "qa_paladin", level: 1, hp: 60, maxHp: 60,
-      pct: { str: 100, vit: 100, agi: 100, dex: 100, int_stat: 100 }, power: 0, armor: 0, speed: 0,
-      focus: 0, potions: 0, abilities: ["bash"], effects: [], down: false, ...over,
-    });
-    const run = (over: Partial<Combatant>) => {
-      // Same seed both times, so enemy rolls are identical and only the gear differs.
-      const start = createBattle({ heroes: [hero(over)], enemyKinds: ["bandit"], avgLevel: 1, poiId: null }, makeRng(4));
-      const taken = start.events.filter((e) => e.t === "hit").reduce((a, e) => a + (e.t === "hit" ? e.amount : 0), 0);
-      const hit = stepBattle(start.state, "h", { type: "ability", ability: "bash", target: "e0" }, makeRng(4));
-      if (!hit.ok) throw new Error(hit.error);
-      const dealt = hit.events.find((e) => e.t === "hit" && e.actor === "h");
-      return { taken, dealt: dealt && dealt.t === "hit" ? dealt.amount : 0 };
-    };
-    const bare = run({});
-    const geared = run({ power: 3, armor: 9 });
-    expect(bare.taken).toBeGreaterThan(0);
-    expect(geared.taken).toBeLessThan(bare.taken);
-    expect(geared.dealt).toBe(bare.dealt + 3);
+  it("counts hidden gear but does not draw it", () => {
+    const sheet = gearSheet("qa_paladin", WORN.map((i) => (i.slot === "helmet" ? { ...i, hidden: true } : i)));
+    expect(sheet.armor).toBe(8);
+    expect(sheet.bonus).toEqual({ str: 2, vit: 3, agi: 1 });
+    expect(sheet.outfit?.helmet).toBeUndefined();
+    expect(sheet.outfit?.body?.ref).toBe("plate");
+  });
+
+  it("always draws what is held in the hands, even if marked hidden", () => {
+    const sheet = gearSheet("qa_paladin", WORN.map((i) => (i.slot === "main_hand" ? { ...i, hidden: true } : i)));
+    expect(sheet.outfit?.main_hand?.ref).toBe("greatsword");
+  });
+
+  it("is unarmed with nothing in hand, and can only punch", () => {
+    const sheet = gearSheet("devops_mage", []);
+    expect(sheet.weapon).toBe("");
+    expect(sheet.weaponPower).toBe(0);
+    expect(abilitiesFor(sheet.weapon)).toEqual(["punch"]);
+    expect(abilitiesFor("staff")).toContain("shock");
+    expect(ABILITIES.punch.target).toBe("enemy");
+    // No weapon gives a punch: it is what is left when the weapon is put down.
+    for (const w of Object.values(WEAPONS)) expect(w.abilities).not.toContain("punch");
   });
 });
 

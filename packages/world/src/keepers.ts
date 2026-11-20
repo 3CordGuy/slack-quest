@@ -1,8 +1,9 @@
 // Inside the smithy, the apothecary and the galley: a small room each, with
-// the keeper who runs it, what they sell from their own stock for gold, and
-// haggling. And inside the Lapidary, which is the same kind of room with its
-// own keeper, but was never a crew project: it stands from the start, since
-// nobody goes out on the atlas without a lodestone (lapidary.ts).
+// the keeper who runs it. The smith and the apothecary sell from their own
+// stock for gold, and haggle; the galley's cook has nothing to sell. And
+// inside the Lapidary, which is the same kind of room with its own keeper,
+// but was never a crew project: it stands from the start, since nobody goes
+// out on the atlas without a lodestone (lapidary.ts).
 //
 // The rooms work like the pub's (a fixed room, fixed fittings that are walked
 // around) but nobody else is in them: a customer walks about their own copy,
@@ -15,24 +16,23 @@
 // holds until the day turns; one that was not holds too, and that is that.
 
 import type { HexGrid, HexPos } from "@gantt-quest/core";
-import { DISHES, type DishId } from "./galley";
 import { itemPrice, rollItem, type ItemDef, type Slot } from "./gear";
 import { harborPoi } from "./harbor";
 import { HEX_DIRS, buildRoom, hutPath, wallFaces } from "./hutroom";
 import type { WorldMap } from "./map";
 import { makeRng, seedFromString } from "./rng";
-import { THROWABLE_KINDS } from "./zone/kit";
 import type { Throwable } from "./zone/types";
 
-export const KEEPER_SHOPS = ["smithy", "apothecary", "galley"] as const;
+/** The keepers who sell from a stock for gold, and haggle over it. */
+export const KEEPER_SHOPS = ["smithy", "apothecary"] as const;
 export type KeeperShop = (typeof KEEPER_SHOPS)[number];
 export const isKeeperShop = (shop: unknown): shop is KeeperShop => KEEPER_SHOPS.includes(shop as KeeperShop);
 
 /**
- * Every building with a keeper inside: the three shops above, which the crew builds and whose keepers sell from
- * a stock and haggle, and the Lapidary, which nobody had to build.
+ * Every building with a keeper inside: the two shops above and the galley, which the crew builds, and the
+ * Lapidary, which nobody had to build.
  */
-export const KEEPER_HOUSES = [...KEEPER_SHOPS, "lapidary"] as const;
+export const KEEPER_HOUSES = [...KEEPER_SHOPS, "galley", "lapidary"] as const;
 export type KeeperHouse = (typeof KEEPER_HOUSES)[number];
 export const isKeeperHouse = (house: unknown): house is KeeperHouse => KEEPER_HOUSES.includes(house as KeeperHouse);
 
@@ -346,18 +346,6 @@ const HAGGLE_LINES: Record<KeeperShop, { won: Record<HaggleAsk, string[]>; lost:
       lowball: ["I shall pretend I did not hear that.", "At that price you may lick the spoon, and nothing more."],
     },
   },
-  galley: {
-    won: {
-      nudge: ["Hrmph. A bit off. Don't make a habit of it.", "Fine. Now stop talking."],
-      push: ["A fifth off. And you scrub a pot on your way out.", "Hrm. It'll only spoil. Done."],
-      lowball: ["Hah. Cheek like that wants feeding. Take it. Not a word to the bosun.", "At that price it's charity. Lucky for you I've had my rum."],
-    },
-    lost: {
-      nudge: ["No. Fish doesn't catch itself.", "Price is on the slate. The slate doesn't haggle."],
-      push: ["A fifth? I've a crew to feed out of this.", "Not for my cooking, you don't."],
-      lowball: ["Out of my galley.", "For that you get the smell, and you've had it already."],
-    },
-  },
 };
 
 export function haggleLine(shop: KeeperShop, deal: Deal, pick = 0): string {
@@ -371,7 +359,7 @@ export function haggleLine(shop: KeeperShop, deal: Deal, pick = 0): string {
 export const SHELF_DAILY = 3;
 
 /**
- * What the apothecary asks for one made up and ready, in gold. Dearer than brewing it yourself from what you
+ * What the apothecary asks for one made up and ready, in gold. Dearer than making it yourself from what you
  * gathered (herbs and mushrooms fetch 3 gold apiece at the stall), which is the point of gathering.
  */
 export const SHELF_PRICES: Record<Throwable, number> = {
@@ -387,10 +375,6 @@ export const SHELF_PRICES: Record<Throwable, number> = {
 
 /** The key a ready-made flask is bought and haggled over by. */
 export const shelfKey = (kind: Throwable) => `flask:${kind}`;
-/** The flask a key names, if it names one. */
-export function shelfKind(key: unknown): Throwable | undefined {
-  return THROWABLE_KINDS.find((k) => shelfKey(k) === key);
-}
 
 /** The armour the smith forges, besides a weapon and something for the off hand. Nothing she could not also work on later: no boots, rings or amulets. */
 const FORGE_ARMOUR: Slot[] = ["body", "helmet", "legs"];
@@ -421,20 +405,3 @@ export function forgeStock(seed: string, classId: string, level: number): ForgeE
 
 /** The key the smith's work on one item is haggled over by. */
 export const workKey = (itemId: number) => `work:${itemId}`;
-
-/** How many of each dish the cook will sell one customer in a day, ready-made, into the crew's larder. */
-export const POT_DAILY = 1;
-
-/**
- * What the cook asks for a dish made up and put in the crew's larder, in gold. Dearer than cooking it yourself from
- * what you gathered, as with the apothecary's shelf; and ship's stores, which buy a day on the doom clock, dearest.
- * The larder's caps hold whoever fills it.
- */
-export const POT_PRICES: Record<DishId, number> = { chowder: 34, stores: 60 };
-
-/** The key a ready-made dish is bought and haggled over by. */
-export const potKey = (dish: DishId) => `dish:${dish}`;
-/** The dish a key names, if it names one. */
-export function potDish(key: unknown): DishId | undefined {
-  return DISHES.find((d) => potKey(d.id) === key)?.id;
-}

@@ -574,7 +574,8 @@ const WAY_SEARCH = 30;
  * stuff Show the Way is to clear). With no way on foot (a cliff, say), the straight line between.
  */
 export function wayBetween(state: ZoneState, unit: Unit, to: HexPos): HexPos[] {
-  const path = pathIn(zoneReach({ ...state, surfaces: {} }, unit, WAY_SEARCH), to);
+  // Only the way to `to` is read, so the flood stops at it (zoneReach `enough`).
+  const path = pathIn(zoneReach({ ...state, surfaces: {} }, unit, WAY_SEARCH, undefined, undefined, (r) => sameHex(r.pos, to)), to);
   return path ? [unit.pos, ...path] : hexSegment(unit.pos, to);
 }
 

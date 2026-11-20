@@ -30,13 +30,8 @@ export function harborOutlook(): Outlook {
   const state: RenderState = {
     code: "harbor:outlook",
     you: "",
-    phase: "overworld",
-    round: 0,
     map: generateHarbor(),
     heroes: [],
-    turn: null,
-    story: null,
-    npcs: {},
     freeRoam: true,
   };
   view.setState(state);

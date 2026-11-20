@@ -13,7 +13,7 @@
 import { AUDIO } from "./manifest";
 import { Library } from "./library";
 import { MixStore, dbToGain, faderGain } from "./mixer";
-import { TakePicker, chooseTakes, curveAt, distanceGain, expandFiles, inRange, nextGap, placeSound, resolveName, untilNextLine, type Placed } from "./select";
+import { TakePicker, chooseTakes, curveAt, distanceGain, inRange, nextGap, placeSound, resolveName, untilNextLine, type Placed } from "./select";
 import type { AudioFile, AudioManifest, Emitter, EmitterKind, Follow, Group, Loop, ParamName, Scene, SceneName, SoundEvent } from "./types";
 
 const GROUPS: Group[] = ["music", "atmosphere", "sfx"];
@@ -379,7 +379,7 @@ export class AudioEngine {
     return id;
   }
 
-  /** Change an entered scene in place (an island turning into a fight). */
+  /** Change an entered scene in place (a map's "island" turning into "battle" as a fight starts). */
   setScene(id: number, scene: SceneName | null) {
     const entry = this.scenes.find((s) => s.id === id);
     if (!entry || entry.scene === scene) return;

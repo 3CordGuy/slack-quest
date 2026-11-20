@@ -274,7 +274,7 @@ describe("a fight under a roof or under ground", () => {
 
   it("is played through by the enemy on its own, in a citadel and in a cavern, without breaking the rules: room on every hex, nobody in a wall or off the floor, and it ends", () => {
     const STURDY_HP = 300;
-    let [fights, rounds, heard] = [0, 0, 0];
+    let [fights, rounds] = [0, 0];
     for (const site of ["citadel", "cavern"] as const) {
       for (let seed = 0; seed < 6; seed++) {
         const where = `${site} ${seed}`;
@@ -368,13 +368,11 @@ describe("a fight under a roof or under ground", () => {
         const began = events.findIndex((e) => e.t === "fight_start");
         expect(got(events.slice(0, began), "alert").length, where).toBeGreaterThanOrEqual(1);
         expect(got(events.slice(began), "alert").map((e) => e.group).sort(), where).toEqual(got(events, "noise").map((e) => e.group).sort());
-        heard += got(events, "noise").length;
         fights++;
       }
     }
-    // Long fights, on the whole, and somewhere along the way a band in the next room heard one and came.
+    // Long fights, on the whole. (Whether a second band heard any of these twelve depends on where the fights fell:
+    // that hearing works is the test above.)
     expect(rounds / fights).toBeGreaterThan(4);
-    // (Whether a second band heard any of these twelve depends on where the fights fell: that hearing works is the test above.)
-    expect(heard).toBeGreaterThanOrEqual(0);
   }, 60_000);
 });

@@ -2,19 +2,17 @@
 // the walk-in room where the owner and visiting crewmates see each other and
 // the furniture.
 //
-// Presence, walking and chat work as they do in HarborRoom: a relay with no
-// tick loop and no alarm, with who is here kept in each socket's attachment
-// so it survives hibernation. The hut's tier and furniture live in D1; this
-// object keeps a copy in memory that it reloads after hibernating. Only the
-// owner may move furniture, and every change is written to D1 before anyone
-// is told about it.
+// Presence, walking and chat work as they do in HarborRoom (walk-room.ts): a
+// relay with no tick loop and no alarm, with who is here kept in each
+// socket's attachment so it survives hibernation. The hut's tier and
+// furniture live in D1; this object keeps a copy in memory that it reloads
+// after hibernating. Only the owner may move furniture, and every change is
+// written to D1 before anyone is told about it.
 
 import { DurableObject } from "cloudflare:workers";
-import { LOOK_MIN_MS, validLook,
+import {
   FURNISHINGS,
-  HARBOR_MAX_SAY,
   HOME_FREEBIES,
-  UNSTICK_COOLDOWN_MS,
   coveredHexes,
   freeSpot,
   placedFurnishings,
@@ -33,13 +31,12 @@ import { LOOK_MIN_MS, validLook,
   wallPlaceProblem,
   wrapAngle,
   type Furnishing,
-  type HarborPlayer,
   type HutClientMessage,
   type HutServerMessage,
   type Placed,
   type WorldMap, } from "@gantt-quest/world";
 import { containerUsed, crewFor, furnishingStatement, getCharacter, getHut, hasShack, heroInitFor, homeOf, type Env, type Player } from "./db";
-import { readXpPost, relayXp } from "./harbor-xp";
+import { Walkers, hexAsked, walkerFrom, withHero } from "./walk-room";
 
 /** What a player with nothing at all is given the first time they open their own hut. */
 const STARTER_SET = ["table", "chair", "rug"];
@@ -87,17 +84,15 @@ export async function enterHut(env: Env, player: Player, ownerId: string, reques
 }
 
 export class HutRoom extends DurableObject<Env> {
+  /** Who is here: presence, walking and chat. */
+  private here: Walkers<HutServerMessage>;
   /** Cached copy of the hut. Gone after hibernation; D1 has the truth. */
   private hut: Hut | null = null;
   private loading: Promise<Hut> | null = null;
-  /** When each player last asked to be put back at the door. In memory only: a light limit. */
-  private unstuckAt = new Map<string, number>();
-  /** When each player's look was last passed on, so a waving pointer cannot flood the room. */
-  private lookedAt = new Map<string, number>();
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
-    ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair("ping", "pong"));
+    this.here = new Walkers(ctx);
   }
 
   private async read(ownerId: string): Promise<Hut> {
@@ -147,28 +142,6 @@ export class HutRoom extends DurableObject<Env> {
     return this.load(ownerId, true);
   }
 
-  private players(except?: WebSocket): HarborPlayer[] {
-    const seen = new Map<string, HarborPlayer>();
-    for (const ws of this.ctx.getWebSockets()) {
-      if (ws === except) continue;
-      const p = ws.deserializeAttachment() as HarborPlayer | null;
-      if (p) seen.set(p.id, p);
-    }
-    return [...seen.values()];
-  }
-
-  private send(ws: WebSocket, message: HutServerMessage) {
-    try {
-      ws.send(JSON.stringify(message));
-    } catch {
-      // Socket is closing; webSocketClose will follow.
-    }
-  }
-
-  private broadcast(message: HutServerMessage, except?: WebSocket) {
-    for (const ws of this.ctx.getWebSockets()) if (ws !== except) this.send(ws, message);
-  }
-
   /** The owner's id is the tag every socket in this room carries besides its player's. */
   private ownerId(ws: WebSocket): string | null {
     return this.ctx.getTags(ws).find((t) => t.startsWith("owner:"))?.slice(6) ?? null;
@@ -177,26 +150,23 @@ export class HutRoom extends DurableObject<Env> {
   async fetch(request: Request): Promise<Response> {
     const ownerId = request.headers.get("x-hut-owner");
     if (!ownerId) return new Response("missing hut", { status: 400 });
+    const { pathname } = new URL(request.url);
 
     // Is this player standing in this hut right now? Asked before gear comes out of a container:
     // what is kept at home can only be taken out at home.
-    if (new URL(request.url).pathname === "/present") {
+    if (pathname === "/present") {
       const who = request.headers.get("x-player-id");
       return new Response(who && this.ctx.getWebSockets(who).length > 0 ? "yes" : "no");
     }
 
     // A hero earned XP: show it over their head, if they are here.
-    if (new URL(request.url).pathname === "/xp") {
-      const msg = await readXpPost(request);
-      if (msg) relayXp(this.ctx, msg, (m) => this.broadcast(m));
-      return new Response("ok");
-    }
+    if (pathname === "/xp") return this.here.xpPosted(request);
 
     // The hut changed from outside this room (a new furnishing, a bigger hut): re-read it.
-    if (new URL(request.url).pathname === "/refresh") {
+    if (pathname === "/refresh") {
       if (this.ctx.getWebSockets().length > 0) {
         const hut = await this.load(ownerId, true);
-        this.broadcast({ type: "furnishings", tier: hut.tier, furnishings: hut.furnishings });
+        this.here.broadcast({ type: "furnishings", tier: hut.tier, furnishings: hut.furnishings });
       } else {
         this.hut = null;
       }
@@ -209,115 +179,70 @@ export class HutRoom extends DurableObject<Env> {
     const canEdit = id === ownerId;
     const hut = canEdit ? await this.stock(ownerId) : await this.load(ownerId);
 
-    // One socket per player. A new tab takes over, standing where the old one stood.
-    let pos = hutDoor(hut.tier);
-    for (const old of this.ctx.getWebSockets(id)) {
-      pos = (old.deserializeAttachment() as HarborPlayer | null)?.pos ?? pos;
-      old.serializeAttachment(null);
-      old.close(4000, "replaced by a newer connection");
-    }
-    const hero = await heroInitFor(this.env.DB, id);
-    const player: HarborPlayer = {
-      id,
-      name: decodeURIComponent(request.headers.get("x-player-name") ?? "Sailor"),
-      classId: request.headers.get("x-player-class") ?? "",
-      level: hero?.level ?? Number(request.headers.get("x-player-level") ?? 1),
-      xp: hero?.xp,
-      pos,
-      outfit: hero?.outfit,
-    };
+    // One socket per player. A new tab takes over, standing where the old one stood; anyone else arrives in the door.
+    const pos = this.here.takeOver(id, hutDoor(hut.tier));
+    const player = walkerFrom(request, id, await heroInitFor(this.env.DB, id), pos);
 
     const pair = new WebSocketPair();
-    this.ctx.acceptWebSocket(pair[1], [id, `owner:${ownerId}`]);
-    pair[1].serializeAttachment(player);
-    this.send(pair[1], {
+    this.here.admit(pair[1], player, `owner:${ownerId}`);
+    this.here.send(pair[1], {
       type: "snapshot",
       you: id,
       owner: { id: ownerId, name: decodeURIComponent(request.headers.get("x-hut-owner-name") ?? "Someone") },
       tier: hut.tier,
       canEdit,
-      players: this.players(),
+      players: this.here.players(),
       furnishings: hut.furnishings,
     });
-    this.broadcast({ type: "joined", player }, pair[1]);
+    this.here.broadcast({ type: "joined", player }, pair[1]);
     return new Response(null, { status: 101, webSocket: pair[0] });
   }
 
   async webSocketMessage(ws: WebSocket, message: string | ArrayBuffer): Promise<void> {
-    if (typeof message !== "string" || message.length > 2000) return;
-    const player = ws.deserializeAttachment() as HarborPlayer | null;
+    const heard = this.here.read<HutClientMessage>(ws, message);
     const ownerId = this.ownerId(ws);
-    if (!player || !ownerId) return;
-    let msg: HutClientMessage;
-    try {
-      msg = JSON.parse(message);
-    } catch {
-      return;
-    }
+    if (!heard || !ownerId) return;
+    const { player, msg } = heard;
 
-    if (msg.type === "say") {
-      const text = String(msg.text ?? "").replace(/\s+/g, " ").trim().slice(0, HARBOR_MAX_SAY);
-      if (text) this.broadcast({ type: "said", id: player.id, name: player.name, text });
-      return;
-    }
+    if (msg.type === "say") return this.here.say(player, msg.text);
     const hut = await this.load(ownerId);
 
     if (msg.type === "move") {
-      const to = { q: Number(msg.to?.q), r: Number(msg.to?.r) };
-      if (!Number.isInteger(to.q) || !Number.isInteger(to.r)) return;
+      const to = hexAsked(msg.to);
+      if (!to) return;
       // A walk may end on a stool, to sit on it, unless someone else already is.
-      const path = hutPath(hut.room, hut.furnishings, player.pos, to, undefined, this.players().filter((p) => p.id !== player.id).map((p) => p.pos));
+      const path = hutPath(hut.room, hut.furnishings, player.pos, to, undefined, this.here.othersAt(player.id));
       if (!path) return;
-      // Walking off gets them up out of bed.
-      ws.serializeAttachment({ ...player, pos: path[path.length - 1], bed: undefined } satisfies HarborPlayer);
-      this.broadcast({ type: "moved", id: player.id, path });
-      if (player.bed !== undefined) this.broadcast({ type: "joined", player: { ...player, pos: path[path.length - 1], bed: undefined } });
+      // Walking off gets them up out of bed, which everyone is shown.
+      const up = this.here.walk(ws, player, path, { bed: undefined });
+      if (player.bed !== undefined) this.here.broadcast({ type: "joined", player: up });
       return;
     }
 
     if (msg.type === "lie_down") {
       // Purely for show, like a bedroll in the Harbor: the rest itself is `/api/rest`, which checks the cooldown.
       const problem = lieDownProblem(hut.room, hut.furnishings, Number(msg.id), player.pos, player.id === ownerId);
-      if (problem) return this.send(ws, { type: "refused", reason: problem });
-      const next: HarborPlayer = { ...player, bed: Number(msg.id) };
-      ws.serializeAttachment(next);
-      this.broadcast({ type: "joined", player: next });
-      return;
+      if (problem) return this.here.send(ws, { type: "refused", reason: problem });
+      return this.here.show(ws, { ...player, bed: Number(msg.id) });
     }
 
-    if (msg.type === "look") {
-      // Which way they are looking: passed on to everyone else here, and not kept.
-      const look = validLook(msg.look);
-      const now = Date.now();
-      if (look === null || now - (this.lookedAt.get(player.id) ?? -Infinity) < LOOK_MIN_MS) return;
-      this.lookedAt.set(player.id, now);
-      this.broadcast({ type: "looked", id: player.id, look }, ws);
-      return;
-    }
+    if (msg.type === "look") return this.here.look(ws, player, msg.look);
 
     if (msg.type === "refresh") {
       // They saved a new look (from the wardrobe or their sheet) or changed gear: re-read the hero and show everyone.
       const hero = await heroInitFor(this.env.DB, player.id);
-      if (!hero) return;
-      const next: HarborPlayer = { ...player, name: hero.name, classId: hero.classId, level: hero.level, xp: hero.xp, outfit: hero.outfit };
-      ws.serializeAttachment(next);
-      this.broadcast({ type: "joined", player: next });
+      if (hero) this.here.show(ws, withHero(player, hero));
       return;
     }
 
     if (msg.type === "unstick") {
-      // A stuck or lost hero goes back to the door. Only ever the sender's own hero.
-      const now = Date.now();
-      if (now - (this.unstuckAt.get(player.id) ?? -Infinity) < UNSTICK_COOLDOWN_MS) return;
-      this.unstuckAt.set(player.id, now);
-      const door = hutDoor(hut.tier);
-      ws.serializeAttachment({ ...player, pos: door } satisfies HarborPlayer);
-      this.broadcast({ type: "placed", id: player.id, pos: door });
+      // Back to the door.
+      this.here.unstick(ws, player, hutDoor(hut.tier));
       return;
     }
 
     if (msg.type !== "place" && msg.type !== "pick_up" && msg.type !== "rotate" && msg.type !== "put_in") return;
-    const refuse = (reason: string) => this.send(ws, { type: "refused", reason });
+    const refuse = (reason: string) => this.here.send(ws, { type: "refused", reason });
     if (player.id !== ownerId) return refuse("Only the owner can move the furniture.");
     const piece = hut.furnishings.find((f) => f.id === Number(msg.id));
     if (!piece) return refuse("You do not own that.");
@@ -335,7 +260,7 @@ export class HutRoom extends DurableObject<Env> {
       // A rug goes down under people's feet. Turning a piece where it stands never pushes out someone standing on its own hex.
       if (isFlat(piece.defId)) return null;
       const covered = coveredHexes(piece.defId, to, spot).filter((h) => !turningInPlace || h.q !== to.q || h.r !== to.r);
-      return this.players().some((p) => covered.some((h) => h.q === p.pos.q && h.r === p.pos.r)) ? "Someone is standing there." : null;
+      return this.here.players().some((p) => covered.some((h) => h.q === p.pos.q && h.r === p.pos.r)) ? "Someone is standing there." : null;
     };
 
     type Spot = Pick<Furnishing, "q" | "r" | "facing" | "x" | "z" | "y" | "angle" | "onId" | "inId">;
@@ -427,18 +352,11 @@ export class HutRoom extends DurableObject<Env> {
       console.warn("hut:save-failed", { err: err instanceof Error ? err.message : String(err) });
       return refuse("That could not be saved. Try again.");
     }
-    this.broadcast({ type: "furnishings", tier: hut.tier, furnishings: hut.furnishings });
+    this.here.broadcast({ type: "furnishings", tier: hut.tier, furnishings: hut.furnishings });
   }
 
   async webSocketClose(ws: WebSocket, code: number): Promise<void> {
-    const player = ws.deserializeAttachment() as HarborPlayer | null;
-    try {
-      ws.close(code === 1005 || code === 1006 ? 1000 : code);
-    } catch {
-      // Already closed.
-    }
-    // A replaced socket has its attachment cleared, so the player has not really left.
-    if (player) this.broadcast({ type: "left", id: player.id }, ws);
+    this.here.closed(ws, code);
   }
 
   async webSocketError(ws: WebSocket): Promise<void> {

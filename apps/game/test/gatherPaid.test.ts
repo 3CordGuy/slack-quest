@@ -1,39 +1,15 @@
 // The bag shows what the hero was last read as holding, so every answer that pays an outing has to be one the
 // client knows to read the hero again for (client/gatherPaid.ts). Here that rule is held against the server's own
-// answers (startOuting, stepOuting and gatherStatus, on a real SQLite database with the game's migrations): an
+// answers (startOuting, stepOuting and gatherStatus, on a real SQLite database with the game's migrations, d1.ts): an
 // answer says "paid" exactly when the pack in the database has just changed, at the quarry, at the tree line and
 // for a fishing sitting left alone.
 
-import { readFileSync, readdirSync } from "node:fs";
-import { DatabaseSync } from "node:sqlite";
+import type { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MINE_RECOVER_MS, SITTING_IDLE_MS, type GatherChoice, type Resources } from "@gantt-quest/world";
 import { outingPaid } from "../src/client/gatherPaid";
 import { gatherStatus, startOuting, stepOuting } from "../src/server/gather";
-
-type Row = Record<string, unknown>;
-
-class Stmt {
-  constructor(private sql: DatabaseSync, private text: string, private args: unknown[] = []) {}
-  bind(...args: unknown[]) {
-    return new Stmt(this.sql, this.text, args);
-  }
-  exec() {
-    const stmt = this.sql.prepare(this.text);
-    if (/^\s*(SELECT|WITH)/i.test(this.text)) return { results: stmt.all(...(this.args as never[])) as Row[], meta: { changes: 0, last_row_id: 0 } };
-    const res = stmt.run(...(this.args as never[]));
-    return { results: [] as Row[], meta: { changes: Number(res.changes), last_row_id: Number(res.lastInsertRowid) } };
-  }
-  async run() {
-    return this.exec();
-  }
-  async all() {
-    return this.exec();
-  }
-  async first() {
-    return this.exec().results[0] ?? null;
-  }
-}
+import { addHero, openDb } from "./d1";
 
 let sql: DatabaseSync;
 let db: D1Database;
@@ -56,14 +32,8 @@ async function step(choice: GatherChoice) {
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ["Date"] });
   at(T0);
-  sql = new DatabaseSync(":memory:");
-  const dir = new URL("../migrations/", import.meta.url);
-  for (const file of readdirSync(dir).sort()) sql.exec(readFileSync(new URL(file, dir), "utf8"));
-  db = { prepare: (text: string) => new Stmt(sql, text), batch: async (stmts: Stmt[]) => stmts.map((s) => s.exec()) } as unknown as D1Database;
-  sql.prepare("INSERT INTO players (id, name, created_at) VALUES ('ann', 'Ann', ?)").run(T0);
-  sql.prepare("INSERT INTO characters (player_id, name, class_id, status, str, int_stat, vit, agi, dex, gold, created_at) VALUES ('ann', 'Ann', 'qa_paladin', 'active', 9, 5, 9, 5, 9, 100, ?)").run(T0);
-  sql.prepare("INSERT INTO crews (id, name, created_by, created_at) VALUES ('CREWAA', 'Crew', 'ann', ?)").run(T0);
-  sql.prepare("INSERT INTO crew_members (crew_id, player_id, joined_at) VALUES ('CREWAA', 'ann', ?)").run(T0);
+  ({ sql, db } = openDb());
+  addHero(sql, { id: "ann", name: "Ann", str: 9, vit: 9, dex: 9, crew: "CREWAA", at: T0 });
 });
 
 afterEach(() => {

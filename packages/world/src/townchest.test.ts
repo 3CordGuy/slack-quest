@@ -1,12 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { STACK_MAX } from "./carry";
-import { STARTING_TABS, TOWN_STACK_MAX, TOWN_TAB_CELLS, TOWN_TAB_NAME, cleanTabColor, cleanTabName, gearPutProblem, movedTabs, stackPutProblem, stackSort, tabTakesGear, tabTakesStack, tabUsed, townTabCost } from "./townchest";
+import { TOWN_STACK_MAX, TOWN_TAB_CELLS, TOWN_TAB_NAME, cleanTabColor, cleanTabName, gearPutProblem, movedTabs, stackPutProblem, stackSort, tabTakesGear, tabTakesStack, tabUsed, townTabCost } from "./townchest";
 
 describe("the town chest's tabs", () => {
-  it("start as a chest, a tab for materials and one for lodestones", () => {
-    expect(STARTING_TABS.map((t) => t.kind)).toEqual(["general", "materials", "lodestones"]);
-  });
-
   it("each take their own: a general tab anything, the others only their sort, and gear only the general", () => {
     expect(stackSort("wood")).toBe("material");
     expect(stackSort("lodestone")).toBe("lodestone");

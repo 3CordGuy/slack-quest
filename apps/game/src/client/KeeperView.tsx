@@ -15,7 +15,7 @@ import * as THREE from "three";
 import { hexNeighbors, type HexPos } from "@gantt-quest/core";
 import { useOwnLook } from "./ownLook";
 import { KEEPER_GRID, KEEPER_PLACES, keeperPath, keeperRoom, keeperWallPieces, outfitOf, type KeeperHouse } from "@gantt-quest/world";
-import { api, type ApothecaryView, type GalleyKeeperView, type Me, type SmithyView } from "./api";
+import { api, type ApothecaryView, type GalleyView, type Me, type SmithyView } from "./api";
 import { useAudioScene } from "./audio/useAudioScene";
 import { InventoryScreen } from "./InventoryScreen";
 import { toOwned } from "./items";
@@ -55,7 +55,7 @@ export function KeeperView({ shop, me, refresh, onLeave }: { shop: KeeperHouse; 
    * The shop as the server has it: what is for sale, what your gear would cost to work, and what you hold. The
    * Lapidary has none: it sells from no stock, nobody had to build it, and what you carry is in `me`.
    */
-  const [view, setView] = useState<ApothecaryView | SmithyView | GalleyKeeperView | null>(null);
+  const [view, setView] = useState<ApothecaryView | SmithyView | GalleyView | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const reload = useCallback(
     () => (shop === "lapidary" ? Promise.resolve() : (shop === "apothecary" ? api.apothecary() : shop === "smithy" ? api.smithy() : api.galley()).then(setView, (e: Error) => setLoadError(e.message))),
@@ -82,9 +82,6 @@ export function KeeperView({ shop, me, refresh, onLeave }: { shop: KeeperHouse; 
         // The keeper stands among their work and is drawn like anyone else.
         { id: keeper.id, classId: keeper.look, pos: place.keeperPos, label: keeper.name },
       ],
-      turn: null,
-      story: null,
-      npcs: {},
       freeRoam: true,
       indoors: true,
       // Every keeper keeps the lamp out and the shop dim, lit in pools with dark between: the apothecary by candles,
@@ -221,7 +218,7 @@ export function KeeperView({ shop, me, refresh, onLeave }: { shop: KeeperHouse; 
         ? <LapidaryKeeperPanel me={me} refresh={refresh} onSay={say} onDone={() => stepAway()} />
         : shop === "apothecary" ? <ApothecaryKeeperPanel view={view as ApothecaryView} setView={setView} {...panel} />
         : shop === "smithy" ? <SmithyKeeperPanel me={me} view={view as SmithyView} setView={setView} {...panel} />
-        : <GalleyKeeperPanel view={view as GalleyKeeperView} setView={setView} {...panel} />)}
+        : <GalleyKeeperPanel onDone={panel.onDone} />)}
 
       {/* Put away while dealing with the keeper, as at the pub's game tables: the panel has the screen, and its own
           way back ("Step away"). It comes back as you step away. */}
@@ -230,7 +227,7 @@ export function KeeperView({ shop, me, refresh, onLeave }: { shop: KeeperHouse; 
         place={
           atDoor ? <span>The door back to the Harbor.</span>
             : atKeeper ? <span>With {keeper.name}, {keeper.trade}.</span>
-            : <span className="muted">{place.title}. Click {keeper.short} to walk up: {shop === "lapidary" ? "cut and work lodestones, or sell gems." : `${shop === "galley" ? "cook for the ship, buy from the pot" : "buy, have work done"}, or haggle.`}</span>
+            : <span className="muted">{place.title}. Click {keeper.short} to walk up: {shop === "lapidary" ? "cut and work lodestones, or sell gems." : shop === "galley" ? "he has nothing to sell." : "buy, have work done, or haggle."}</span>
         }
         onBag={() => (bag ? closeBag() : setBag(true))}
         onBook={() => setBook(true)}

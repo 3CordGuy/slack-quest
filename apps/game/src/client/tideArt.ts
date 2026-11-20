@@ -5,7 +5,7 @@
 // the table scene (render/TableStage.ts) makes a texture of and the panel
 // shows as an image at a whole multiple with `image-rendering: pixelated`.
 
-import { TIDE_CARDS, tideCard, type Tide } from "@gantt-quest/world";
+import { tideCard, type Tide } from "@gantt-quest/world";
 import { paintCrewFace } from "./crewArt";
 import { drawPixelText, drawSmallDigits, pixelTextWidth } from "./render/pixelFont";
 
@@ -332,6 +332,3 @@ export function tideTokenCanvas(tide: Tide): HTMLCanvasElement {
   });
 }
 export const tideTokenUrl = (tide: Tide): string => urlFor(`tide:${tide}`, tideTokenCanvas(tide));
-
-/** Every rank, for the rules. */
-export const TIDE_RANKS = TIDE_CARDS.map((c) => c.rank);

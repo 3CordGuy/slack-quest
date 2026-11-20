@@ -3,7 +3,7 @@
 // `consumables` table: a kind and how many), each kind of stone its own
 // kind of item, so they stack, take a square of the pack a stack, and are
 // counted toward what the pack holds like anything else in it (carriedSql
-// in db.ts). Nothing here reads them as something to drink or throw:
+// in db/inventory.ts). Nothing here reads them as something to drink or throw:
 // `consumablesOf` passes over any kind it does not know.
 
 import {

@@ -46,15 +46,38 @@ async function liveZone(db: D1Database, code: string | null): Promise<string | n
   return row?.code ?? null;
 }
 
+/** How many maps one read asks about: D1 binds a hundred values to a statement at most. */
+const LIVE_ZONES_AT_ONCE = 90;
+
+/** Which of these maps are still being fought through, as `liveZone` says of each, asked about together. */
+async function liveZones(db: D1Database, codes: string[]): Promise<Set<string>> {
+  const since = Date.now() - CAVE_IDLE_MS;
+  const parts: string[][] = [];
+  for (let i = 0; i < codes.length; i += LIVE_ZONES_AT_ONCE) parts.push(codes.slice(i, i + LIVE_ZONES_AT_ONCE));
+  const found = await Promise.all(
+    parts.map((part) =>
+      db
+        .prepare(`SELECT code FROM zones WHERE code IN (${part.map(() => "?").join(", ")}) AND status != 'cleared' AND updated_at > ?`)
+        .bind(...part, since)
+        .all<{ code: string }>(),
+    ),
+  );
+  return new Set(found.flatMap((rows) => rows.results.map((row) => row.code)));
+}
+
 /** A crew's chart: the Harbor, what they have cleared, what is open to them and the fog beyond, with who is out on what. */
 export async function chartFor(db: D1Database, crewId: string): Promise<Chart> {
   const [rows, places] = await Promise.all([rowsOf(db, crewId), crewPlaces(db, crewId)]);
   const cleared = new Set(rows.filter((r) => r.status === "cleared").map((r) => r.node));
   const open = new Map(rows.filter((r) => r.status === "open" && r.zone_code).map((r) => [r.node, r]));
+  const view = atlasView(atlasSeed(crewId), cleared);
+  const rowOf = (node: AtlasNodeView) => (node.state === "open" ? open.get(node.id) : undefined);
+  // The chart is asked for every few seconds: one read says which of its open nodes' maps are still live.
+  const live = await liveZones(db, view.flatMap((node) => rowOf(node)?.zone_code ?? []));
   const nodes: ChartNode[] = [];
-  for (const node of atlasView(atlasSeed(crewId), cleared)) {
-    const row = node.state === "open" ? open.get(node.id) : undefined;
-    const zone = await liveZone(db, row?.zone_code ?? null);
+  for (const node of view) {
+    const row = rowOf(node);
+    const zone = row?.zone_code && live.has(row.zone_code) ? row.zone_code : null;
     // The stone belongs to the map it made: once that is let go, the slot is empty again.
     const stone = zone ? cleanStone(row?.stone) : null;
     nodes.push(zone ? { ...node, zone, here: places.filter((m) => m.zone?.code === zone).map((m) => m.name), ...(stone ? { stone } : {}) } : node);

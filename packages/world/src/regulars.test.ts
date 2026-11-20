@@ -122,21 +122,19 @@ describe("the jobs", () => {
     }
   });
 
-  it("quest: something the regular cares about, voyage work paying the most", () => {
+  it("quest: something the regular cares about", () => {
     const quests = ALL.filter((e) => e.kind === "quest");
     const goals = new Set(quests.map((e) => (e.kind === "quest" ? e.goal : "")));
-    expect([...goals].sort()).toEqual(["contract", "give", "rest", "voyage"]);
+    expect([...goals].sort()).toEqual(["give", "rest"]);
     for (const e of quests) {
       if (e.kind !== "quest") continue;
       expect(regular(e.regular)!.quests).toContain(e.goal);
       expect(e.text.length).toBeGreaterThan(10);
     }
-    const pay = (goal: string) => Math.max(...quests.filter((e) => e.kind === "quest" && e.goal === goal).map((e) => e.reward.xp));
-    expect(pay("voyage")).toBeGreaterThan(pay("rest"));
   });
 
-  it("stay modest: no job pays more than a contract", () => {
-    // A third of the day's Harbor XP at most, and no more gold than a contract (25 to 40).
+  it("stay modest", () => {
+    // A third of the day's Harbor XP at most, and never much gold.
     for (const e of ALL) expect(e.reward.xp).toBeLessThanOrEqual(10);
     for (const e of ALL) expect(e.reward.gold).toBeLessThanOrEqual(35);
   });
@@ -146,6 +144,8 @@ describe("the jobs", () => {
     expect(parseErrand("not json")).toBeNull();
     expect(parseErrand(JSON.stringify({ ...ALL[0], regular: "nobody" }))).toBeNull();
     expect(parseErrand(JSON.stringify({ ...ALL[0], kind: "heist" }))).toBeNull();
+    // A job from before the voyage and contract errands were retired is no longer one.
+    expect(parseErrand(JSON.stringify({ ...ALL.find((e) => e.kind === "quest"), goal: "voyage" }))).toBeNull();
   });
 });
 
@@ -180,9 +180,7 @@ describe("doing them", () => {
     expect(handInProblem(record(quest), { resources: {}, handedInToday: 0, facts: NO_FACTS })).toMatch(/Not done yet/);
     expect(handInProblem(record(quest), { resources: {}, handedInToday: 0, facts: { ...NO_FACTS, rested: true } })).toBeNull();
     expect(questMet("give", { ...NO_FACTS, gave: true })).toBe(true);
-    expect(questMet("voyage", { ...NO_FACTS, metContract: true })).toBe(false);
-    expect(questMet("contract", { ...NO_FACTS, metContract: true })).toBe(true);
-    expect(questMet("voyage", { ...NO_FACTS, wonVoyage: true })).toBe(true);
+    expect(questMet("give", { ...NO_FACTS, rested: true })).toBe(false);
   });
 
   it("stops at the day's cap", () => {

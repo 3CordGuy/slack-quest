@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { STAKE_MAX, STAKE_PICKS, createCrewGame, createDiceGame, createShoalsGame, createTideGame, crewSplit, diceSplit, isCrewAnte, isDiceAnte, isShoalsAnte, isStake, isTideAnte, shoalsSplit, tideSplit, stakeLabel, stakeText, stepDice, type DiceAction, type DiceGame } from "./index";
+import { STAKE_MAX, STAKE_PICKS, createCrewGame, createDiceGame, createShoalsGame, createTideGame, crewSplit, diceSplit, isStake, shoalsSplit, tideSplit, stakeLabel, stakeText, stepDice, type DiceAction, type DiceGame } from "./index";
 
 const A = { id: "a", name: "Ada" };
 const B = { id: "b", name: "Bo" };
@@ -16,12 +16,6 @@ describe("table stakes", () => {
     for (const n of [-1, STAKE_MAX + 1, 2.5, NaN, Infinity, "10", null, undefined]) expect(isStake(n)).toBe(false);
     expect(STAKE_PICKS.every(isStake)).toBe(true);
     expect(STAKE_PICKS[0]).toBe(0);
-  });
-
-  it("is the same rule at all four tables", () => {
-    for (const n of [0, 37, STAKE_MAX, STAKE_MAX + 1, -5, 1.5]) {
-      expect([isDiceAnte(n), isShoalsAnte(n), isCrewAnte(n), isTideAnte(n)]).toEqual([isStake(n), isStake(n), isStake(n), isStake(n)]);
-    }
   });
 
   it("says a free table is free", () => {

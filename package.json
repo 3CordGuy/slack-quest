@@ -6,18 +6,10 @@
   "scripts": {
     "typecheck": "pnpm -r typecheck",
     "test": "pnpm -r test",
-    "test:watch": "pnpm --filter @gantt-quest/core test:watch",
-    "dev": "pnpm --filter @gantt-quest/slack dev",
-    "dev:game": "pnpm --filter @gantt-quest/game dev",
-    "deploy": "pnpm --filter @gantt-quest/slack deploy",
-    "db:create": "pnpm --filter @gantt-quest/slack db:create",
-    "db:migrate:local": "pnpm --filter @gantt-quest/slack db:migrate:local && pnpm --filter @gantt-quest/web db:migrate:local",
-    "db:migrate:remote": "pnpm --filter @gantt-quest/slack db:migrate:remote"
+    "dev": "pnpm --filter @gantt-quest/game dev",
+    "dev:game": "pnpm --filter @gantt-quest/game dev"
   },
   "devDependencies": {
     "@types/node": "^25.9.1"
-  },
-  "pnpm": {
-    "neverBuiltDependencies": ["@tsparticles/engine"]
   }
 }

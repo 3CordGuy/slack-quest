@@ -87,17 +87,6 @@
 .book .book-plus { width: 26px; height: 26px; padding: 0; font-size: 18px; line-height: 1; color: #fff8e2; background: linear-gradient(180deg, #4f8bc8, #25558f); border: 1px solid #c29a4c; border-radius: 50%; box-shadow: 0 1px 2px rgba(60, 38, 10, 0.6); }
 .book .book-plus:hover:not(:disabled) { background: linear-gradient(180deg, #6aa3dc, #2f66a6); border-color: #f3dfa0; }
 
-.book-tier { margin-bottom: 14px; }
-.book-tier.locked { opacity: 0.55; }
-.book-tier-at { font-family: var(--font-head); color: #1f4f86; margin-bottom: 4px; }
-.book-traits { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-.book .book-trait { display: flex; flex-direction: column; gap: 2px; text-align: left; padding: 8px 10px; color: var(--paper-ink); background: rgba(255, 255, 255, 0.28); border: 1px solid #8a744a; border-radius: 3px; box-shadow: none; font-size: 14px; }
-.book-trait strong { font-family: var(--font-head); font-size: 17px; font-weight: normal; }
-.book .book-trait:hover:not(:disabled) { background: rgba(255, 255, 255, 0.55); border-color: #1f4f86; box-shadow: 0 0 0 1px #1f4f86; }
-.book .book-trait.mine { border-color: #c29a4c; background: rgba(63, 127, 192, 0.16); box-shadow: 0 0 0 2px #c29a4c; }
-.book-trait.mine:disabled { opacity: 1; }
-.book-trait.passed { opacity: 0.45; }
-
 .book-skill { display: flex; gap: 10px; padding: 8px 0; border-bottom: 1px dotted #8a744a; }
 .book-skill-n { flex: none; width: 30px; height: 30px; display: grid; place-items: center; border-radius: 50%; font-family: var(--font-title); font-size: 19px; color: #fbeab4; background: radial-gradient(circle at 40% 30%, #4f8bc8, #1c4576); border: 1px solid #c29a4c; box-shadow: 0 1px 2px rgba(60, 38, 10, 0.6); }
 .book-skill strong { font-family: var(--font-head); font-size: 18px; font-weight: normal; }

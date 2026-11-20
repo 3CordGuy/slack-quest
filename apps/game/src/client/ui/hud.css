@@ -65,7 +65,6 @@
 .hud-xp div { height: 100%; background: linear-gradient(180deg, #86d86c 0 33.4%, #45a84c 33.4% 66.7%, #2c7c3e 66.7%); transition: width 0.3s steps(12); }
 /* A slot lies over its well in the picture, which is already drawn: it only holds what is in it. */
 .hud .hud-slot { position: absolute; padding: 0; display: grid; place-items: center; border: none; border-radius: 0; background: none; box-shadow: none; text-shadow: none; color: #4a2418; }
-.hud .hud-slot.ability { cursor: help; }
 /* A fight's slots: picked (waiting for its target) is lit; spent (nothing left to pay for it) is faded. */
 .hud .hud-slot.act { cursor: pointer; }
 .hud .hud-slot.act.picked { background: rgba(255, 244, 214, 0.55); box-shadow: inset 0 0 0 var(--p) #ffd23f; }
@@ -138,12 +137,11 @@
 .crew-cards .roster li.cm.away { opacity: 0.7; }
 .run:has(> .hud-corner) .hud-left { top: 16px; }
 .run:has(> .hud) .harbor-chat, .run:has(> .hud) .chat { left: 20px; right: auto; bottom: 20px; }
-.run:has(> .hud) .feed { left: auto; right: 16px; bottom: 16px; text-align: right; align-items: flex-end; }
 .run:has(> .hud) .tip { bottom: 206px; }
 .run:has(> .hud) .toast { top: 16px; }
 @media (max-width: 1500px) {
   /* The talk would sit under the bar on a narrower screen: lift it clear, and the column above it. */
-  .run:has(> .hud) .harbor-chat, .run:has(> .hud) .chat, .run:has(> .hud) .feed { bottom: 200px; }
+  .run:has(> .hud) .harbor-chat, .run:has(> .hud) .chat { bottom: 200px; }
   .hud-left { bottom: calc(336px + var(--chat-tall, 110px)); }
 }
 

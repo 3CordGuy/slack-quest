@@ -3,16 +3,11 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import * as THREE from "three";
 import { CombatView, sunkY } from "../src/client/render/cutaway";
+import { memoryStorage } from "./browser";
 
-/** A session's storage, as a browser tab has it: emptied before each test. */
-const kept = new Map<string, string>();
+/** A session's storage, as a browser tab has it: empty before each test. */
 beforeEach(() => {
-  kept.clear();
-  (globalThis as { sessionStorage?: unknown }).sessionStorage = {
-    getItem: (k: string) => kept.get(k) ?? null,
-    setItem: (k: string, v: string) => void kept.set(k, v),
-    removeItem: (k: string) => void kept.delete(k),
-  };
+  (globalThis as { sessionStorage?: unknown }).sessionStorage = memoryStorage();
 });
 
 describe("the combat view", () => {

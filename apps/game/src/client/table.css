@@ -10,19 +10,8 @@
   position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; border: 0;
   overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap;
 }
-.td-status { display: flex; align-items: baseline; gap: 8px; min-height: 22px; flex-wrap: wrap; }
-.td-status-text { flex: 1; min-width: 160px; }
-.td-pot { flex: none; color: var(--gold); font-size: 12px; }
-.td-phase {
-  flex: none; font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em;
-  padding: 1px 6px; border: 1px solid var(--line); color: var(--muted); background: #24203f;
-}
-.td-phase.playing { color: var(--accent); border-color: #2f8f94; }
-.td-phase.playing.lay { color: #a9d4fb; border-color: #3f7fd0; }
-.td-phase.playing.sail, .td-phase.done { color: var(--gold); border-color: #a8862a; }
 .td-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .td-label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
-.td-log { font-size: 12px; }
 .td-foot { display: flex; align-items: center; gap: 8px; }
 .td-foot .spacer { flex: 1; }
 /* The rules scroll on their own, so the moves above them stay in view however long they run. */

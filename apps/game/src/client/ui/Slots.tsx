@@ -11,8 +11,8 @@
 //   drag           gear onto the figure, or back to the pack
 // A view decides what "across" means and passes the handlers in.
 
-import { useEffect, useRef, useState, type CSSProperties, type DragEvent, type MouseEvent, type ReactNode } from "react";
-import { RARITY_COLOR, RESOURCE_KINDS, STACK_MAX, THROWABLES, THROWABLE_KINDS, stoneKey, stoneName, type Lodestone, type ResourceKind, type Resources, type Throwable } from "@gantt-quest/world";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
+import { RESOURCE_KINDS, STACK_MAX, THROWABLES, THROWABLE_KINDS, stoneKey, stoneName, type Lodestone, type ResourceKind, type Resources, type Throwable } from "@gantt-quest/world";
 import { Icon, type OwnedItem } from "../items";
 import { ITEM_ICON, STONE_ICON } from "../zone/actionIcons";
 import { itemName, label } from "../labels";
@@ -27,9 +27,6 @@ export type Stack =
   | { t: "use"; key: string; kind: Throwable; qty: number; total: number }
   /** Lodestones that carry the same: put into a place's slot on the atlas to set out for it. */
   | { t: "stone"; key: string; stone: Lodestone; qty: number; total: number };
-
-/** What stays in the pack it is in: it is not stowed, traded or split. */
-export const staysPut = (s: Stack): s is Extract<Stack, { t: "use" | "stone" }> => s.t === "use" || s.t === "stone";
 
 /** A material as the stacks it fills, fullest first. */
 export function matStacks(kind: ResourceKind, total: number): Stack[] {
@@ -68,72 +65,6 @@ export const stackName = (s: Stack) => (s.t === "gear" ? itemName(s.item) : s.t 
 export function StackIcon({ stack, size }: { stack: Exclude<Stack, { t: "gear" }>; size: number }) {
   if (stack.t === "stone") return <Icon name={STONE_ICON(stack.stone.length).name} color={STONE_ICON(stack.stone.length).color} size={size} />;
   return stack.t === "use" ? <Icon name={ITEM_ICON[stack.kind].name} color={ITEM_ICON[stack.kind].color} size={size} /> : <ThingIcon icon={resourceIcon(stack.kind)} size={size} />;
-}
-
-interface TileProps {
-  stack: Stack;
-  selected?: boolean;
-  locked?: boolean;
-  match?: boolean;
-  /** Dimmed and marked: already on the other side (an offer). */
-  taken?: boolean;
-  size?: number;
-  onClick?(e: MouseEvent): void;
-  /** Shift + click. */
-  onQuick?(): void;
-  /** Right click (or ctrl + click). */
-  onSplit?(at: { x: number; y: number }): void;
-  onDragStart?(e: DragEvent): void;
-  children?: ReactNode;
-}
-
-export function StackTile({ stack, selected, locked, match, taken, size = 40, onClick, onQuick, onSplit, onDragStart, children }: TileProps) {
-  const color = stack.t === "gear" ? RARITY_COLOR[stack.item.rarity] : undefined;
-  const hint = [onQuick && "Shift-click to move it", onSplit && stack.t === "mat" && "right-click to move part"].filter(Boolean).join(", ");
-  return (
-    <button
-      className={`tile ${stack.t} ${selected ? "selected" : ""} ${locked ? "locked" : ""} ${match ? "match" : ""} ${taken ? "taken" : ""}`}
-      style={color ? { borderColor: color } : undefined}
-      title={`${stackName(stack)}${stack.t !== "gear" ? ` × ${stack.qty}` : ""}${hint ? `\n${hint}` : ""}`}
-      draggable={!!onDragStart}
-      onDragStart={onDragStart}
-      onClick={(e) => {
-        if (e.shiftKey && onQuick) return onQuick();
-        if ((e.ctrlKey || e.metaKey) && onSplit) return onSplit({ x: e.clientX, y: e.clientY });
-        onClick?.(e);
-      }}
-      onContextMenu={(e) => {
-        if (!onSplit) return;
-        e.preventDefault();
-        onSplit({ x: e.clientX, y: e.clientY });
-      }}
-    >
-      {stack.t === "gear" ? (
-        <>
-          <Icon name={stack.item.icon} color={color!} size={size} />
-          {stack.item.levelReq > 1 && <span className="badge tl">L{stack.item.levelReq}</span>}
-          {stack.item.power > 0 && <span className="badge br">+{stack.item.power}</span>}
-        </>
-      ) : (
-        <>
-          <StackIcon stack={stack} size={size} />
-          <span className="badge br qty">{stack.qty}</span>
-        </>
-      )}
-      {children}
-    </button>
-  );
-}
-
-/** A grid of `total` slots: the tiles given, then empty squares. Tiles past `total` are over the limit. */
-export function SlotGrid({ total, children, over = false, label: name, ...drop }: { total: number; children: ReactNode[]; over?: boolean; label: string; onDragOver?(e: DragEvent): void; onDragLeave?(): void; onDrop?(e: DragEvent): void }) {
-  const filled = children.length;
-  return (
-    <div className={`slot-grid ${over ? "over" : ""}`} role="group" aria-label={name} {...drop}>
-      {children.map((tile, i) => (i >= total ? <span key={i} className="slot-over">{tile}</span> : tile))}
-      {Array.from({ length: Math.max(0, total - filled) }, (_, i) => <span key={`e${i}`} className="tile empty slot-empty" aria-hidden />)}
-    </div>
-  );
 }
 
 /** How many of a stack to move: a slider from 1 to `max`, with Half and All. Opens at the pointer; Enter moves, Escape or a press outside closes. */

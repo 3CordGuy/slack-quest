@@ -19,7 +19,7 @@
 //      trade settled only if both have accepted this rev and every condition
 //      still holds (the item rows still belong to whoever offered them and
 //      are not worn, both sides have the gold and materials and the room,
-//      both are still in the crew and neither is in a fight) and stamps it
+//      and both are still in the crew) and stamps it
 //      with a one-time token. Every statement after it moves goods only if
 //      it finds that token. A D1 batch is one transaction, so either the
 //      whole trade happens or none of it does.
@@ -27,11 +27,9 @@
 // Amounts and ownership always come from the stored table and from D1, never
 // from the request that accepts it.
 
-import { RESOURCE_KINDS, TRADE_TTL_MS, emptySide, itemCells, readTradeSide, sideIsEmpty, sideProblem, tradeRoomProblem, upgradedName, type Resources, type Slot, type TradeHoldings, type TradeLoad, type TradeSide, type WorldState } from "@gantt-quest/world";
+import { RESOURCE_KINDS, TRADE_TTL_MS, emptySide, itemCells, readTradeSide, sideIsEmpty, sideProblem, tradeRoomProblem, upgradedName, type Resources, type Slot, type TradeHoldings, type TradeLoad, type TradeSide } from "@gantt-quest/world";
 import { CELLS_SQL, carriedSql, carryState, type Env, type InventoryRow } from "./db";
 
-/** A voyage nobody has touched for this long is taken to be abandoned, as on the dock board. */
-const VOYAGE_STALE_MS = 12 * 60 * 60_000;
 /** How long a settled or cancelled trade stays in the list, so both sides hear how it ended. */
 const RECENT_MS = 60_000;
 
@@ -40,7 +38,6 @@ interface TradeRow {
   crew_id: string;
   from_id: string;
   to_id: string;
-  run_code: string | null;
   give_json: string;
   ask_json: string;
   from_ok: number;
@@ -72,8 +69,6 @@ export interface TradeView {
   with: { id: string; name: string };
   /** True if the viewer opened the trade. */
   opened: boolean;
-  /** The voyage it was opened on, or null for one opened in the Harbor. */
-  runCode: string | null;
   mine: TradeSideView;
   theirs: TradeSideView;
   expiresAt: number;
@@ -136,20 +131,12 @@ async function party(db: D1Database, playerId: string): Promise<Party | null> {
   };
 }
 
-/**
- * The heroes among `ids` who are in a fight right now: aboard a voyage whose
- * stored phase is `battle`. The Durable Object writes a voyage to D1 before
- * it tells anyone, so the row is as current as anything a client has seen.
- */
-const FIGHTING_SQL = `SELECT 1 FROM runs r, json_each(r.state_json, '$.heroes') h
-  WHERE r.status = 'battle' AND r.state_json IS NOT NULL AND r.updated_at > ? AND json_extract(h.value, '$.id') IN (?, ?)`;
-
 interface Refusal {
   /** Told to the player who asked. */
   error: string;
   /** The same thing with both players named, for the trade's record. */
   reason: string;
-  /** True if the trade can never go through and should be closed; false if it only has to wait, or be put right. */
+  /** True if the trade can never go through and should be closed; false if it only has to be put right. */
   final: boolean;
 }
 
@@ -157,7 +144,6 @@ interface Terms {
   crewId: string;
   from: string;
   to: string;
-  runCode: string | null;
 }
 
 /**
@@ -166,39 +152,16 @@ interface Terms {
  * player still has what they laid out, and the room for what is coming.
  * Everything here is read from D1.
  */
-async function refusal(db: D1Database, terms: Terms, viewer: string, at: number, sides?: { give: TradeSide; ask: TradeSide }): Promise<Refusal | null> {
+async function refusal(db: D1Database, terms: Terms, viewer: string, sides?: { give: TradeSide; ask: TradeSide }): Promise<Refusal | null> {
   const { from, to } = terms;
-  const [opener, other, members, fights, run] = await Promise.all([
+  const [opener, other, members] = await Promise.all([
     party(db, from),
     party(db, to),
     db.prepare("SELECT COUNT(*) AS n FROM crew_members WHERE crew_id = ? AND player_id IN (?, ?)").bind(terms.crewId, from, to).first<{ n: number }>(),
-    db
-      .prepare(`SELECT DISTINCT json_extract(h.value, '$.id') AS id FROM runs r, json_each(r.state_json, '$.heroes') h
-        WHERE r.status = 'battle' AND r.state_json IS NOT NULL AND r.updated_at > ? AND json_extract(h.value, '$.id') IN (?, ?)`)
-      .bind(at - VOYAGE_STALE_MS, from, to)
-      .all<{ id: string }>(),
-    terms.runCode ? db.prepare("SELECT status, state_json FROM runs WHERE code = ?").bind(terms.runCode).first<{ status: string; state_json: string | null }>() : null,
   ]);
   const same = (text: string, final: boolean): Refusal => ({ error: text, reason: text, final });
   if (!opener || !other) return same("There is no such crewmate to trade with.", true);
   if ((members?.n ?? 0) !== 2) return same("Trading is between members of the same crew.", true);
-
-  const name = (id: string) => (id === from ? opener.name : other.name);
-  const fighting = fights.results.map((r) => r.id);
-  if (fighting.length > 0) {
-    // The viewer first, so "You are in a fight" wins over naming the other.
-    const who = fighting.includes(viewer) ? viewer : fighting[0];
-    const wait = "Trading waits until the fight is over.";
-    return { error: `${who === viewer ? "You are" : `${name(who)} is`} in a fight. ${wait}`, reason: `${name(who)} is in a fight. ${wait}`, final: false };
-  }
-  if (terms.runCode) {
-    const state = run?.state_json ? (JSON.parse(run.state_json) as WorldState) : null;
-    if (!run || !state || run.status === "victory" || run.status === "defeat") return same("That voyage is over.", true);
-    if (run.status === "battle") return same("The crew is in a fight. Trading waits until the fight is over.", false);
-    if (run.status !== "overworld") return same("Trading on a voyage starts once the crew is ashore.", false);
-    const aboard = new Set(state.heroes.map((h) => h.id));
-    if (!aboard.has(from) || !aboard.has(to)) return same("On an island you can only trade with a hero on the same voyage.", true);
-  }
   if (!sides) return null;
 
   // Each player still has what they laid out. The table stays open: they can put it right.
@@ -220,29 +183,28 @@ async function refusal(db: D1Database, terms: Terms, viewer: string, at: number,
 
 /**
  * Open the table between `playerId` and `to`, or find the one already open
- * between them. `runCode` says the player is on that voyage's island (the
- * server confirms it). Returns the trade's id and the crew, or why not.
+ * between them. Returns the trade's id and the crew, or why not.
  */
-export async function openTrade(db: D1Database, playerId: string, to: unknown, runCode: string | null): Promise<{ error: string } | { id: number; crewId: string }> {
+export async function openTrade(db: D1Database, playerId: string, to: unknown): Promise<{ error: string } | { id: number; crewId: string }> {
   if (typeof to !== "string" || to.length === 0 || to.length > 64) return { error: "Name the crewmate to trade with." };
   if (to === playerId) return { error: "You cannot trade with yourself." };
   const crew = await db.prepare("SELECT crew_id FROM crew_members WHERE player_id = ?").bind(playerId).first<{ crew_id: string }>();
   if (!crew) return { error: "Join a crew first." };
   const at = Date.now();
-  const refused = await refusal(db, { crewId: crew.crew_id, from: playerId, to, runCode }, playerId, at);
+  const refused = await refusal(db, { crewId: crew.crew_id, from: playerId, to }, playerId);
   if (refused) return { error: refused.error };
   const pair = pairKey(playerId, to);
-  const standing = () => db.prepare("SELECT id, run_code FROM trades WHERE pair = ? AND status = 'open' AND created_at > ?").bind(pair, at - TRADE_TTL_MS).first<{ id: number; run_code: string | null }>();
+  const standing = () => db.prepare("SELECT id FROM trades WHERE pair = ? AND status = 'open' AND created_at > ?").bind(pair, at - TRADE_TTL_MS).first<{ id: number }>();
   const open = await standing();
-  // The same table, whoever opened it, as long as it was opened in the same place.
-  if (open && open.run_code === runCode) return { id: open.id, crewId: crew.crew_id };
+  // The same table, whoever opened it.
+  if (open) return { id: open.id, crewId: crew.crew_id };
   try {
     const res = await db.batch([
-      // A table nobody settled, or one left behind in another place, makes way for a new one.
-      db.prepare("UPDATE trades SET status = 'expired', closed_at = ?1 WHERE pair = ?2 AND status = 'open' AND (created_at <= ?3 OR ?4 = 1)").bind(at, pair, at - TRADE_TTL_MS, open ? 1 : 0),
+      // A table nobody settled makes way for a new one.
+      db.prepare("UPDATE trades SET status = 'expired', closed_at = ?1 WHERE pair = ?2 AND status = 'open' AND created_at <= ?3").bind(at, pair, at - TRADE_TTL_MS),
       db
-        .prepare("INSERT INTO trades (crew_id, from_id, to_id, pair, run_code, give_json, ask_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
-        .bind(crew.crew_id, playerId, to, pair, runCode, store(emptySide()), store(emptySide()), at),
+        .prepare("INSERT INTO trades (crew_id, from_id, to_id, pair, give_json, ask_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
+        .bind(crew.crew_id, playerId, to, pair, store(emptySide()), store(emptySide()), at),
     ]);
     return { id: res[1].meta.last_row_id, crewId: crew.crew_id };
   } catch (err) {
@@ -294,7 +256,7 @@ export async function setTradeSide(db: D1Database, playerId: string, tradeId: nu
  */
 export function settleStatements(
   db: D1Database,
-  row: Pick<TradeRow, "id" | "crew_id" | "from_id" | "to_id" | "run_code" | "rev">,
+  row: Pick<TradeRow, "id" | "crew_id" | "from_id" | "to_id" | "rev">,
   sides: { give: TradeSide; ask: TradeSide },
   token: string,
   at: number,
@@ -311,16 +273,6 @@ export function settleStatements(
   const marks = (ids: number[]) => ids.map(() => "?").join(", ");
   need("(SELECT COUNT(*) FROM crew_members WHERE crew_id = ? AND player_id IN (?, ?)) = 2", row.crew_id, from, to);
   need("(SELECT COUNT(*) FROM characters WHERE status = 'active' AND player_id IN (?, ?)) = 2", from, to);
-  need(`NOT EXISTS (${FIGHTING_SQL})`, at - VOYAGE_STALE_MS, from, to);
-  if (row.run_code) {
-    need(
-      `EXISTS (SELECT 1 FROM runs r WHERE r.code = ? AND r.status = 'overworld'
-        AND (SELECT COUNT(*) FROM json_each(r.state_json, '$.heroes') h WHERE json_extract(h.value, '$.id') IN (?, ?)) = 2)`,
-      row.run_code,
-      from,
-      to,
-    );
-  }
   // [who gives, who takes, what, the taker's pack limit]
   const ways = [[from, to, sides.give, limits.to, sides.ask], [to, from, sides.ask, limits.from, sides.give]] as const;
   for (const [giver, taker, goods, limit, back] of ways) {
@@ -387,8 +339,8 @@ const CHANGED = "The offer changed. Look it over, then accept again.";
  * takes their acceptance back). When the other player has accepted too,
  * everything on the table changes hands in one batch, or nothing does.
  * `settled` says whether it did. A trade that can never go through (someone
- * has left the crew, the voyage is over) is closed with the reason; one that
- * only has to wait or be put right stays open with both acceptances taken back.
+ * has left the crew) is closed with the reason; one that only has to be put
+ * right stays open with both acceptances taken back.
  */
 export async function acceptTrade(db: D1Database, playerId: string, tradeId: number, rev: number, ok = true): Promise<{ error: string } | { ok: true; settled: boolean; crewId: string }> {
   const at = Date.now();
@@ -402,10 +354,10 @@ export async function acceptTrade(db: D1Database, playerId: string, tradeId: num
   if (rev !== row.rev) return { error: CHANGED };
   const sides = { give: sideOf(row.give_json), ask: sideOf(row.ask_json) };
   if (sideIsEmpty(sides.give) && sideIsEmpty(sides.ask)) return { error: "Put something in the trade first." };
-  const terms: Terms = { crewId: row.crew_id, from: row.from_id, to: row.to_id, runCode: row.run_code };
+  const terms: Terms = { crewId: row.crew_id, from: row.from_id, to: row.to_id };
   const closed = "Nothing changed hands, and the trade is closed.";
 
-  const refused = await refusal(db, terms, playerId, at, sides);
+  const refused = await refusal(db, terms, playerId, sides);
   if (refused) {
     if (!refused.final) return { error: refused.error };
     await fail(db, row.id, refused.reason, at);
@@ -425,10 +377,10 @@ export async function acceptTrade(db: D1Database, playerId: string, tradeId: num
   if (res[0].meta.changes === 0) return { error: CHANGED };
 
   // Accepted, but nothing moved. Either the other took their acceptance back in that moment (then this one simply
-  // stands), or something changed between the read above and the batch (an item sold, gold spent, a fight begun).
+  // stands), or something changed between the read above and the batch (an item sold, gold spent).
   const now = await db.prepare("SELECT status, from_ok, to_ok FROM trades WHERE id = ?").bind(row.id).first<Pick<TradeRow, "status" | "from_ok" | "to_ok">>();
   if (now?.status === "open" && !(now.from_ok && now.to_ok)) return { ok: true, settled: false, crewId: row.crew_id };
-  const why = await refusal(db, terms, playerId, Date.now(), sides);
+  const why = await refusal(db, terms, playerId, sides);
   if (why?.final) {
     await fail(db, row.id, why.reason, Date.now());
     return { error: `${why.error} ${closed}` };
@@ -482,7 +434,6 @@ export async function listTrades(db: D1Database, playerId: string): Promise<Trad
         rev: r.rev,
         with: opened ? { id: r.to_id, name: r.to_name ?? "Someone" } : { id: r.from_id, name: r.from_name ?? "Someone" },
         opened,
-        runCode: r.run_code,
         mine,
         theirs,
         expiresAt: r.created_at + TRADE_TTL_MS,
@@ -503,7 +454,7 @@ export async function listTrades(db: D1Database, playerId: string): Promise<Trad
 
 /**
  * Tell the other player at a table that it changed, wherever they are: the
- * crew's Harbor, any voyage they are on, and the map they are out on. Each room passes it to that
+ * crew's Harbor and the map they are out on. Each room passes it to that
  * player's own socket only, and their client asks for its trades again (the
  * player who made the change has already asked). Nothing is sent to a room
  * nobody is in, so this is how a crewmate's request shows up without anyone
@@ -515,17 +466,10 @@ export async function announceTrade(env: Env, tradeId: number, actor: string): P
     const row = await env.DB.prepare("SELECT crew_id, from_id, to_id FROM trades WHERE id = ?").bind(tradeId).first<Pick<TradeRow, "crew_id" | "from_id" | "to_id">>();
     if (!row || (actor !== row.from_id && actor !== row.to_id)) return;
     const who = actor === row.from_id ? row.to_id : row.from_id;
-    const runs = await env.DB.prepare(
-      `SELECT DISTINCT r.code FROM runs r, json_each(r.state_json, '$.heroes') h
-        WHERE r.crew_id = ? AND r.updated_at > ? AND r.status NOT IN ('victory', 'defeat') AND r.state_json IS NOT NULL AND json_extract(h.value, '$.id') = ?`,
-    )
-      .bind(row.crew_id, Date.now() - VOYAGE_STALE_MS, who)
-      .all<{ code: string }>();
     const zone = await env.DB.prepare("SELECT code FROM zone_presence WHERE player_id = ?").bind(who).first<{ code: string }>();
     const to = `?to=${encodeURIComponent(who)}`;
     await Promise.all([
       env.HARBOR_ROOM.get(env.HARBOR_ROOM.idFromName(row.crew_id)).fetch(`https://harbor/trades${to}`, { headers: { "x-crew-id": row.crew_id } }),
-      ...runs.results.map((r) => env.RUN_ROOM.get(env.RUN_ROOM.idFromName(r.code)).fetch(`https://run/trades${to}`)),
       ...(zone ? [env.ZONE_ROOM.get(env.ZONE_ROOM.idFromName(zone.code)).fetch(`https://zone/trades${to}`)] : []),
     ]);
   } catch (err) {

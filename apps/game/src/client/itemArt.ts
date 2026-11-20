@@ -5,7 +5,7 @@
 // Each icon is keyed by the item's `icon` name. One colour in every icon,
 // the "accent", is the item's rarity colour, so a rare helm has a blue plume
 // and an epic one a purple plume. Icons for things that have no rarity (pub
-// fare, brews, hut furniture) live in thingArt.ts and are merged in below,
+// fare, hut furniture) live in thingArt.ts and are merged in below,
 // so they go through the same lookup and admin overrides as gear.
 
 import { parseGarbIcon, type GarbPiece } from "@gantt-quest/world";
@@ -636,7 +636,7 @@ const ART: Record<string, Art> = {
     p.r(6, 9, 4, 1, C.wood);
   },
 
-  // ---- pub, brews, hut furniture and trophies (thingArt.ts) ----
+  // ---- pub, hut furniture and trophies (thingArt.ts) ----
   ...THING_ART,
   ...ACTION_ART,
 };

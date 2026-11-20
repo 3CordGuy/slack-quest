@@ -1,5 +1,5 @@
 // Furniture for a hut's room: small low-poly models built from primitives,
-// in the same style as the places on the map (WorldRenderer.poiModel). One
+// in the same style as the places on the map (render/places/). One
 // per `model` key in the FURNISHINGS catalogue.
 //
 // Each model sits on the origin of its hex, fits inside its catalogue
@@ -250,7 +250,7 @@ const MODELS: Record<string, (b: Builder) => void> = {
     b.box(DARK_WOOD, 0.08, 0.08, 0.12, 0, 0.26, 0.36);
   },
   // The pub's pillar at the end of the bar (packages/world/src/pub.ts): a squared timber post on a stone footing,
-  // up past the walls to a beam, with the contract dealer's notices pinned to its face and a lamp on a hook.
+  // up past the walls to a beam, with the dealer's notices pinned to its face and a lamp on a hook.
   pillar(b) {
     b.box(STONE, 0.46, 0.14, 0.46);
     b.box(DARK_WOOD, 0.3, 2.2, 0.3, 0, 0.14);
@@ -1661,8 +1661,6 @@ export function tintGhost(g: THREE.Group, ok: boolean) {
     if (o instanceof THREE.Mesh) (o.material as THREE.MeshBasicMaterial).color.set(ok ? "#bfe8ff" : "#ff6b6b");
   });
 }
-
-export const PROP_MODELS = Object.keys(MODELS);
 
 /** A fresh model for a furnishing, standing on the origin. */
 export function propModel(model: string): THREE.Group {

@@ -1,12 +1,8 @@
 // HTTP helpers for the Harbor screens.
 
 import type { StatKey } from "@gantt-quest/core";
-import type { ContractBoard } from "../server/board";
-
-/** What the contract dealer in the pub has: the crew goal and the contracts on offer. */
-export type Board = ContractBoard;
 import type { Muster, MusterAnswer } from "@gantt-quest/world";
-import type { Appearance, CarryState, FishSpot, GatherChoice, HarborXpStatus, GatherSpot, HarborWorks, HutSummary, ItemDef, Lodestone, Perk, ProjectAmounts, PublicHero, Resources, SalesEntry, SalesmanId, SalesmanVisit, ShopEntry, Throwable, TradeSide } from "@gantt-quest/world";
+import type { Appearance, CarryState, FishSpot, GatherChoice, HarborXpStatus, GatherSpot, HarborWorks, HutSummary, ItemDef, Lodestone, ProjectAmounts, PublicHero, Resources, SalesEntry, SalesmanId, SalesmanVisit, ShopEntry, Throwable, TradeSide } from "@gantt-quest/world";
 import { devTools } from "./devTools";
 import { forcedSalesman } from "./salesmanClock";
 import type { GatherStatus } from "../server/gather";
@@ -19,19 +15,17 @@ import type { TradeList } from "../server/trade";
 import type { Chart, ChartNode } from "../server/atlas";
 import type { HeldStone } from "../server/lodestones";
 import type { ChestView } from "../server/townchest";
-import type { ApothecaryView, GalleyKeeperView, HaggleResult, KeeperWare, SmithyView } from "../server/workshops";
+import type { ApothecaryView, GalleyView, HaggleResult, KeeperWare, SmithyView } from "../server/workshops";
 import type { ErrandPaid, RegularsView } from "../server/errands";
 
 export type { Chart, ChartNode, ChestView, HeldStone };
-export type { ApothecaryView, SmithyView, GalleyKeeperView, ErrandPaid, RegularsView, HaggleResult, KeeperWare };
+export type { ApothecaryView, SmithyView, GalleyView, ErrandPaid, RegularsView, HaggleResult, KeeperWare };
 
 export type { CatchBook, FishStock, GatherStatus, PubGame, PubLeaderboard, PubScore, PubWall, SittingPaid, XpResult };
 
-/** What a hero has ordered at the pub and what it gives on their next voyage. */
-export interface PubTab {
-  orders: string[];
-  buff: Required<Perk>;
-  /** Set on an order: the meal gave back one gathering outing. */
+/** What came of ordering a meal at the pub. */
+export interface PubOrdered {
+  /** The meal gave back one gathering outing. */
   rested?: boolean;
 }
 
@@ -59,8 +53,6 @@ export interface Character {
   dex: number;
   unspent_points: number;
   gold: number;
-  /** JSON list of picked class trait ids (parse with parseTraits). */
-  traits?: string;
   /** JSON list of the class abilities in the hero's slots (parse with parseAbilityLoadout). */
   ability_loadout?: string;
   /** JSON Appearance (parse with parseAppearance), or null if they never chose one. */
@@ -102,8 +94,8 @@ export interface Shop {
   entries: (ShopEntry & { bought: boolean })[];
 }
 
-/** What the player owns for their hut, the perks it gives right now, and their gold. */
-export type Hut = HutSummary & { perks: Required<Perk>; gold: number };
+/** What the player owns for their hut, and their gold. */
+export type Hut = HutSummary & { gold: number };
 
 export interface Me {
   /** `email` is null for a guest, whose account lives only in this browser. */
@@ -176,7 +168,6 @@ export const api = {
   setAppearance: (appearance: Appearance) => request("/api/character/appearance", { appearance }),
   reroll: () => request("/api/character/reroll", {}),
   spend: (stat: StatKey) => request("/api/character/spend", { stat }),
-  pickTrait: (trait: string) => request("/api/character/trait", { trait }),
   /** Put a class ability in a slot (null empties it). Harbor only. */
   setAbility: (slot: number, ability: string | null) => request("/api/character/ability", { slot, ability }),
   equip: (itemId: number) => request("/api/character/equip", { itemId }),
@@ -188,7 +179,6 @@ export const api = {
   sellMaterial: (kind: string, qty: number) => request<{ gold: number }>("/api/shop/materials/sell", { kind, qty }),
   shop: () => request<Shop>("/api/shop"),
   buy: (index: number) => request("/api/shop/buy", { index }),
-  contracts: () => request<Board>("/api/contracts"),
   /** The notice board's release notes are read up to this release. */
   releaseSeen: (id: string) => request<{ seenRelease: string }>("/api/releases/seen", { id }),
   requestCode: (email: string) => request("/api/auth/email/request", { email }),
@@ -215,9 +205,8 @@ export const api = {
   /** Start an outing. Fishing with a `pier` starts a sitting there. */
   gatherStart: (spot: GatherSpot, pier?: FishSpot) => request<GatherStatus>("/api/gather/start", { spot, pier }),
   gatherStep: (choice: GatherChoice) => request<GatherStatus & { paid?: Resources; xp?: XpResult; sitting?: SittingPaid }>("/api/gather/step", { choice }),
-  pub: () => request<PubTab>("/api/pub"),
   pubLeaderboard: () => request<PubLeaderboard>("/api/pub/leaderboard"),
-  pubOrder: (itemId: string) => request<PubTab>("/api/pub/order", { itemId }),
+  pubOrder: (itemId: string) => request<PubOrdered>("/api/pub/order", { itemId }),
   pubTalk: (text: string) => request<{ say: string }>("/api/pub/talk", { text }),
   salesman: () => request<SalesmanView>("/api/pub/salesman", undefined, salesmanHeader()),
   buyFromSalesman: (index: number) => request<{ got: SalesEntry }>("/api/pub/salesman/buy", { index }, salesmanHeader()),
@@ -225,7 +214,6 @@ export const api = {
   errand: (regular: string, action: "accept" | "handin" | "trade" | "drop") => request<Partial<ErrandPaid> & { ok?: true }>("/api/pub/errand", { regular, action }),
   projects: () => request<Works>("/api/projects"),
   apothecary: () => request<ApothecaryView>("/api/apothecary"),
-  brew: (brewId: string) => request<ApothecaryView & { xp?: XpResult }>("/api/apothecary/brew", { brewId }),
   brewFlask: (kind: string) => request<ApothecaryView & { xp?: XpResult }>("/api/apothecary/flask", { kind }),
   smithy: () => request<SmithyView>("/api/smithy"),
   smith: (itemId: number) => request<SmithyView & { worked: string; xp?: XpResult }>("/api/smithy/work", { itemId }),
@@ -234,10 +222,7 @@ export const api = {
   buyFromSmith: (key: string) => request<SmithyView & { got: string }>("/api/smithy/buy", { key }),
   /** Ask a keeper to take something off a price: `ask` is one of HAGGLE_ASKS. One try a day for each thing. */
   haggle: (shop: string, key: string, ask: string) => request<HaggleResult>("/api/keeper/haggle", { shop, key, ask }),
-  galley: () => request<GalleyKeeperView>("/api/galley"),
-  cook: (dishId: string) => request<GalleyKeeperView & { xp?: XpResult }>("/api/galley/cook", { dishId }),
-  /** Buy a dish ready-made from the cook, by its key: it goes into the crew's larder. */
-  buyFromCook: (key: string) => request<GalleyKeeperView & { got: string }>("/api/galley/buy", { key }),
+  galley: () => request<GalleyView>("/api/galley"),
   giveToProject: (projectId: string, give: ProjectAmounts) => request<Works & { completed: boolean; xp?: XpResult }>("/api/projects/give", { projectId, give }),
   hut: () => request<Hut>("/api/hut"),
   craft: (defId: string) => request<{ ok: true; xp?: XpResult }>("/api/hut/craft", { defId }),
@@ -250,7 +235,7 @@ export const api = {
   sellFurniture: (furnishingId: number) => request<{ gold: number }>("/api/shop/furniture/sell", { furnishingId }),
   trades: () => request<TradeList>("/api/trade"),
   /** Open the trade table with a crewmate, or find the one already open between you. */
-  openTrade: (to: string, run?: string) => request<{ id: number }>("/api/trade/open", { to, run }),
+  openTrade: (to: string) => request<{ id: number }>("/api/trade/open", { to }),
   /** Lay out your side of the table. */
   offerTrade: (id: number, side: TradeSide) => request<{ rev: number }>("/api/trade/offer", { id, side }),
   /** Accept the table as it stood at `rev`, or take that back. */
@@ -264,8 +249,7 @@ export const api = {
   teleport: (to: string) => request<{ zone: string | null; name: string }>("/api/crew/teleport", { to }),
   /** The crew's chart: the Harbor, what is cleared, what is open, the fog beyond, and who is out on what. */
   atlas: () => request<Chart>("/api/atlas"),
-  /** Set sail for a landfall: the map the crew is fighting through there, or a fresh one. */
-  /** Set out for a place, with the lodestone put into its slot (what it carries, joined with "+"; "" for a plain one). It comes out of your pack. */
+  /** Set out for a place (the map the crew is fighting through there, or a fresh one), with the lodestone put into its slot (what it carries, joined with "+"; "" for a plain one). It comes out of your pack. */
   openNode: (node: string, stone?: string) => request<{ code: string; fresh: boolean }>("/api/atlas/open", { node, stone }),
   /**
    * Set out for a place, asking the crew first. Gives the map's `code` where nobody needs asking (a map already
@@ -276,7 +260,6 @@ export const api = {
   muster: () => request<{ muster: Muster | null }>("/api/atlas/muster"),
   /** Answer the crew's muster: "ready" or "no"; for whoever called it, "start" or "cancel". */
   answerMuster: (answer: MusterAnswer) => request<{ muster: Muster }>("/api/atlas/muster/answer", { answer }),
-  /** The dev toolbox: clear a landfall without fighting for it, or wipe the chart. Gives the chart as it now is. */
   /** The crew's town chest: its tabs and what is in each. Every call below gives the chest back as it now is. */
   chest: () => request<ChestView>("/api/chest"),
   /** Put a piece of gear from your pack into a tab of the chest, or take one (by its id in the chest) out into your pack. */

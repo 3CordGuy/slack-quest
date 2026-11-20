@@ -1,39 +1,18 @@
 // The Harbor's "unstick" message: a stuck or lost hero is put back on the
-// spawn hex. The room is driven with fake hibernatable sockets, whose
-// attachments hold who each player is and where they stand.
+// spawn hex. The room is driven with fake hibernatable sockets (rooms.ts),
+// whose attachments hold who each player is and where they stand.
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { HARBOR_SPAWN, UNSTICK_COOLDOWN_MS, type HarborPlayer, type HarborServerMessage } from "@gantt-quest/world";
-
-(globalThis as Record<string, unknown>).WebSocketRequestResponsePair = class {
-  constructor(
-    public request: string,
-    public response: string,
-  ) {}
-};
+import { HARBOR_SPAWN, UNSTICK_COOLDOWN_MS, type HarborPlayer } from "@gantt-quest/world";
+import { HarborSocket } from "./rooms";
 
 const { HarborRoom } = await import("../src/server/harbor-room");
-
-class FakeSocket {
-  sent: HarborServerMessage[] = [];
-  constructor(private attachment: HarborPlayer | null) {}
-  deserializeAttachment() {
-    return this.attachment;
-  }
-  serializeAttachment(next: HarborPlayer | null) {
-    this.attachment = next;
-  }
-  send(data: string) {
-    this.sent.push(JSON.parse(data));
-  }
-  close() {}
-}
 
 const hero = (id: string, pos: { q: number; r: number }): HarborPlayer => ({ id, name: id, classId: "fighter", level: 1, pos });
 
 describe("HarborRoom unstick", () => {
-  let mine: FakeSocket;
-  let theirs: FakeSocket;
+  let mine: HarborSocket;
+  let theirs: HarborSocket;
   let room: InstanceType<typeof HarborRoom>;
   // Three hexes east of where heroes arrive, on the open grass south of the High Street: always open ground.
   const away = { q: HARBOR_SPAWN.q + 3, r: HARBOR_SPAWN.r };
@@ -41,8 +20,8 @@ describe("HarborRoom unstick", () => {
 
   beforeEach(() => {
     vi.useRealTimers();
-    mine = new FakeSocket({ ...hero("me", away), bedroll: away });
-    theirs = new FakeSocket(hero("them", elsewhere));
+    mine = new HarborSocket({ ...hero("me", away), bedroll: away });
+    theirs = new HarborSocket(hero("them", elsewhere));
     const sockets = [mine, theirs];
     const ctx = {
       setWebSocketAutoResponse() {},
@@ -51,7 +30,7 @@ describe("HarborRoom unstick", () => {
     room = new HarborRoom(ctx as never, {} as never);
   });
 
-  const unstick = (ws: FakeSocket, extra: Record<string, unknown> = {}) => room.webSocketMessage(ws as unknown as WebSocket, JSON.stringify({ type: "unstick", ...extra }));
+  const unstick = (ws: HarborSocket, extra: Record<string, unknown> = {}) => room.webSocketMessage(ws as unknown as WebSocket, JSON.stringify({ type: "unstick", ...extra }));
 
   it("puts your own hero on the spawn hex and tells everyone", async () => {
     await unstick(mine);

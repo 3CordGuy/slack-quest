@@ -67,6 +67,10 @@ const ROUTE_COLOR: Record<AtlasRoute["kind"], string> = { sailed: "#fff3d0", ope
 const MOTE_COLOR = { map: "#5fe6e0", enemy: "#ff6a5c", boon: "#ffd24a" };
 const GOLD = new THREE.Color("#ffd772");
 const WHITE = new THREE.Color("#ffffff");
+/** The colours a frame works from, read out of their strings once: each look's ring and stone, and the light that runs along a route and along the way picked. */
+const LOOK_COLOR = Object.fromEntries(Object.entries(LOOKS).map(([look, l]) => [look, { ring: new THREE.Color(l.ring), stone: new THREE.Color(l.stone) }])) as Record<AtlasLook, { ring: THREE.Color; stone: THREE.Color }>;
+const FLOW_COLOR = new THREE.Color(ROUTE_COLOR.open);
+const TRAIL_COLOR = new THREE.Color("#ffc94a");
 /** How far apart a route's dashes are laid, in world units, and how far short of a place they stop. */
 const DASH_GAP: Record<AtlasRoute["kind"], number> = { sailed: 0.46, open: 0.46, fog: 0.74 };
 const DASH_CLEAR = 0.95;
@@ -455,6 +459,7 @@ export class AtlasLayer {
     for (const p of this.placed) {
       if (p.stone < 0) continue;
       const look = LOOKS[p.mark.look];
+      const tint = LOOK_COLOR[p.mark.look];
       const open = p.mark.look === "open";
       const lively = p.mark.id === this.picked || p.mark.id === this.hovered;
       // Somewhere to go breathes, and its stone rides the air and turns; somewhere cleared has settled.
@@ -462,15 +467,15 @@ export class AtlasLayer {
       const rise = open ? 0.66 + 0.07 * Math.sin(clock * 1.3 + p.phase) : 0.4;
       const big = (open ? 1 : 0.72) * (lively ? 1.18 : 1);
       stone.setMatrixAt(p.stone, m.compose(at.set(p.x, p.y + rise, p.z), q.setFromAxisAngle(UP, open ? clock * 0.9 + p.phase : p.phase), size.setScalar(big)));
-      stone.setColorAt(p.stone, c.set(look.stone).multiplyScalar(open ? 0.92 + 0.16 * breath : 0.8));
+      stone.setColorAt(p.stone, c.copy(tint.stone).multiplyScalar(open ? 0.92 + 0.16 * breath : 0.8));
       const glow = (open ? 1.9 + 0.5 * breath : 1.25) * (lively ? 1.25 : 1);
       halo.setMatrixAt(p.halo, m.compose(at.set(p.x, p.y + rise, p.z), camera.quaternion, size.setScalar(glow)));
-      halo.setColorAt(p.halo, c.set(look.ring).multiplyScalar(look.halo * (open ? 0.75 + 0.5 * breath : 1) * (lively ? 1.4 : 1)));
+      halo.setColorAt(p.halo, c.copy(tint.ring).multiplyScalar(look.halo * (open ? 0.75 + 0.5 * breath : 1) * (lively ? 1.4 : 1)));
       if (!open) continue;
-      if (!p.aloft) ring.setColorAt(p.ring, c.set(look.ring).lerp(WHITE, 0.12 + 0.2 * breath));
-      pool.setColorAt(p.pool, c.set(look.ring).multiplyScalar(look.pool * (0.78 + 0.44 * breath)));
+      if (!p.aloft) ring.setColorAt(p.ring, c.copy(tint.ring).lerp(WHITE, 0.12 + 0.2 * breath));
+      pool.setColorAt(p.pool, c.copy(tint.ring).multiplyScalar(look.pool * (0.78 + 0.44 * breath)));
       // Gold while some of the crew are there.
-      if (beam && p.beam >= 0) beam.setColorAt(p.beam, (p.mark.busy ? c.copy(GOLD) : c.set(look.ring)).multiplyScalar((p.mark.busy ? 0.6 : 0.34) + 0.26 * breath));
+      if (beam && p.beam >= 0) beam.setColorAt(p.beam, (p.mark.busy ? c.copy(GOLD) : c.copy(tint.ring)).multiplyScalar((p.mark.busy ? 0.6 : 0.34) + 0.26 * breath));
       const motes = p.mark.motes?.length ?? 0;
       if (mote && p.mote >= 0) {
         for (let i = 0; i < motes; i++) {
@@ -481,21 +486,24 @@ export class AtlasLayer {
       }
     }
     // Light runs out along the routes on to somewhere open, and brighter along the way to the place picked.
-    const run = (mesh: THREE.InstancedMesh | undefined, list: Dash[], from: THREE.ColorRepresentation, to: THREE.Color, speed: number, floor: number) => {
+    const run = (mesh: THREE.InstancedMesh | undefined, list: Dash[], from: THREE.Color, to: THREE.Color, speed: number, floor: number) => {
       if (!mesh || list.length === 0) return;
       list.forEach((s, i) => {
         const wave = Math.max(0, Math.sin(s.along * 0.85 - clock * speed));
-        mesh.setColorAt(i, c.set(from).lerp(to, wave * wave).multiplyScalar(floor + (1 - floor) * (0.5 + 0.5 * wave)));
+        mesh.setColorAt(i, c.copy(from).lerp(to, wave * wave).multiplyScalar(floor + (1 - floor) * (0.5 + 0.5 * wave)));
       });
       mesh.instanceColor!.needsUpdate = true;
     };
-    run(flow, this.flowing, ROUTE_COLOR.open, WHITE, 3.1, 0.62);
-    run(trail, this.trailing, "#ffc94a", WHITE, 4.2, 0.8);
-    for (const mesh of [stone, halo, ring, pool, beam, mote]) {
+    run(flow, this.flowing, FLOW_COLOR, WHITE, 3.1, 0.62);
+    run(trail, this.trailing, TRAIL_COLOR, WHITE, 4.2, 0.8);
+    // The stones, halos and motes have moved, and all but the motes changed colour.
+    for (const mesh of [stone, halo, mote]) {
       if (!mesh) continue;
       mesh.instanceMatrix.needsUpdate = true;
       if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
     }
+    // The rings, pools and beams stay where `set` put them: only their colours are sent again.
+    for (const mesh of [ring, pool, beam]) if (mesh?.instanceColor) mesh.instanceColor.needsUpdate = true;
     if (this.pickedBand.visible) this.pickedBand.scale.setScalar(1 + 0.06 * Math.sin(clock * 3.1));
   }
 }

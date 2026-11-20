@@ -1,35 +1,13 @@
 // The Harbor's "look" message: which way a hero is facing as they stand
 // (toward their player's pointer) is passed on to everyone else there, so
 // teammates see it too. It is only for show: coarse, rate-limited, and never
-// kept. The room is driven with fake hibernatable sockets, as in
-// harborUnstick.test.ts.
+// kept. The room is driven with fake hibernatable sockets (rooms.ts).
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { HARBOR_SPAWN, LOOK_MIN_MS, LOOK_STEPS, lookStep, lookYaw, validLook, type HarborPlayer, type HarborServerMessage } from "@gantt-quest/world";
-
-(globalThis as Record<string, unknown>).WebSocketRequestResponsePair = class {
-  constructor(
-    public request: string,
-    public response: string,
-  ) {}
-};
+import { HARBOR_SPAWN, LOOK_MIN_MS, LOOK_STEPS, lookStep, lookYaw, validLook, type HarborPlayer } from "@gantt-quest/world";
+import { HarborSocket } from "./rooms";
 
 const { HarborRoom } = await import("../src/server/harbor-room");
-
-class FakeSocket {
-  sent: HarborServerMessage[] = [];
-  constructor(private attachment: HarborPlayer | null) {}
-  deserializeAttachment() {
-    return this.attachment;
-  }
-  serializeAttachment(next: HarborPlayer | null) {
-    this.attachment = next;
-  }
-  send(data: string) {
-    this.sent.push(JSON.parse(data));
-  }
-  close() {}
-}
 
 const hero = (id: string): HarborPlayer => ({ id, name: id, classId: "fighter", level: 1, pos: HARBOR_SPAWN });
 
@@ -52,15 +30,15 @@ describe("looking", () => {
 });
 
 describe("HarborRoom look", () => {
-  let mine: FakeSocket;
-  let theirs: FakeSocket;
+  let mine: HarborSocket;
+  let theirs: HarborSocket;
   let room: InstanceType<typeof HarborRoom>;
 
   beforeEach(() => {
     vi.useFakeTimers();
     vi.setSystemTime(1_000_000);
-    mine = new FakeSocket(hero("me"));
-    theirs = new FakeSocket(hero("them"));
+    mine = new HarborSocket(hero("me"));
+    theirs = new HarborSocket(hero("them"));
     const sockets = [mine, theirs];
     const ctx = {
       setWebSocketAutoResponse() {},
@@ -69,8 +47,8 @@ describe("HarborRoom look", () => {
     room = new HarborRoom(ctx as never, {} as never);
   });
 
-  const look = (ws: FakeSocket, value: unknown, extra: Record<string, unknown> = {}) => room.webSocketMessage(ws as unknown as WebSocket, JSON.stringify({ type: "look", look: value, ...extra }));
-  const looks = (ws: FakeSocket) => ws.sent.filter((m) => m.type === "looked");
+  const look = (ws: HarborSocket, value: unknown, extra: Record<string, unknown> = {}) => room.webSocketMessage(ws as unknown as WebSocket, JSON.stringify({ type: "look", look: value, ...extra }));
+  const looks = (ws: HarborSocket) => ws.sent.filter((m) => m.type === "looked");
 
   it("tells everyone else which way you look, and not you", async () => {
     await look(mine, 5);

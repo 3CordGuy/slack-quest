@@ -1,7 +1,7 @@
-// Huts: what can be owned, crafted and placed in one, and what it gives.
+// Huts: what can be owned, crafted and placed in one.
 //
 // This file is the shared vocabulary for the hut work: resource kinds, the
-// furnishings catalogue, hut sizes, and the perks a furnished hut grants.
+// furnishings catalogue and hut sizes.
 // Rules that act on a hut (room layout, placement, crafting) build on it.
 
 export const RESOURCE_KINDS = ["wood", "stone", "iron", "copper", "fur", "bone", "herbs", "mushrooms", "slime", "gem"] as const;
@@ -21,52 +21,9 @@ export const RESOURCE_LABEL: Record<ResourceKind, string> = {
   gem: "Gems",
 };
 
-/** Add `more` into `into`, returning `into`. Zero and negative results are dropped. */
-export function addResources(into: Resources, more: Resources): Resources {
-  for (const kind of RESOURCE_KINDS) {
-    const n = (into[kind] ?? 0) + (more[kind] ?? 0);
-    if (n > 0) into[kind] = n;
-    else delete into[kind];
-  }
-  return into;
-}
-
 /** True if `have` covers every amount in `cost`. */
 export function canAfford(have: Resources, cost: Resources): boolean {
   return RESOURCE_KINDS.every((k) => (have[k] ?? 0) >= (cost[k] ?? 0));
-}
-
-// ---------- perks ----------
-
-/** What a furnished hut gives its owner at the start of a voyage. */
-export interface Perk {
-  /** Extra starting (and maximum) focus. */
-  focus?: number;
-  /** Extra starting potions. */
-  potions?: number;
-  maxHp?: number;
-  /** Bonus XP, in percent. */
-  xpPct?: number;
-}
-
-/** The most a hut can give, however it is furnished. Kept small on purpose. */
-export const PERK_CAPS: Required<Perk> = { focus: 1, potions: 1, maxHp: 4, xpPct: 5 };
-
-const PERK_KEYS = Object.keys(PERK_CAPS) as (keyof Perk)[];
-
-/** A perk with every field present, whole, and held between zero and its cap. */
-export function capPerks(perk: Perk | undefined): Required<Perk> {
-  const out = { focus: 0, potions: 0, maxHp: 0, xpPct: 0 };
-  for (const key of PERK_KEYS) {
-    const n = Math.floor(Number(perk?.[key] ?? 0));
-    out[key] = Number.isFinite(n) ? Math.max(0, Math.min(PERK_CAPS[key], n)) : 0;
-  }
-  return out;
-}
-
-/** XP after a hut's bonus. The bonus is rounded to the nearest point, so a small bonus on a small award may add nothing. */
-export function xpWithBonus(xp: number, xpPct: number): number {
-  return xp + Math.round((xp * capPerks({ xpPct }).xpPct) / 100);
 }
 
 // ---------- catalogue ----------
@@ -150,7 +107,6 @@ export interface FurnishingDef {
   recipe?: Resources;
   /** Crafting needs its blueprint to have been learned first. */
   needsBlueprint?: boolean;
-  perk?: Perk;
 }
 
 /** Half the distance between the middles of two neighbouring hexes: where a two-hex piece's middle sits from its anchor. */
@@ -174,16 +130,16 @@ export const FURNISHINGS: Record<string, FurnishingDef> = {
   rug: { id: "rug", name: "Fur Rug", kind: "furniture", footprint: { w: 1.2, d: 0.98, z: 0.09 }, flat: true, model: "rug", blurb: "Warm underfoot.", price: 35, recipe: { fur: 4 } },
   lantern: { id: "lantern", name: "Copper Lantern", kind: "furniture", footprint: { w: 0.4, d: 0.4, round: true }, model: "lantern", blurb: "Keeps the corners lit.", price: 40, recipe: { copper: 3, wood: 1 }, light: "lamp" },
   banner: { id: "banner", name: "Crew Banner", kind: "furniture", footprint: { w: 0.7, d: 0.36 }, model: "banner", blurb: "Your crew's colours.", price: 45, recipe: { fur: 2, wood: 2 } },
-  bed: { id: "bed", name: "Bunk", kind: "furniture", bed: true, footprint: { w: 0.84, d: 1.3, z: -0.02 }, model: "bed", blurb: "A proper night's sleep before sailing. +1 focus.", recipe: { wood: 8, fur: 4 }, needsBlueprint: true, perk: { focus: 1 } },
-  chest: { id: "chest", name: "Sea Chest", kind: "furniture", footprint: { w: 0.79, d: 0.56 }, model: "chest", blurb: "Room for a spare bottle. +1 potion. Twelve squares by eight inside.", recipe: { wood: 6, iron: 3 }, needsBlueprint: true, perk: { potions: 1 }, storage: CHEST_COLS * 8, surface: { y: 0.48, w: 0.74, d: 0.5 } },
-  hearth: { id: "hearth", name: "Stone Hearth", kind: "furniture", footprint: { w: 1.2, d: 0.72 }, model: "hearth", blurb: "A hot meal before the voyage. +4 max HP.", recipe: { stone: 10, iron: 2 }, needsBlueprint: true, perk: { maxHp: 4 }, light: "fire" },
-  bookshelf: { id: "bookshelf", name: "Bookshelf", kind: "furniture", footprint: { w: 0.95, d: 0.34, z: -0.1 }, model: "bookshelf", blurb: "Other people's mistakes, written down. +2% XP.", recipe: { wood: 8, bone: 2 }, needsBlueprint: true, perk: { xpPct: 2 } },
+  bed: { id: "bed", name: "Bunk", kind: "furniture", bed: true, footprint: { w: 0.84, d: 1.3, z: -0.02 }, model: "bed", blurb: "A proper night's sleep before sailing.", recipe: { wood: 8, fur: 4 }, needsBlueprint: true },
+  chest: { id: "chest", name: "Sea Chest", kind: "furniture", footprint: { w: 0.79, d: 0.56 }, model: "chest", blurb: "Room for a spare bottle. Twelve squares by eight inside.", recipe: { wood: 6, iron: 3 }, needsBlueprint: true, storage: CHEST_COLS * 8, surface: { y: 0.48, w: 0.74, d: 0.5 } },
+  hearth: { id: "hearth", name: "Stone Hearth", kind: "furniture", footprint: { w: 1.2, d: 0.72 }, model: "hearth", blurb: "A hot meal before the voyage.", recipe: { stone: 10, iron: 2 }, needsBlueprint: true, light: "fire" },
+  bookshelf: { id: "bookshelf", name: "Bookshelf", kind: "furniture", footprint: { w: 0.95, d: 0.34, z: -0.1 }, model: "bookshelf", blurb: "Other people's mistakes, written down.", recipe: { wood: 8, bone: 2 }, needsBlueprint: true },
   workbench: { id: "workbench", name: "Workbench", kind: "furniture", footprint: { w: 1.15, d: 0.6 }, model: "workbench", blurb: "Where the next thing gets made.", recipe: { wood: 6, iron: 4 }, needsBlueprint: true, surface: { y: 0.6, w: 1.1, d: 0.56 } },
   // Every home gets one, free, standing in the room: where gear the hero cannot carry waits (carry.ts).
-  // Never sold or crafted, and it gives no perk. A container like the others, and moved like any piece.
+  // Never sold or crafted. A container like the others, and moved like any piece.
   storage_chest: { id: "storage_chest", name: "Storage Chest", kind: "furniture", footprint: { w: 0.58, d: 0.45 }, model: "small_chest", blurb: "Every home's own chest, for the gear you cannot carry. Twelve squares by ten inside.", storage: CHEST_COLS * 10, surface: { y: 0.42, w: 0.54, d: 0.4 } },
   // Every home gets one of these too, free: open it to change how you look, as "Change look" on the hero's sheet does.
-  // Never sold or crafted, and it gives no perk. Moved like any piece.
+  // Never sold or crafted. Moved like any piece.
   wardrobe: { id: "wardrobe", name: "Wardrobe", kind: "furniture", dress: true, footprint: { w: 0.96, d: 0.5, z: -0.12 }, model: "wardrobe", blurb: "Every home's own wardrobe. Open it to change how you look.", surface: { y: 1.6, w: 0.9, d: 0.44, z: -0.12 } },
   weapon_rack: { id: "weapon_rack", name: "Weapon Rack", kind: "furniture", footprint: { w: 1.0, d: 0.22, z: -0.08 }, model: "weapon_rack", blurb: "Everything in reach.", recipe: { wood: 4, iron: 4, copper: 2 }, needsBlueprint: true },
 
@@ -201,8 +157,8 @@ export const FURNISHINGS: Record<string, FurnishingDef> = {
   long_bench: { id: "long_bench", name: "Long Bench", kind: "furniture", footprint: { w: 2.3, d: 0.42, x: HALF_HEX }, model: "long_bench", blurb: "For sitting along a long table. Two hexes long.", price: 30, recipe: { wood: 6 } },
   runner_rug: { id: "runner_rug", name: "Sailcloth Runner", kind: "furniture", flat: true, footprint: { w: 4.6, d: 1.0, x: 2 * HALF_HEX }, model: "runner_rug", blurb: "An old sail, striped and hemmed. Three hexes long; furniture stands on it.", price: 55, recipe: { fur: 6 } },
   round_rug: { id: "round_rug", name: "Braided Rug", kind: "furniture", flat: true, footprint: { w: 2.7, d: 2.7, x: HALF_HEX, z: 0.5, round: true }, model: "round_rug", blurb: "Rope and rags, braided round. Covers three hexes; furniture stands on it.", price: 65, recipe: { fur: 7, herbs: 2 } },
-  four_poster: { id: "four_poster", name: "Four-Poster Bed", kind: "furniture", bed: true, minTier: 2, footprint: { w: 2.4, d: 1.1, x: HALF_HEX }, model: "four_poster", blurb: "Curtains, a canopy and room to stretch out. Two hexes long. +1 focus.", recipe: { wood: 14, fur: 6 }, perk: { focus: 1 } },
-  great_bookcase: { id: "great_bookcase", name: "Great Bookcase", kind: "furniture", minTier: 2, footprint: { w: 2.4, d: 0.5, x: HALF_HEX, z: -0.1 }, model: "great_bookcase", blurb: "A wall of books and a ladder to reach them. Two hexes long. +1% XP.", recipe: { wood: 14, bone: 3 }, perk: { xpPct: 1 }, surface: { y: 1.62, w: 2.36, d: 0.36, x: HALF_HEX, z: -0.15 } },
+  four_poster: { id: "four_poster", name: "Four-Poster Bed", kind: "furniture", bed: true, minTier: 2, footprint: { w: 2.4, d: 1.1, x: HALF_HEX }, model: "four_poster", blurb: "Curtains, a canopy and room to stretch out. Two hexes long.", recipe: { wood: 14, fur: 6 } },
+  great_bookcase: { id: "great_bookcase", name: "Great Bookcase", kind: "furniture", minTier: 2, footprint: { w: 2.4, d: 0.5, x: HALF_HEX, z: -0.1 }, model: "great_bookcase", blurb: "A wall of books and a ladder to reach them. Two hexes long.", recipe: { wood: 14, bone: 3 }, surface: { y: 1.62, w: 2.36, d: 0.36, x: HALF_HEX, z: -0.15 } },
 
   // ---- small things: anywhere in a hex, at any angle, or on a surface ----
   candle: { id: "candle", name: "Tallow Candle", kind: "furniture", size: "small", model: "candle", blurb: "A small, steady flame.", price: 5, recipe: { fur: 1 }, light: "candle" },
@@ -244,14 +200,14 @@ export const FURNISHINGS: Record<string, FurnishingDef> = {
   rowboat: { id: "rowboat", name: "Rowboat", kind: "vessel", model: "rowboat", blurb: "A proper boat, with oars. It goes anywhere on the water, and out past the Harbor to the open sea. Your basket holds 20 kg more in it.", recipe: { wood: 20, copper: 4, fur: 2 } },
 
   // Far goods: never at the stall and never crafted. Only a traveling salesman carries them (see salesman.ts).
-  globe: { id: "globe", name: "Sea Globe", kind: "furniture", footprint: { w: 0.56, d: 0.56, round: true }, model: "globe", blurb: "Some of the coastlines are guesses. +1% XP.", perk: { xpPct: 1 } },
+  globe: { id: "globe", name: "Sea Globe", kind: "furniture", footprint: { w: 0.56, d: 0.56, round: true }, model: "globe", blurb: "Some of the coastlines are guesses." },
   ship_bottle: { id: "ship_bottle", name: "Ship in a Bottle", kind: "furniture", footprint: { w: 0.74, d: 0.36 }, model: "ship_bottle", blurb: "Nobody knows how it got in there." },
   shell_chimes: { id: "shell_chimes", name: "Shell Chimes", kind: "furniture", footprint: { w: 0.66, d: 0.36 }, model: "shell_chimes", blurb: "They ring when the wind is from the sea." },
-  // Trophies come only from finishing a story, one kind per story shape.
-  trophy_relic: { id: "trophy_relic", name: "Recovered Relic", kind: "trophy", footprint: { w: 0.84, d: 0.84, round: true }, model: "trophy_relic", blurb: "A replica of what was won back. +1% XP.", perk: { xpPct: 1 } },
-  trophy_token: { id: "trophy_token", name: "Keepsake of Thanks", kind: "trophy", footprint: { w: 0.84, d: 0.84, round: true }, model: "trophy_token", blurb: "Given by someone brought home. +1% XP.", perk: { xpPct: 1 } },
-  trophy_pelt: { id: "trophy_pelt", name: "Beast's Pelt", kind: "trophy", footprint: { w: 0.84, d: 0.84, round: true }, model: "trophy_pelt", blurb: "It is bigger than it looked in the dark. +1% XP.", perk: { xpPct: 1 } },
-  trophy_core: { id: "trophy_core", name: "Guardian's Core", kind: "trophy", footprint: { w: 0.84, d: 0.84, round: true }, model: "trophy_core", blurb: "Still faintly warm. +1% XP.", perk: { xpPct: 1 } },
+  // Trophies were the prize for finishing a voyage's story. Nothing awards one now; those already won stay in their huts.
+  trophy_relic: { id: "trophy_relic", name: "Recovered Relic", kind: "trophy", footprint: { w: 0.84, d: 0.84, round: true }, model: "trophy_relic", blurb: "A replica of what was won back." },
+  trophy_token: { id: "trophy_token", name: "Keepsake of Thanks", kind: "trophy", footprint: { w: 0.84, d: 0.84, round: true }, model: "trophy_token", blurb: "Given by someone brought home." },
+  trophy_pelt: { id: "trophy_pelt", name: "Beast's Pelt", kind: "trophy", footprint: { w: 0.84, d: 0.84, round: true }, model: "trophy_pelt", blurb: "It is bigger than it looked in the dark." },
+  trophy_core: { id: "trophy_core", name: "Guardian's Core", kind: "trophy", footprint: { w: 0.84, d: 0.84, round: true }, model: "trophy_core", blurb: "Still faintly warm." },
 };
 
 /** The free storage chest every home has. */
@@ -260,17 +216,6 @@ export const STORAGE_CHEST = "storage_chest";
 export const WARDROBE = "wardrobe";
 /** What every home comes with, free, standing in the room (see HutRoom.stock). */
 export const HOME_FREEBIES: readonly string[] = [STORAGE_CHEST, WARDROBE];
-
-/** Which trophy each story shape awards, by frame id. */
-export const TROPHY_FOR_FRAME: Record<string, string> = {
-  stolen_relic: "trophy_relic",
-  rescue: "trophy_token",
-  beast_hunt: "trophy_pelt",
-  broken_relic: "trophy_core",
-  // A share of the hoard, and the island's thanks for lifting its curse.
-  rival_crew: "trophy_relic",
-  lift_curse: "trophy_token",
-};
 
 /** Blueprints every player knows from the start. Others are found or bought. */
 export const STARTER_BLUEPRINTS: string[] = Object.values(FURNISHINGS).filter((f) => f.recipe && !f.needsBlueprint).map((f) => f.id);
@@ -297,12 +242,10 @@ export const HUT_TIERS: HutTier[] = [
  * islanders forage. The stall has no use for timber or ore, and gems go to
  * the lapidary (lapidary.ts).
  *
- * 3 gold is pitched at what the Apothecary's brews are worth at pub prices:
- * a Focus Tonic's 4 pieces sell for 12 against Spiced Rum's 14 for the same
- * focus, a Stoneskin Salve's 3 mushrooms for 9 against Fish Stew's 12 for the
- * same HP. Brewing is never worse than selling and buying the pub's version,
- * and a Healing Draught (a potion, which nobody sells) is better. The herbalist
- * salesman pays 5 to 7 a piece, so the stall stays the everyday floor.
+ * At 3 gold a piece, a healing potion's 3 herbs sell for 9 against the 28 the
+ * apothecary asks for one ready-made, so making your own is the better use of
+ * them. The herbalist salesman pays 5 to 7 a piece, so the stall stays the
+ * everyday floor.
  */
 export const STALL_BUYS: Partial<Record<ResourceKind, number>> = { herbs: 3, mushrooms: 3 };
 
@@ -336,11 +279,6 @@ export function binNeeds(bin: Resources): Resources {
     if (n > 0) out[k] = n;
   }
   return out;
-}
-
-/** True once the bin holds everything the shack needs. */
-export function binFull(bin: Resources): boolean {
-  return Object.keys(binNeeds(bin)).length === 0;
 }
 
 /** How full the bin is, from 0 to 1, counting every piece the same. */
@@ -434,18 +372,6 @@ export interface HutSummary {
   /** Materials and gear kept in the hut's containers. */
   stash: StashedStack[];
   stowed: StowedGear[];
-}
-
-/** The perks from the furnishings that are actually placed, held to the caps. */
-export function hutPerks(furnishings: Pick<Furnishing, "defId" | "q">[]): Required<Perk> {
-  const total: Required<Perk> = { focus: 0, potions: 0, maxHp: 0, xpPct: 0 };
-  for (const f of furnishings) {
-    if (f.q === null) continue;
-    const perk = FURNISHINGS[f.defId]?.perk;
-    if (!perk) continue;
-    for (const key of PERK_KEYS) total[key] = Math.min(PERK_CAPS[key], total[key] + (perk[key] ?? 0));
-  }
-  return total;
 }
 
 // ---------- spending: crafting, the stall, and a bigger hut ----------

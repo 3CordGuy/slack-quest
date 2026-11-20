@@ -141,7 +141,7 @@ export class AtlasCloud {
   private stop: () => void;
 
   /** `reach` is how far the lit ground it is told of can lie from the middle it is given, in hexes. */
-  constructor(private renderer: WorldRenderer, private reach: number) {
+  constructor(private renderer: WorldRenderer, reach: number) {
     this.size = reach * 2 + 5;
     const data = new Uint8Array(this.size * this.size).fill(255);
     this.thick = new Float32Array(this.size * this.size).fill(1);

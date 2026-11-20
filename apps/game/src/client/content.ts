@@ -16,7 +16,6 @@ const EMPTY: ContentBundle = { version: 0, names: {}, palettes: {}, icons: {}, s
 const STORE_KEY = "gq_content";
 
 let bundle: ContentBundle = EMPTY;
-const listeners = new Set<(b: ContentBundle) => void>();
 
 /** The overrides in force. Empty until loadContent has run. */
 export function content(): ContentBundle {
@@ -26,13 +25,6 @@ export function content(): ContentBundle {
 /** Replace the bundle in force, e.g. with an admin's unsaved draft for a preview. */
 export function setContent(next: ContentBundle): void {
   bundle = next;
-  for (const fn of listeners) fn(bundle);
-}
-
-/** Called whenever the bundle changes. Returns an unsubscribe. */
-export function onContent(fn: (b: ContentBundle) => void): () => void {
-  listeners.add(fn);
-  return () => listeners.delete(fn);
 }
 
 function stored(): ContentBundle | null {

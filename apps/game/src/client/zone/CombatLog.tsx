@@ -171,13 +171,14 @@ const Row = memo(function Row({ e, fresh }: { e: LogEntry; fresh: boolean }) {
   }
 });
 
-export function CombatLog({ entries, open, onToggle, className }: CombatLogProps) {
+// Drawn again only when what it is handed changes: the view it sits in is drawn for every hex the pointer crosses.
+export const CombatLog = memo(function CombatLog({ entries, open, onToggle, className }: CombatLogProps) {
   const body = useRef<HTMLDivElement>(null);
   /** At the newest line: new ones are followed. Off once the player scrolls up to read. */
   const stuck = useRef(true);
   const [away, setAway] = useState(false);
   /** The newest entry there was when the log was first drawn (or last opened): later ones light up as they come. */
-  const seen = useRef(entries.length ? entries[entries.length - 1].id : -Infinity);
+  const [seen, setSeen] = useState(() => (entries.length ? entries[entries.length - 1].id : -Infinity));
   const last = entries.length ? entries[entries.length - 1] : null;
 
   useLayoutEffect(() => {
@@ -193,7 +194,7 @@ export function CombatLog({ entries, open, onToggle, className }: CombatLogProps
   // What has been shown once no longer lights up.
   useEffect(() => {
     if (!last) return;
-    const timer = setTimeout(() => { seen.current = last.id; }, 950);
+    const timer = setTimeout(() => setSeen(last.id), 950);
     return () => clearTimeout(timer);
   }, [last?.id]);
 
@@ -226,13 +227,13 @@ export function CombatLog({ entries, open, onToggle, className }: CombatLogProps
           }}
         >
           {entries.length === 0 && <div className="fl-empty">Nothing has happened yet.</div>}
-          {entries.map((e) => <Row key={e.id} e={e} fresh={e.id > seen.current} />)}
+          {entries.map((e) => <Row key={e.id} e={e} fresh={e.id > seen} />)}
         </div>
       )}
       {open && away && <button type="button" className="fl-jump" onClick={toLatest}>Latest ↓</button>}
     </section>
   );
-}
+});
 
 // ---------- the roll, large ----------
 

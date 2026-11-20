@@ -52,7 +52,6 @@ interface Move {
 export function TideTable({ table, you, gold, error, lastXp, looks, world, host, send }: Props) {
   const [rules, setRules] = useState(false);
   const name = (id: string) => (id === you ? "You" : (table?.seats.find((s) => s.id === id)?.name ?? "Someone"));
-  const short = (id: string) => (id === you ? "you" : firstName(name(id)));
   const seats = table?.seats ?? [];
   const seated = seats.some((s) => s.id === you);
   const mine = seats.find((s) => s.id === you);

@@ -1,6 +1,6 @@
-// The Harbor: a crew's shared, walkable base between voyages.
+// The Harbor: a crew's shared, walkable base.
 //
-// Unlike an island it is not turn-based and has no reducer: players walk
+// Unlike a zone it is not turn-based and has no reducer: players walk
 // freely, and the HarborRoom Durable Object only validates paths and relays
 // them. This file holds the fixed map and the message shapes both sides use.
 
@@ -8,7 +8,7 @@ import type { Appearance } from "./appearance";
 import { allHexesInGrid, type HexGrid, type HexPos } from "@gantt-quest/core";
 import type { Outfit } from "./gear";
 import type { FishSpot, Vessel } from "./fishing";
-import type { Perk, Resources } from "./hut";
+import type { Resources } from "./hut";
 import type { ItemDef } from "./gear";
 import type { Stats } from "@gantt-quest/core";
 import type { HarborWorks } from "./projects";
@@ -680,7 +680,7 @@ export interface HarborPlayer {
 }
 
 /**
- * What anyone sharing a crew or a voyage may see of a hero, for the sheet
+ * What anyone sharing a crew or a map may see of a hero, for the sheet
  * that opens on hovering or clicking them. Game facts only: no email, no
  * gold, nothing in their pack or at home.
  */
@@ -698,8 +698,6 @@ export interface PublicHero {
   armor: number;
   /** What they wear, one item per slot. */
   gear: ItemDef[];
-  /** What the furniture in their hut gives them on a voyage. */
-  hutPerks?: Perk;
   /** How they chose to look, if they did. */
   appearance?: Appearance;
 }
@@ -722,29 +720,6 @@ export interface HarborMember {
   zone?: { code: string; fighting: boolean };
 }
 
-export interface HarborShip {
-  code: string;
-  captain: string;
-  aboard: string[];
-  /** lobby: moored and boardable. Anything else: away at an island. */
-  phase: string;
-  /** Story title once the voyage is under way. */
-  title: string | null;
-  day: number | null;
-  /** Index into HARBOR_PIERS while moored, else null. Never set for a delve, which gathers at the cave mouth. */
-  pier: number | null;
-  /** A voyage, or a delve into the Haunted Caverns. Absent from boards sent before caverns: a voyage. */
-  kind?: "voyage" | "caverns";
-}
-
-export interface HarborLogEntry {
-  code: string;
-  title: string;
-  outcome: "victory" | "defeat";
-  crew: string[];
-  at: number;
-}
-
 /** A map the crew has open out through the waygate: its code, the atlas node it was made for, and what the place is called. */
 export interface HarborMap {
   code: string;
@@ -754,8 +729,6 @@ export interface HarborMap {
 
 export interface HarborBoard {
   members: HarborMember[];
-  ships: HarborShip[];
-  log: HarborLogEntry[];
   /** The crew's shared projects and who gave what lately. */
   works?: HarborWorks;
   /**

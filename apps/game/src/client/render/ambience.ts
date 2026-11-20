@@ -612,6 +612,9 @@ interface Tuft {
   kind?: number;
   index?: number;
   yaw?: number;
+  /** The cosine and sine of that turn, worked out once with it: every frame's matrix wants them. */
+  cos?: number;
+  sin?: number;
 }
 /** A hex covered whole by one patch of grass (a meadow, or a dry one): where, turned how many sixths, which patch. */
 interface FieldPatch {
@@ -857,10 +860,9 @@ export class Ambience {
    * Buildings' lit windows and lanterns: additive halos that come up at dusk, and the window panes, which warm from
    * their daytime colour (`userData.unlit`) to their lit one (`userData.lit`) with them. Kept out of `group`, like the smoke.
    */
-  private lamps: { root: THREE.Group; glow: THREE.SpriteMaterial; halos: THREE.Sprite[]; sizes: number[]; panes: THREE.MeshBasicMaterial[] } | null = null;
+  private lamps: { root: THREE.Group; glow: THREE.SpriteMaterial; halos: THREE.Sprite[]; sizes: number[]; panes: THREE.MeshBasicMaterial[]; paneTints: { unlit: THREE.Color; lit: THREE.Color }[] } | null = null;
   /** The lights buildings ask for, lit outdoors along with the props' lights. */
   private poiLights: RoomLight[] = [];
-  private paneLit = new THREE.Color();
   private flatTint = new THREE.Color();
   private still = typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
   private m = new THREE.Matrix4();
@@ -1265,6 +1267,8 @@ export class Ambience {
       t.kind = Math.floor(hash(kx, kz, 5) * GRASS_KINDS);
       t.index = counts[t.kind]++;
       t.yaw = hash(kx, kz, 6) * Math.PI * 2;
+      t.cos = Math.cos(t.yaw);
+      t.sin = Math.sin(t.yaw);
     }
     this.grass = counts.map((count, kind) => {
       const mesh = new THREE.InstancedMesh(
@@ -1703,8 +1707,8 @@ export class Ambience {
           : motion * (Math.sin(clock * 1.3 + t.phase) * 0.22 + Math.sin(clock * 3.1 + t.phase * 1.7) * 0.07 + 0.08);
         const w = t.size * 1.4;
         const h = t.size * 1.45;
-        const cos = Math.cos(t.yaw!);
-        const sin = Math.sin(t.yaw!);
+        const cos = t.cos!;
+        const sin = t.sin!;
         // Columns: its own turn about y, scaled, with the up column sheared downwind so it bends from the root.
         this.m.set(
           cos * w, WIND_DIR.x * lean * h, sin * w, t.x,

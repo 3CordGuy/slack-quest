@@ -5,7 +5,7 @@
 // is lit from the right once the camera has swung round, warms at dusk and
 // dims and cools at night.
 //
-// Listeners are only told when it has changed enough to see.
+// The stylesheet is only told when it has changed enough to see.
 
 export interface Env {
   /** The light's direction on the screen: x to the right, y down, as a unit vector pointing toward the light. */
@@ -20,15 +20,7 @@ export interface Env {
 /** Until a scene says otherwise: noon, lit from the upper left. */
 export const env: Env = { lx: -0.7071, ly: -0.7071, tint: [1, 1, 1], level: 1 };
 
-const listeners = new Set<() => void>();
 let told: Env = { ...env, tint: [...env.tint] };
-
-export function onEnv(fn: () => void): () => void {
-  listeners.add(fn);
-  return () => {
-    listeners.delete(fn);
-  };
-}
 
 /**
  * Report the scene's light. `sun` is the direction to the sun or moon in the world, `yaw` the camera's turn
@@ -55,5 +47,4 @@ export function reportEnv(sun: { x: number; y: number; z: number }, yaw: number,
   told = { ...env, tint: [...env.tint] };
   // For the stylesheet: the bottom bar's timber dims with the hour.
   document.documentElement.style.setProperty("--env-level", env.level.toFixed(2));
-  for (const fn of listeners) fn();
 }

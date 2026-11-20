@@ -1,6 +1,6 @@
-// The zone reducer. stepZone(state, action) is pure and seeded, like
-// stepWorld: it returns the next state, what happened (for the client to
-// show) and what the server must carry out.
+// The zone reducer. stepZone(state, action) is pure and seeded: it returns
+// the next state, what happened (for the client to show) and what the
+// server must carry out.
 //
 // Out of a fight everyone walks freely, at once. A hero who comes within
 // sight of an enemy group starts one: the group and every hero near it
@@ -105,13 +105,16 @@ export function createZone(code: string, seed: string, options: ZoneOptions): Zo
   return state;
 }
 
-/** What a client is sent. */
-export function zoneView(state: ZoneState, you: string): ZoneView {
+/**
+ * What a client is sent. `hidden` is who the dark hides (light.ts hiddenEnemies): it is the same whoever is being
+ * told, and in a cave it takes going over every tile, so a caller with one state to send to several works it out
+ * once and hands it in each time.
+ */
+export function zoneView(state: ZoneState, you: string, hidden: readonly string[] = hiddenEnemies(state)): ZoneView {
   const { rng: _rng, seed: _seed, loot: _loot, ...rest } = state;
   // Of what there is to loot: what is everyone's (a body, a chest) as it stands, and of the spoils only the share of the one being told.
   const loot = lootFor(state, you);
   const mine = loot ? { loot } : {};
-  const hidden = hiddenEnemies(state);
   if (hidden.length === 0) return { ...rest, ...mine, you };
   // What the dark hides is not sent at all, unless it is in a fight: then it keeps its place in the order, marked.
   const fighting = hidden.filter((id) => inFight(state, id));
@@ -352,13 +355,16 @@ function rouse(ctx: Ctx): void {
     if (!e.group || state.groups[e.group]?.alerted) continue;
     bands.set(e.group, [...(bands.get(e.group) ?? []), e]);
   }
+  // Where getting to counts as getting to the fight: the hex of anyone in it, or one beside.
+  const near = new Set(fighters.flatMap((f) => [f.pos, ...hexNeighbors(f.pos, state.map.grid)]).map(posKey));
   const coming: string[] = [];
   for (const [group, members] of bands) {
     if (members.some((m) => ENEMIES[m.kind]?.boss)) continue;
     // One of them that can get to anyone in the fight is enough: the rest follow. Over the ground as it lies, with nobody standing on it.
     const ground = { ...state, units: [] };
     const way = members.some((m) => {
-      const reach = zoneReach(ground, m, ROUSE_REACH);
+      // Whether any such hex is reached is all that is asked, so the flood stops at the first (zoneReach `enough`).
+      const reach = zoneReach(ground, m, ROUSE_REACH, undefined, undefined, (r) => near.has(posKey(r.pos)));
       return fighters.some((f) => reach.has(posKey(f.pos)) || hexNeighbors(f.pos, state.map.grid).some((n) => reach.has(posKey(n))));
     });
     if (way) coming.push(group);
@@ -857,7 +863,8 @@ function act(ctx: Ctx, action: ZoneAction): string | null {
   }
   if (action.type === "move") {
     if (sameHex(action.to, unit.pos)) return null;
-    const reach = zoneReach(state, unit, budget ? moveLeft(budget) : FREE_WALK, undefined, courseFor(state, unit, budget));
+    // Only the hex asked for and the way to it are read, so the flood stops at it (zoneReach `enough`).
+    const reach = zoneReach(state, unit, budget ? moveLeft(budget) : FREE_WALK, undefined, courseFor(state, unit, budget), (r) => sameHex(r.pos, action.to));
     const end = reach.get(posKey(action.to));
     if (!end) return budget ? "You cannot get there with the AP you have left." : "You cannot get there.";
     if (!end.stop) return "Someone is standing there.";
@@ -1007,7 +1014,11 @@ function act(ctx: Ctx, action: ZoneAction): string | null {
 }
 
 export function stepZone(prev: ZoneState, action: ZoneAction): ZoneStep {
-  const state = structuredClone(prev);
+  // Everything is copied but the map's tiles, which are most of a state's weight: no step changes a tile where it
+  // lies (a door that opens is given a new array with a new tile in it: doors.ts), so the next state can share them,
+  // and what is reckoned once from them (map.ts tilesByKey, geometry.ts sightBlockers) is kept from step to step.
+  const state: ZoneState = structuredClone({ ...prev, map: { ...prev.map, tiles: [] } });
+  state.map.tiles = prev.map.tiles;
   const ctx: Ctx = { state, rng: makeRng(state.rng), events: [] as ZoneEvent[], effects: [] as ZoneEffect[] };
   ctx.onStep = (unit, flush) => onStep(ctx, unit, flush);
   const error = act(ctx, action);

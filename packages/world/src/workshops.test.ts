@@ -1,79 +1,25 @@
-// The apothecary and the smithy: their place among the projects, brew
-// recipes and the one-of-each bag, what a bag does to a hero who boards,
-// and the smithy's rising costs and +3 cap.
+// The apothecary and the smithy: their place among the projects, the flasks
+// made for the pack, and the smithy's rising costs and +3 cap.
 
 import { describe, expect, it } from "vitest";
-import { STARTING_STATS } from "@gantt-quest/core";
 import {
   APOTHECARY_PROJECT,
-  BREWS,
-  ENEMY_DROPS,
   FLASK_RECIPES,
   SMITHY_MAX_STEPS,
   THROWABLE_KINDS,
   SMITHY_PROJECT,
-  brewBag,
-  brewBuff,
-  brewProblem,
-  createWorld,
   flaskProblem,
   projectById,
   smithyCost,
   smithyProblem,
   smithyWork,
-  stepWorld,
   upgradedName,
-  type HeroInit,
 } from "./index";
 
 describe("the apothecary and smithy projects", () => {
   it("are open, with the agreed costs", () => {
     expect(projectById(APOTHECARY_PROJECT)).toMatchObject({ open: true, cost: { gold: 250, wood: 25, stone: 15, herbs: 20, mushrooms: 20 } });
     expect(projectById(SMITHY_PROJECT)).toMatchObject({ open: true, cost: { gold: 800, stone: 60, iron: 60, copper: 15 } });
-  });
-});
-
-describe("brewing", () => {
-  const plenty = { herbs: 10, mushrooms: 10, bone: 5 };
-
-  it("has three brews with the agreed recipes and effects", () => {
-    expect(BREWS.map((b) => [b.id, b.recipe, b.buff])).toEqual([
-      ["healing", { herbs: 3 }, { potions: 1 }],
-      ["focus", { herbs: 2, mushrooms: 2 }, { focus: 1 }],
-      ["stoneskin", { mushrooms: 3, bone: 1 }, { maxHp: 4 }],
-    ]);
-  });
-
-  it("needs the apothecary built, the materials, and no brew of that kind already in the bag", () => {
-    expect(brewProblem("healing", { built: true, bag: [], resources: plenty })).toBeNull();
-    expect(brewProblem("healing", { built: false, bag: [], resources: plenty })).toMatch(/not built/);
-    expect(brewProblem("healing", { built: true, bag: ["healing"], resources: plenty })).toMatch(/already carry/);
-    expect(brewProblem("focus", { built: true, bag: ["healing", "stoneskin"], resources: plenty })).toBeNull();
-    expect(brewProblem("stoneskin", { built: true, bag: [], resources: { mushrooms: 3 } })).toMatch(/1 bone/);
-    expect(brewProblem("focus", { built: true, bag: [], resources: { herbs: 2, mushrooms: 1 } })).toMatch(/takes/);
-    expect(brewProblem("elixir", { built: true, bag: [], resources: plenty })).toBe("No such brew.");
-  });
-
-  it("counts each kind once and ignores unknown ids", () => {
-    expect(brewBag(["stoneskin", "healing", "healing", "elixir"])).toEqual(["healing", "stoneskin"]);
-    expect(brewBuff(["healing", "healing", "elixir"])).toEqual({ focus: 0, potions: 1, maxHp: 0, xpPct: 0 });
-    expect(brewBuff(["healing", "focus", "stoneskin"])).toEqual({ focus: 1, potions: 1, maxHp: 4, xpPct: 0 });
-    expect(brewBuff(undefined)).toEqual({ focus: 0, potions: 0, maxHp: 0, xpPct: 0 });
-  });
-
-  it("applies a full bag to a hero as they board, and no more than one of each", () => {
-    const hero: HeroInit = { id: "p1", name: "P1", classId: "qa_paladin", level: 1, xp: 0, unspent: 0, base: { ...STARTING_STATS.qa_paladin }, bonus: {}, weapon: "mace", weaponPower: 0, armor: 0 };
-    const plain = stepWorld(createWorld("ABCD", "brews"), { type: "join", hero });
-    const brewed = stepWorld(createWorld("ABCD", "brews"), { type: "join", hero: { ...hero, brews: ["healing", "focus", "stoneskin", "stoneskin", "elixir"] } });
-    if (!plain.ok || !brewed.ok) throw new Error("join failed");
-    const a = plain.state.heroes[0];
-    const b = brewed.state.heroes[0];
-    expect(b.potions).toBe(a.potions + 1);
-    expect(b.focus).toBe(a.focus + 1);
-    expect(b.maxFocus).toBe(a.maxFocus + 1);
-    expect(b.maxHp).toBe(a.maxHp + 4);
-    expect(b.hp).toBe(a.hp + 4);
-    expect(b.brews).toEqual(["healing", "focus", "stoneskin"]);
   });
 });
 
@@ -133,12 +79,11 @@ describe("brewing for the pack", () => {
     });
   });
 
-  it("takes cave slime for the poison, acid and slime flasks, and cave slimes leave it", () => {
+  it("takes cave slime for the poison, acid and slime flasks", () => {
     expect(flaskProblem("poison", { built: true, resources: { mushrooms: 3 }, carried: {}, carry: room })).toMatch(/1 slime, 1 mushrooms/);
     expect(flaskProblem("poison", { built: true, resources: { slime: 1, mushrooms: 1 }, carried: {}, carry: room })).toBeNull();
     expect(flaskProblem("acid", { built: true, resources: { slime: 2, bone: 1 }, carried: {}, carry: room })).toBeNull();
     expect(flaskProblem("slime", { built: true, resources: { slime: 1 }, carried: {}, carry: room })).toMatch(/2 slime/);
-    expect(ENEMY_DROPS.slime).toEqual(["slime"]);
   });
 
   it("needs the apothecary built and the materials, and can be done again and again", () => {

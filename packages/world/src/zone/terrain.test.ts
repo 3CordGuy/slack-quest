@@ -6,26 +6,24 @@
 // Nothing here uses the tests' switch for shared turns: a turn is one fighter's alone, as it is in play.
 
 import { describe, expect, it } from "vitest";
-import { STARTING_STATS, allHexesInGrid, hexDistance, posKey, type HexGrid, type HexPos } from "@gantt-quest/core";
+import { GRID, at, fails, flatBoard, has, must, standEnemy, standHero, unit } from "../test/zoneBoard";
+import { hexDistance, posKey, type HexPos } from "@gantt-quest/core";
 import { ENEMIES } from "../content";
 import type { Biome, Tile } from "../map";
 import { makeRng } from "../rng";
 import { abilityArea, checkAbility, checkCommon, edgeDc, leavesReach, moveLeft, push, shiftInto, shoveDest } from "./combat";
 import { strikeReaches } from "./ai";
 import { attackContext, type Ctx } from "./engine";
-import { ALERT_RANGE, DEFAULT_ZONE_OPTIONS } from "./gen";
-import { HEX_DIRS, HEX_ROOM, HIGH_REACH, MAX_ELEV, elevOf, heldAgainst, isDead, ladderBetween, pitAt, reachFrom, roomAt, sees, stepCost, strikes, unitAt, unitsAt, zoneReach } from "./geometry";
+import { ALERT_RANGE } from "./gen";
+import { HEX_DIRS, HEX_ROOM, HIGH_REACH, MAX_ELEV, elevOf, heldAgainst, isDead, ladderBetween, pitAt, reachFrom, roomAt, sees, stepCost, strikes, unitsAt, zoneReach } from "./geometry";
 import { ACTION_AP, AP_MAX, AP_TURN, SUMMON_AP_TURN, COMMON_ACTIONS, ENEMY_KIT, ENEMY_MOVE_AP, JUMP_DOWN, JUMP_UP, enemyMove, enemyStrikes, tacticOf } from "./kit";
 import { mod, proficiency, rollShown } from "./rules";
 import { SITE_IDS, siteInside, siteOpen } from "./sites";
-import { HEAR_RANGE, standInHero, stepZone } from "./zone";
+import { HEAR_RANGE, stepZone } from "./zone";
 import type { Rolled, Unit, ZoneAction, ZoneEffect, ZoneEvent, ZoneState } from "./types";
 
 // ---------- helpers ----------
 
-const GRID: HexGrid = { cols: 16, rows: 12 };
-/** Offset coordinates (column, row) to a hex, so tests can talk about a flat board. */
-const at = (col: number, row: number): HexPos => ({ q: col - Math.floor(row / 2), r: row });
 /** The hexes of row `row` from column `from` to column `to`. */
 const run = (from: number, to: number, row = 6): HexPos[] => Array.from({ length: to - from + 1 }, (_, i) => at(from + i, row));
 const same = (a: HexPos, b: HexPos) => a.q === b.q && a.r === b.r;
@@ -38,44 +36,12 @@ const ladder = (low: HexPos, high: HexPos): Edit => (t) => { if (same(t, low)) t
 const both = (...edits: Edit[]): Edit => (t) => edits.forEach((e) => e(t));
 
 /** A flat, open board with nothing on it, the enemy's AI off. `gone`: hexes with no ground at all. */
-function board(edit: Edit = () => {}, gone: HexPos[] = []): ZoneState {
-  const tiles: Tile[] = allHexesInGrid(GRID).filter((p) => !gone.some((g) => same(g, p))).map((p) => ({ q: p.q, r: p.r, biome: "plains" as Biome, h: 0.3, elev: 0 }));
-  tiles.forEach(edit);
-  return { v: 1, code: "TEST", seed: "test", rng: 12345, options: { ...DEFAULT_ZONE_OPTIONS, party: 1 }, map: { grid: GRID, tiles, pois: [] }, start: at(1, 1), units: [], groups: {}, surfaces: {}, encounter: null, seq: 100, aiOff: true };
-}
+const board = (edit: Edit = () => {}, gone: HexPos[] = []): ZoneState => flatBoard({ rng: 12345, start: at(1, 1), options: { party: 1 }, flags: { aiOff: true }, edit, gone });
 
-function hero(state: ZoneState, id: string, classId: string, pos: HexPos, abilities: string[] = ["bash"]): Unit {
-  const sheet = standInHero(classId, id, 1)!;
-  const unit: Unit = {
-    id, side: "hero", name: id, kind: classId, level: 1, pos, hp: sheet.maxHp, maxHp: sheet.maxHp, focus: 2, maxFocus: 2,
-    stats: STARTING_STATS[classId], armor: 2, power: 1, abilities, conditions: [], down: false, cooldowns: {}, items: { healing: 2, fire: 2 },
-  };
-  state.units.push(unit);
-  return unit;
-}
+const hero = (state: ZoneState, id: string, classId: string, pos: HexPos, abilities: string[] = ["bash"]): Unit =>
+  standHero(state, id, pos, { classId, level: 1, armor: 2, power: 1, abilities, items: { healing: 2, fire: 2 } });
 
-function enemy(state: ZoneState, kind: string, pos: HexPos, group = "g1", hp = ENEMIES[kind].hp): Unit {
-  state.groups[group] ??= { alerted: false };
-  const unit: Unit = { id: `e${++state.seq}`, side: "enemy", name: ENEMIES[kind].name, kind, level: 1, pos, hp, maxHp: hp, focus: 0, maxFocus: 0, armor: 0, power: 0, abilities: [], conditions: [], down: false, cooldowns: {}, items: {}, group, home: pos };
-  state.units.push(unit);
-  return unit;
-}
-
-/** Apply an action that must succeed; what happened is added to `sink`, and what was earned to `paid`. */
-function must(state: ZoneState, action: ZoneAction, sink: ZoneEvent[] = [], paid: ZoneEffect[] = []): ZoneState {
-  const step = stepZone(state, action);
-  if (!step.ok) throw new Error(`${action.type} failed: ${step.error}`);
-  sink.push(...step.events);
-  paid.push(...step.effects);
-  return step.state;
-}
-const fails = (state: ZoneState, action: ZoneAction): string => {
-  const step = stepZone(state, action);
-  if (step.ok) throw new Error(`${action.type} should have failed`);
-  return step.error;
-};
-const unit = (state: ZoneState, id: string) => state.units.find((u) => u.id === id)!;
-const has = (state: ZoneState, id: string, kind: string) => unit(state, id).conditions.some((c) => c.kind === kind);
+const enemy = (state: ZoneState, kind: string, pos: HexPos, group = "g1", hp = ENEMIES[kind].hp): Unit => standEnemy(state, kind, pos, group, { hp, maxHp: hp });
 const endTurn = (id: string, by = id): ZoneAction => ({ type: "end_turn", by, unit: id });
 const shove = (target: string, by = "ann"): ZoneAction => ({ type: "common", by, unit: by, what: "shove", target });
 
@@ -1534,8 +1500,9 @@ describe("a fight in the open rouses the place", () => {
     expect(state.encounter!.order).not.toContain(made.third);
     while (state.encounter!.round < 3) state = must(state, { type: "timeout" }, events);
     expect(state.groups.g3.alerted).toBe(false);
-    // A bridge is laid over the gap: at the next round they come.
-    for (const col of [11, 12]) state.map.tiles.push({ q: at(col, 10).q, r: at(col, 10).r, biome: "plains" as Biome, h: 0.3, elev: 0 });
+    // A bridge is laid over the gap: at the next round they come. (As a new array of tiles: a state's tiles are shared
+    // from step to step, and what is reckoned from an array is kept with it, so one is never changed where it lies.)
+    state.map.tiles = [...state.map.tiles, ...[11, 12].map((col) => ({ q: at(col, 10).q, r: at(col, 10).r, biome: "plains" as Biome, h: 0.3, elev: 0 }))];
     const round = state.encounter!.round;
     const after: ZoneEvent[] = [];
     while (state.encounter!.round === round) state = must(state, { type: "timeout" }, after);

@@ -134,8 +134,8 @@ void main() {
   vec4 back = invViewProj * vec4(vUv * 2.0 - 1.0, depth * 2.0 - 1.0, 1.0);
   vec3 spot = back.xyz / back.w;
   float ground = step(depth, 0.99995);
-  // Cloud shadows drift over the land and the sea.
-  c *= 1.0 - airShadow * cloudOver(spot) * ground;
+  // Cloud shadows drift over the land and the sea. (Indoors and underground there are none, and the cloud is not worked out.)
+  if (airShadow != 0.0) c *= 1.0 - airShadow * cloudOver(spot) * ground;
   // Light shafts: walk from the eye to the spot and count how much of the air on the way stands in sunlight.
   // The steps are the same for every pixel: starting each pixel's walk at a different point left a grain
   // over the picture like a dirty screen.
@@ -444,18 +444,22 @@ export class PostFx {
     this.pass(this.final, null);
 
     // The overlay layer, straight onto the finished picture: no sky to clear it, and no shadow maps to redraw.
+    // Nor is where everything stands worked out again: nothing has moved since the scene was drawn just above.
     const background = scene.background;
     const autoClear = r.autoClear;
     const shadows = r.shadowMap.autoUpdate;
+    const placing = scene.matrixWorldAutoUpdate;
     scene.background = null;
     r.autoClear = false;
     r.shadowMap.autoUpdate = false;
+    scene.matrixWorldAutoUpdate = false;
     camera.layers.set(OVERLAY_LAYER);
     r.render(scene, camera);
     camera.layers.mask = layers;
     scene.background = background;
     r.autoClear = autoClear;
     r.shadowMap.autoUpdate = shadows;
+    scene.matrixWorldAutoUpdate = placing;
   }
 
   dispose() {

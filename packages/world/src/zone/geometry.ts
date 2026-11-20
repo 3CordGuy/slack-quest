@@ -4,7 +4,7 @@
 // exactly what the server will allow.
 
 import { hexDistance, hexNeighbors, inBounds, posKey, type HexPos } from "@gantt-quest/core";
-import { MOVE_COST, tileAt, type Tile, type WorldMap } from "../map";
+import { MOVE_COST, tileAt, tilesByKey, type Tile, type WorldMap } from "../map";
 import { crateAt } from "./crates";
 import { ENEMY_KIT } from "./kit";
 import { propOf } from "./props";
@@ -62,6 +62,8 @@ export function strikes(map: WorldMap, a: HexPos, b: HexPos): boolean {
 
 // A shut door (a delve's "gate") blocks the view and the light like the rock round it.
 const SIGHT_BLOCKERS: ReadonlySet<string> = new Set(["rock", "wall", "rampart", "fog", "gate"]);
+// Reckoned once for each tiles array and kept with it (as `relief` is, below), from step to step: once a zone is made
+// no tile is changed where it lies, and a door that opens puts a new tile in a new array (doors.ts), which is reckoned afresh.
 const blockerIndex = new WeakMap<Tile[], Set<string>>();
 
 /** The hexes sight cannot pass: living rock and walls, and whatever stands tall enough to hide behind (props.ts). Trees and water do not block it. */
@@ -216,6 +218,36 @@ export const wallAt = (state: { weather?: Weather[] }, pos: HexPos): Weather | u
 export const blockerAt = (state: Pick<ZoneState, "map"> & { weather?: Weather[] }, pos: HexPos): boolean => chestAt(state, pos) || !!crateAt(state, pos) || !!wallAt(state, pos);
 
 /**
+ * What a flood (zoneReach) works out once, before its first step, so that stepCost need not go through every unit
+ * and every place on the map again for each step it tries: who is on each hex, what stands in the way, and whether
+ * the walker flies. It is read from the state the flood was given, and nothing changes that state while the flood runs.
+ */
+export interface Footing {
+  /** By hex: -1 where any of the other side is (there is no going there), else how many of the walker's own side are. The walker and the dead are not counted. */
+  held: Map<string, number>;
+  /** The hexes blockerAt refuses: a chest of any kind, a crate not yet broken, a wall. */
+  blocked: Set<string>;
+  /** The map's tiles by key (tileAt's own index). */
+  tiles: Map<string, Tile>;
+  air: boolean;
+}
+
+/** The footing for `unit` over `state`: the same answers stepCost comes to by looking, hex by hex. */
+function footingFor(state: ZoneState, unit: Unit): Footing {
+  const held = new Map<string, number>();
+  for (const u of state.units) {
+    if (u.id === unit.id || isDead(u)) continue;
+    const key = posKey(u.pos);
+    if (u.side !== unit.side) held.set(key, -1);
+    else if (held.get(key) !== -1) held.set(key, (held.get(key) ?? 0) + 1);
+  }
+  const blocked = new Set<string>();
+  for (const p of state.map.pois) if (p.kind === "cache" || (p.kind === "crate" && !p.cleared)) blocked.add(posKey(p.pos));
+  for (const w of state.weather ?? []) if (w.kind === "wall") for (const p of w.hexes) blocked.add(posKey(p));
+  return { held, blocked, tiles: tilesByKey(state.map), air: flies(unit) };
+}
+
+/**
  * What one step costs `unit`, or Infinity if it cannot be made. Open ground is 1; forest and hills 2;
  * climbing a level 1 more; oil or slime underfoot 1 more. A drop or a climb of two levels or more is a cliff:
  * it is crossed only where a ladder stands (a step more for each level climbed, one more to climb down).
@@ -224,22 +256,29 @@ export const blockerAt = (state: Pick<ZoneState, "map"> & { weather?: Weather[] 
  * nor passed through. A unit's own side does not: up to `HEX_ROOM` of them stand on one hex, and a full one can
  * still be walked through, though not stopped on. What flies is barred the same way. Chests, crates and whatever
  * else stands in the way bar it too.
+ *
+ * A flood hands in what it worked out beforehand (`footing`; `fromElev`, how high `from` stands; and `toKey`, the
+ * key of `to`): the answer is the same with them as without, only sooner.
  */
-export function stepCost(state: ZoneState, unit: Unit, from: HexPos, to: HexPos, shut?: ReadonlySet<string>): { cost: number; stop: boolean } {
-  const tile = tileAt(state.map, to);
-  const air = flies(unit);
+export function stepCost(state: ZoneState, unit: Unit, from: HexPos, to: HexPos, shut?: ReadonlySet<string>, footing?: Footing, fromElev?: number, toKey: string = posKey(to)): { cost: number; stop: boolean } {
+  const tile = footing ? footing.tiles.get(toKey) : tileAt(state.map, to);
+  const air = footing ? footing.air : flies(unit);
   const none = { cost: Infinity, stop: false };
-  if (!tile || tile.built || propOf(tile)?.blocks || shut?.has(posKey(to)) || blockerAt(state, to)) return none;
+  if (!tile || tile.built || propOf(tile)?.blocks || shut?.has(toKey) || (footing ? footing.blocked.has(toKey) : blockerAt(state, to))) return none;
   let cost = air ? (SIGHT_BLOCKERS.has(tile.biome) ? Infinity : 1) : MOVE_COST[tile.biome];
   if (!Number.isFinite(cost)) return none;
   if (!air) {
-    const climb = (tile.elev ?? 0) - elevOf(state.map, from);
+    const climb = (tile.elev ?? 0) - (fromElev ?? elevOf(state.map, from));
     if (Math.abs(climb) >= 2) {
       if (!ladderBetween(state.map, from, to)) return none;
       cost += climb > 0 ? climb : 1;
     } else if (climb === 1) cost += 1;
-    const underfoot = state.surfaces[posKey(to)]?.kind;
+    const underfoot = state.surfaces[toKey]?.kind;
     if (underfoot === "oil" || underfoot === "slime") cost += 1;
+  }
+  if (footing) {
+    const there = footing.held.get(toKey) ?? 0;
+    return there < 0 ? none : { cost, stop: there < HEX_ROOM };
   }
   // Who is there already (as roomAt counts them): any of the other side, and there is no going there at all.
   let own = 0;
@@ -256,9 +295,23 @@ export function stepCost(state: ZoneState, unit: Unit, from: HexPos, to: HexPos,
  * side stands in the way, and through its own (stepCost). `shut` closes hexes
  * off altogether: the enemy uses it to look for a way round a burning or poisoned hex. With a `course`
  * (Chart a Course), steps nearer a mark spend its movement first, and `cost` is what is spent of `budget`.
+ *
+ * `enough` is for a caller that wants one answer and not the whole ground: the first hex it says yes to, as the
+ * flood comes to each in turn (nearest first), is as far as the flood goes. Every hex that costs no more than that
+ * one is in the Map then just as it would be had the flood gone on, in the same order, with the same way to it;
+ * anything beyond it is missing or half-reckoned, so such a caller may read only what costs no more than the hex
+ * it said yes to. It is not asked with a course charted, where that reckoning does not hold.
+ *
+ * `told.short` is set if any step was left out for costing more than the budget (and always with a course charted,
+ * where no count is kept). Where it is not set, the flood took in all the ground there is to reach, and a bigger
+ * budget would find the same Map again.
  */
-export function zoneReach(state: ZoneState, unit: Unit, budget: number, shut?: ReadonlySet<string>, course?: Course): Map<string, Reached> {
-  if (course && course.left > 0 && course.marks.length > 0) return chartedReach(state, unit, budget, course, shut);
+export function zoneReach(state: ZoneState, unit: Unit, budget: number, shut?: ReadonlySet<string>, course?: Course, enough?: (r: Reached) => boolean, told?: { short: boolean }): Map<string, Reached> {
+  if (course && course.left > 0 && course.marks.length > 0) {
+    if (told) told.short = true;
+    return chartedReach(state, unit, budget, course, shut);
+  }
+  const footing = footingFor(state, unit);
   const out = new Map<string, Reached>();
   const origin: Reached = { cost: 0, prev: null, pos: unit.pos, stop: true };
   out.set(posKey(unit.pos), origin);
@@ -269,12 +322,19 @@ export function zoneReach(state: ZoneState, unit: Unit, budget: number, shut?: R
     const cur = frontier.splice(best, 1)[0];
     const curKey = posKey(cur.pos);
     if (out.get(curKey)!.cost < cur.cost) continue;
+    // Hexes come off the frontier cheapest first and no step costs less than 1, so all that costs no more than this one is settled already.
+    if (enough && cur.cost < budget && enough(cur)) budget = cur.cost;
+    const fromElev = footing.tiles.get(curKey)?.elev ?? 0;
     for (const n of hexNeighbors(cur.pos, state.map.grid)) {
-      const step = stepCost(state, unit, cur.pos, n, shut);
+      // One key for each neighbour, for every look-up of it here and in stepCost.
+      const key = posKey(n);
+      const step = stepCost(state, unit, cur.pos, n, shut, footing, fromElev, key);
       if (!Number.isFinite(step.cost)) continue;
       const cost = cur.cost + step.cost;
-      if (cost > budget) continue;
-      const key = posKey(n);
+      if (cost > budget) {
+        if (told) told.short = true;
+        continue;
+      }
       const seen = out.get(key);
       if (seen && seen.cost <= cost) continue;
       const entry: Reached = { cost, prev: curKey, pos: n, stop: step.stop };
@@ -293,25 +353,30 @@ export function zoneReach(state: ZoneState, unit: Unit, budget: number, shut?: R
  */
 function chartedReach(state: ZoneState, unit: Unit, budget: number, course: Course, shut?: ReadonlySet<string>): Map<string, Reached> {
   interface Label { cost: number; left: number; pos: HexPos; prev: Label | null; stop: boolean }
-  const labelKey = (pos: HexPos, left: number) => `${posKey(pos)}|${left}`;
+  const labelKey = (key: string, left: number) => `${key}|${left}`;
+  const footing = footingFor(state, unit);
   const labels = new Map<string, Label>();
   const origin: Label = { cost: 0, left: course.left, pos: unit.pos, prev: null, stop: true };
-  labels.set(labelKey(unit.pos, course.left), origin);
+  labels.set(labelKey(posKey(unit.pos), course.left), origin);
   const frontier: Label[] = [origin];
   const better = (a: Label, b: Label) => a.cost < b.cost || (a.cost === b.cost && a.left > b.left);
   while (frontier.length > 0) {
     let best = 0;
     for (let i = 1; i < frontier.length; i++) if (better(frontier[i], frontier[best])) best = i;
     const cur = frontier.splice(best, 1)[0];
-    if (labels.get(labelKey(cur.pos, cur.left)) !== cur) continue;
+    const curKey = posKey(cur.pos);
+    if (labels.get(labelKey(curKey, cur.left)) !== cur) continue;
+    const fromElev = footing.tiles.get(curKey)?.elev ?? 0;
     for (const n of hexNeighbors(cur.pos, state.map.grid)) {
-      const step = stepCost(state, unit, cur.pos, n, shut);
+      // One key for each neighbour, for every look-up of it here and in stepCost.
+      const nKey = posKey(n);
+      const step = stepCost(state, unit, cur.pos, n, shut, footing, fromElev, nKey);
       if (!Number.isFinite(step.cost)) continue;
       const share = courseShare({ marks: course.marks, left: cur.left }, cur.pos, n, step.cost);
       const cost = cur.cost + step.cost - share;
       if (cost > budget) continue;
       const left = cur.left - share;
-      const key = labelKey(n, left);
+      const key = labelKey(nKey, left);
       const seen = labels.get(key);
       if (seen && seen.cost <= cost) continue;
       const label: Label = { cost, left, pos: n, prev: cur, stop: step.stop };

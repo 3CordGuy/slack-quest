@@ -1,5 +1,5 @@
 // The pen and palette every code-drawn 16x16 icon is painted with: gear and
-// materials in itemArt.ts, and the pub, brews and hut furniture in
+// materials in itemArt.ts, and the pub and hut furniture in
 // thingArt.ts. Kept apart so both tables can share it without importing
 // each other.
 

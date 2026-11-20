@@ -25,7 +25,7 @@
 // against it: a walk the server cut short or refused is cut back, and what
 // was already shown is not played twice. Nothing with dice in it is guessed.
 
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { hexDistance, posKey, type HexPos } from "@gantt-quest/core";
 import {
   ABILITIES,
@@ -100,10 +100,8 @@ import {
   pitAt,
   propOf,
   unitsAt,
-  SITES,
   SPOILS_ID,
   type LootSpot,
-  type SiteId,
   zoneBlast,
   zoneReach,
   type CommonAction,
@@ -134,7 +132,6 @@ import { TacticsLayer, type Overlay } from "./render/TacticsLayer";
 import { spriteDataUrl } from "./render/sprites";
 import { WorldRenderer, hexToWorld, tileTop, type RenderState } from "./render/WorldRenderer";
 import { HudBar, type HudSlot } from "./ui/Hud";
-import { useCountdown } from "./ui/useCountdown";
 import { useZone, type ZoneSend } from "./useZone";
 import { Icon } from "./items";
 import { label } from "./labels";
@@ -146,7 +143,7 @@ import { playback, type Playback } from "./zone/playback";
 import { setZoneDev, useZoneDev } from "./zone/zoneDev";
 import "./zone/zone.css";
 import { CombatLog, RollToast, type LogEntry } from "./zone/CombatLog";
-import { TurnBar } from "./zone/TurnBar";
+import { TimedTurnBar } from "./zone/TurnBar";
 import { TurnBanner, type TurnBannerShow } from "./zone/TurnBanner";
 import { InitiativeStrip } from "./zone/InitiativeStrip";
 import "./zone/fight.css";
@@ -392,6 +389,8 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
   const [log, setLog] = useState<LogEntry[]>([]);
   // Folded to its newest line on a phone, where an open log would cover the fight.
   const [logOpen, setLogOpen] = useState(() => !window.matchMedia("(max-width: 640px)").matches);
+  // The same function every time, so the log is drawn again only when it has something new to show.
+  const toggleLog = useCallback(() => setLogOpen((o) => !o), []);
   const logSeq = useRef(0);
   /** Add to the log. `id` is given here; the last few hundred lines are kept. */
   const logAdd = (entry: LogEntry extends infer E ? (E extends { id: number } ? Omit<E, "id"> : never) : never) =>
@@ -1630,7 +1629,6 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
   const heldBudget = useRef<{ id: string; budget: Budget } | null>(null);
   if (myTurn && act && budget) heldBudget.current = { id: act.id, budget };
   const shownBudget = watching && act && budget && heldBudget.current?.id === act.id ? heldBudget.current.budget : budget;
-  const deadline = useCountdown(enc?.deadline);
 
   // The bar is the one this class was last left with, made to fit the abilities in hand.
   const barFor = act ? `${act.kind}|${act.abilities.join(",")}` : "";
@@ -1699,10 +1697,8 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
     const shownAt = standing(ahead);
     const scene: RenderState = {
       code: `zone:${code}`,
-      kind: state.options.biome === "caves" ? "caverns" : "voyage",
+      ...(state.options.biome === "caves" ? { kind: "caverns" as const } : {}),
       you: act?.id ?? state.you,
-      phase: "overworld",
-      round: 0,
       // Chests and crates as the picture has them: thrown open, or knocked about and broken, as each is shown.
       // The spoils of a place cleared stand as an open hoard where they were heaped.
       map: { ...state.map, pois: [...picture.pois, ...(state.loot ?? []).filter((s) => s.kind === "spoils").map((s) => ({ id: s.id, kind: "cache" as const, pos: s.pos, hidden: false, cleared: true, usedBy: [], enemies: [], loot: "hoard" as const }))] },
@@ -1717,9 +1713,6 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
         ...(state.loot ?? []).filter((s) => s.kind === "body" && s.unit && !picture.units.some((u) => u.id === s.id)).map((s) => ({ id: s.id, kind: s.unit!, pos: s.pos, name: s.name, down: true })),
         ...picture.units.filter((u) => u.side === "enemy" && !u.lost && !state.dark?.includes(u.id)).map((u) => ({ id: u.id, kind: u.kind, pos: u.pos, name: u.name, hp: inFight(u.id) || u.hp < u.maxHp ? u.hp / u.maxHp : undefined, down: u.down, prone: u.conditions.some((c) => c.kind === "prone"), active: u.id === spot, hostile: inFight(u.id), effects: badgesOf(u) })),
       ],
-      turn: null,
-      story: null,
-      npcs: {},
       // Lit tiles are a turn's movement; walking freely, nothing is lit.
       freeRoam: !fighting,
       // Underground, light comes only from torches (held, or lying where they were thrown) and fire.
@@ -1856,10 +1849,12 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
   // ---------- what a move would cost, at the pointer ----------
 
   // Further than this turn's movement reaches: how far it would be, so the way can be shown in red.
+  // It is the same from every hex out there, so it is worked out when the pointer leaves the reach, not for each hex it then crosses.
+  const hoverBeyond = !!hover && !reach.has(posKey(hover));
   const far = useMemo(() => {
-    if (!z || !act || !budget || !myTurn || picking || !hover || reach.has(posKey(hover))) return null;
+    if (!z || !act || !budget || !myTurn || picking || !hoverBeyond) return null;
     return zoneReach(z, act, moveLeft(budget) + 18, undefined, courseFor(z, act, budget));
-  }, [z, act, budget, myTurn, picking, hover, reach]);
+  }, [z, act, budget, myTurn, picking, hoverBeyond, reach]);
   const moveTip = useMemo(() => {
     if (!state || !enc || !act || !budget || !myTurn || picking || !hover) return null;
     const near = reach.get(posKey(hover));
@@ -2554,7 +2549,7 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
       )}
 
       {/* Everything that happens, and every roll: the whole fight, to read back through. */}
-      <CombatLog entries={log} open={logOpen} onToggle={() => setLogOpen((o) => !o)} />
+      <CombatLog entries={log} open={logOpen} onToggle={toggleLog} />
 
       {lootSpot && me.character && (
         <LootPanel
@@ -2760,7 +2755,7 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
 
       {/* In a fight: the turn's Action Points and movement, whose turn it is, and the way to end it, over the bar. */}
       {enc && fighting && (
-        <TurnBar
+        <TimedTurnBar
           myTurn={myTurn}
           actor={act.name}
           waitingFor={waitingFor}
@@ -2773,7 +2768,7 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
           stride={shownBudget?.stride ?? 0}
           moveCost={myTurn && moveTip && !moveTip.none ? moveTip.cost : null}
           course={shownBudget?.course !== undefined && courseMarks(asState(state), act).length > 0 ? { now: shownBudget.course, max: Math.max(shownBudget.course, CHART.speed) } : undefined}
-          seconds={deadline}
+          deadline={enc.deadline}
           onEnd={myTurn ? endTurn : undefined}
           extra={<>{pick || dev.tool ? <span className="hud-place">{place}</span> : null}{quick}</>}
         />

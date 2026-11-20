@@ -17,7 +17,7 @@
 // A `bonus` (a sitting's first catches and records) is given on top, whatever the
 // cap: it goes to the character but not into the day's record.
 
-import { HARBOR_XP_DAILY_CAP, SPAR_XP_DAILY_BOUTS, gatherDay, harborXpAward, harborXpStatus, harborXpText, sparBoutsLeft, type HarborXpRecord, type HarborPlayer, type HarborXpStatus, type XpMessage } from "@gantt-quest/world";
+import { HARBOR_XP_DAILY_CAP, gatherDay, harborXpAward, harborXpStatus, harborXpText, type HarborXpRecord, type HarborPlayer, type HarborXpStatus, type XpMessage } from "@gantt-quest/world";
 import { crewFor, getCharacter, statsOf, type Env } from "./db";
 
 /** What the client is told about an award, and what the rooms broadcast. */
@@ -44,7 +44,7 @@ export interface PreparedXp {
 }
 
 export async function readHarborXp(db: D1Database, playerId: string): Promise<HarborXpRecord | null> {
-  return db.prepare("SELECT day, used, spars FROM harbor_xp WHERE player_id = ?").bind(playerId).first<HarborXpRecord>();
+  return db.prepare("SELECT day, used FROM harbor_xp WHERE player_id = ?").bind(playerId).first<HarborXpRecord>();
 }
 
 export async function harborXpFor(db: D1Database, playerId: string): Promise<HarborXpStatus> {
@@ -57,11 +57,11 @@ export async function harborXpFor(db: D1Database, playerId: string): Promise<Har
  * `guard` (SQL, may use ?1 for the player) decides whether the pastime went
  * through; the default is that the statement just before these changed a row.
  */
-export async function prepareXp(db: D1Database, playerId: string, amount: number, opts: { spar?: boolean; bonus?: number; bonusFor?: string } = {}): Promise<PreparedXp | null> {
+export async function prepareXp(db: D1Database, playerId: string, amount: number, opts: { bonus?: number; bonusFor?: string } = {}): Promise<PreparedXp | null> {
   const [c, record] = await Promise.all([getCharacter(db, playerId), readHarborXp(db, playerId)]);
   if (c?.status !== "active") return null;
   const now = Date.now();
-  const award = harborXpAward({ classId: c.class_id, level: c.level, xp: c.xp, stats: statsOf(c), unspent: c.unspent_points }, record, amount, now, opts.spar, opts.bonus);
+  const award = harborXpAward({ classId: c.class_id, level: c.level, xp: c.xp, stats: statsOf(c), unspent: c.unspent_points }, record, amount, now, opts.bonus);
   const result: XpResult = {
     granted: award.granted + award.bonus,
     asked: award.asked,
@@ -71,12 +71,8 @@ export async function prepareXp(db: D1Database, playerId: string, amount: number
     left: HARBOR_XP_DAILY_CAP - award.record.used,
     text: harborXpText({ granted: award.granted, asked: award.asked, bonus: award.bonus, bonusFor: opts.bonusFor, levelsGained: award.next.levelsGained }),
   };
-  const spars = opts.spar ? 1 : 0;
-  // Nothing to give (the cap is reached, or the day's bouts are used up, and no bonus): nothing to write.
-  if (award.granted + award.bonus <= 0) {
-    const text = opts.spar && award.asked > 0 && sparBoutsLeft(record, now) === 0 ? `No XP: only ${SPAR_XP_DAILY_BOUTS} bouts a day count.` : result.text;
-    return { statements: () => [], result: { ...result, level: c.level, xp: c.xp, text }, applied: () => false };
-  }
+  // Nothing to give (the cap is reached, and no bonus): nothing to write.
+  if (award.granted + award.bonus <= 0) return { statements: () => [], result: { ...result, level: c.level, xp: c.xp }, applied: () => false };
   const n = award.next;
   return {
     result,
@@ -84,14 +80,13 @@ export async function prepareXp(db: D1Database, playerId: string, amount: number
       return [
         db
           .prepare(
-            `INSERT INTO harbor_xp (player_id, day, used, spars) SELECT ?1, ?2, ?3, ?5 WHERE (${guard})
+            `INSERT INTO harbor_xp (player_id, day, used) SELECT ?1, ?2, ?3 WHERE (${guard})
              ON CONFLICT(player_id) DO UPDATE SET
                used = CASE WHEN day = ?2 THEN used + ?3 ELSE ?3 END,
-               spars = CASE WHEN day = ?2 THEN spars + ?5 ELSE ?5 END,
                day = ?2
-             WHERE day <> ?2 OR (used + ?3 <= ?4 AND spars + ?5 <= ?6)`,
+             WHERE day <> ?2 OR used + ?3 <= ?4`,
           )
-          .bind(playerId, gatherDay(now), award.granted, HARBOR_XP_DAILY_CAP, spars, SPAR_XP_DAILY_BOUTS),
+          .bind(playerId, gatherDay(now), award.granted, HARBOR_XP_DAILY_CAP),
         db
           .prepare(
             `UPDATE characters SET level = ?2, xp = ?3, str = ?4, int_stat = ?5, vit = ?6, agi = ?7, dex = ?8, unspent_points = ?9

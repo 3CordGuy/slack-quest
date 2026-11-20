@@ -1,8 +1,8 @@
-// Hut materials as the voyage and the inventory show them: feed wording, a
-// row of resource counts, and the list on the ending screen.
+// Hut materials and costs as the panels show them: a line of wording and
+// rows of icon-and-count chips.
 
-import { FURNISHINGS, PERK_CAPS, RESOURCE_KINDS, type Earned, type FurnishingGrant, type Perk, type Resources } from "@gantt-quest/world";
-import { BlueprintIcon, GOLD_ICON, ThingIcon, furnishingIcon, resourceIcon } from "./thingIcons";
+import { RESOURCE_KINDS, type Resources } from "@gantt-quest/world";
+import { GOLD_ICON, ThingIcon, resourceIcon } from "./thingIcons";
 import "./hutDrops.css";
 import { label } from "./labels";
 
@@ -10,9 +10,6 @@ import { label } from "./labels";
 export function resourceText(resources: Resources): string {
   return RESOURCE_KINDS.filter((k) => resources[k]).map((k) => `${resources[k]} ${label("resource", k).toLowerCase()}`).join(", ");
 }
-
-export const blueprintName = (id: string) => label("furnishing", id);
-export const isTrophy = (f: FurnishingGrant) => FURNISHINGS[f.defId]?.kind === "trophy";
 
 /** One chip per resource. With `all`, kinds the player has none of are shown as zero. */
 export function ResourceChips({ resources, all = false }: { resources: Resources; all?: boolean }) {
@@ -29,7 +26,7 @@ export function ResourceChips({ resources, all = false }: { resources: Resources
   );
 }
 
-/** Gold and materials as small icon-and-count chips (the name is the tooltip): a contract's pay, what a workshop visitor holds. With `zeros`, kinds given as 0 still show. */
+/** Gold and materials as small icon-and-count chips (the name is the tooltip): an errand's pay, what a workshop visitor holds. With `zeros`, kinds given as 0 still show. */
 export function RewardChips({ gold, resources = {}, zeros = false }: { gold?: number; resources?: Resources; zeros?: boolean }) {
   return (
     <span className="cost-chips reward-chips">
@@ -40,64 +37,6 @@ export function RewardChips({ gold, resources = {}, zeros = false }: { gold?: nu
         </span>
       ))}
     </span>
-  );
-}
-
-/** What a hero brings home for their hut. Renders nothing if there is nothing. */
-export function HutSpoils({ earned }: { earned: Earned }) {
-  const resources = earned.resources ?? {};
-  const blueprints = earned.blueprints ?? [];
-  const furnishings = earned.furnishings ?? [];
-  if (Object.keys(resources).length === 0 && blueprints.length === 0 && furnishings.length === 0) return null;
-  return (
-    <div className="hut-spoils">
-      <h4>For your hut</h4>
-      <ResourceChips resources={resources} />
-      {(blueprints.length > 0 || furnishings.length > 0) && (
-        <ul>
-          {furnishings.map((f, i) => (
-            <li key={`f${i}`} className="with-icon">
-              <ThingIcon icon={furnishingIcon(f.defId)} size={27} />
-              <span className="grow">
-                <span className="tag">{isTrophy(f) ? "Trophy" : "Decor"}</span> <strong>{f.label}</strong>
-                {isTrophy(f) && <span className="muted"> · {label("furnishing", f.defId)}</span>}
-              </span>
-            </li>
-          ))}
-          {blueprints.map((id, i) => (
-            <li key={`b${i}`} className="with-icon"><BlueprintIcon defId={id} size={27} /><span className="grow"><span className="tag">Blueprint</span> <strong>{blueprintName(id)}</strong></span></li>
-          ))}
-        </ul>
-      )}
-    </div>
-  );
-}
-
-const PERK_TEXT: [keyof Perk, (n: number) => string][] = [
-  ["focus", (n) => `+${n} focus`],
-  ["potions", (n) => `+${n} potion${n === 1 ? "" : "s"}`],
-  ["maxHp", (n) => `+${n} max HP`],
-  ["xpPct", (n) => `+${n}% XP`],
-];
-
-/** "+1 focus, +1 potion" for the perks that are above zero, or "" if none are. */
-export function perkText(perk: Perk | undefined): string {
-  return PERK_TEXT.filter(([key]) => (perk?.[key] ?? 0) > 0).map(([key, text]) => text(perk![key]!)).join(", ");
-}
-
-const PERK_NAME: Record<keyof Perk, string> = { focus: "Focus", potions: "Potions", maxHp: "Max HP", xpPct: "XP" };
-
-/** A hut's perks against the most any hut can give, one row each. */
-export function PerkMeter({ perks }: { perks: Required<Perk> }) {
-  return (
-    <ul className="perk-meter">
-      {PERK_TEXT.map(([key]) => (
-        <li key={key} className={perks[key] >= PERK_CAPS[key] ? "full" : perks[key] > 0 ? "some" : "none"}>
-          <span>{PERK_NAME[key]}</span>
-          <span>+{perks[key]}{key === "xpPct" ? "%" : ""} <span className="muted">of +{PERK_CAPS[key]}{key === "xpPct" ? "%" : ""}</span></span>
-        </li>
-      ))}
-    </ul>
   );
 }
 

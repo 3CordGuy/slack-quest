@@ -1,6 +1,7 @@
-// Dealing with the smith, the apothecary or the galley's cook, standing in
-// front of them in their shop (KeeperView): what they sell from their own
-// stock for gold, and what they do with what you bring. The keeper and what you hold stay at the
+// Dealing with the smith or the apothecary, standing in front of them in
+// their shop (KeeperView): what they sell from their own stock for gold, and
+// what they do with what you bring. (The galley's cook has a panel too, but
+// nothing to sell.) The keeper and what you hold stay at the
 // top; the list of items and services scrolls under them. The hotbar is put
 // away meanwhile; "Step away" walks you back from the keeper and brings it back.
 //
@@ -8,17 +9,17 @@
 // to ask off, and the server rolls for whether the keeper agrees.
 //
 // What can be done is worked out here only to grey out buttons; the server
-// checks every purchase, brew, dish, step and haggle again.
+// checks every purchase, flask, step and haggle again.
 
 import { useMemo, useState, type ReactNode } from "react";
-import { BREWS, DISHES, FLASK_RECIPES, HAGGLE_ASKS, KEEPER_PLACES, POT_DAILY, RARITY_COLOR, SHELF_DAILY, SLOT_LABEL, SMITHY_MAX_STEPS, THROWABLES, THROWABLE_KINDS, brewBuff, brewProblem, cookProblem, equipProblem, flaskProblem, haggledPrice, smithyProblem, smithyWork, upgradedName, workKey, type Deal, type HaggleAsk, type KeeperHouse, type KeeperShop, type Resources, type Throwable } from "@gantt-quest/world";
-import { api, type ApothecaryView, type GalleyKeeperView, type HaggleResult, type KeeperWare, type Me, type SmithyView } from "../api";
+import { FLASK_RECIPES, HAGGLE_ASKS, KEEPER_PLACES, RARITY_COLOR, SHELF_DAILY, SLOT_LABEL, SMITHY_MAX_STEPS, THROWABLES, THROWABLE_KINDS, equipProblem, flaskProblem, haggledPrice, smithyProblem, smithyWork, upgradedName, workKey, type Deal, type HaggleAsk, type KeeperHouse, type KeeperShop, type Resources, type Throwable } from "@gantt-quest/world";
+import { api, type ApothecaryView, type HaggleResult, type KeeperWare, type Me, type SmithyView } from "../api";
 import { DragPanel } from "../DragPanel";
-import { CostChips, RewardChips, perkText } from "../hutDrops";
+import { CostChips, RewardChips } from "../hutDrops";
 import { Icon, ItemTile, VerdictTag, bonusSummary, compare, powerLabel, toOwned } from "../items";
 import { itemName, label } from "../labels";
 import { regularFace } from "../RegularPanel";
-import { GOLD_ICON, ThingIcon, brewIcon, dishIcon } from "../thingIcons";
+import { GOLD_ICON, ThingIcon } from "../thingIcons";
 import { ITEM_ICON } from "../zone/actionIcons";
 import "./works.css";
 
@@ -68,7 +69,7 @@ function HaggleAsks({ list, chances, busy, onAsk, onCancel }: { list: number; ch
 }
 
 /** The shared frame: the keeper at the top, what you hold, the last word, and the scrolling list. (The Lapidary's panel, LapidaryPanel.tsx, stands in it too.) */
-export function Frame({ shop, said, above, hold, onDone, children }: { shop: KeeperHouse; said: Said | null; /** Kept in view over what you hold: the crew's larder. */ above?: ReactNode; hold: ReactNode; onDone(): void; children: ReactNode }) {
+export function Frame({ shop, said, hold, onDone, children }: { shop: KeeperHouse; said: Said | null; hold: ReactNode; onDone(): void; children: ReactNode }) {
   const { keeper, title } = KEEPER_PLACES[shop];
   return (
     <DragPanel id={`keeper.${shop}`} title={title} className={`story panel pub-bar keeper-panel keeper-${shop}`}>
@@ -80,7 +81,6 @@ export function Frame({ shop, said, above, hold, onDone, children }: { shop: Kee
             <p className={`salesman-says ${said?.tone === "bad" ? "bad" : said?.tone === "good" ? "good" : ""}`} role="status">{said ? said.text : `“${keeper.line}”`}</p>
           </div>
         </div>
-        {above}
         <div className="keeper-hold">
           {hold}
           <button className="small" onClick={onDone} title="Step back from the keeper: the hotbar comes back">Step away</button>
@@ -150,7 +150,6 @@ export function ApothecaryKeeperPanel({ view, setView, reload, refresh, onSay, o
   onDone(): void;
 }) {
   const d = useDealing("apothecary", reload, refresh, onSay);
-  const bagBuff = perkText(brewBuff(view.bag));
 
   const buy = (ware: KeeperWare) =>
     d.run(async () => {
@@ -166,14 +165,6 @@ export function ApothecaryKeeperPanel({ view, setView, reload, refresh, onSay, o
       void refresh();
       return { text: `${THROWABLES[kind].name}: one more in your pack, ${res.carried[kind] ?? 1} in all.${res.xp?.text ? ` ${res.xp.text}` : ""}`, tone: "good" };
     });
-  const brew = (id: string, name: string) =>
-    d.run(async () => {
-      const res = await api.brew(id);
-      setView(res);
-      void refresh();
-      return { text: `A ${name} goes into your bag.${res.xp?.text ? ` ${res.xp.text}` : ""}`, tone: "good" };
-    });
-
   return (
     <Frame
       shop="apothecary"
@@ -230,32 +221,6 @@ export function ApothecaryKeeperPanel({ view, setView, reload, refresh, onSay, o
         })}
       </ul>
 
-      <h4 className="keeper-section">For your next voyage <span className="muted">· one of each at most, used up when your ship sails</span></h4>
-      <p className="works-stock">
-        Your brew bag: {view.bag.length ? view.bag.map((id) => (
-          <span key={id} className="works-bag-brew"><ThingIcon icon={brewIcon(id)} size={18} /><strong>{BREWS.find((b) => b.id === id)?.name}</strong></span>
-        )) : <strong>empty</strong>}
-        {bagBuff && <span className="muted"> · next voyage {bagBuff}</span>}
-      </p>
-      <ul className="workshop-list">
-        {BREWS.map((b) => {
-          const carried = view.bag.includes(b.id);
-          const problem = brewProblem(b.id, view);
-          return (
-            <li key={b.id} className={carried ? "having" : ""} data-brew={b.id}>
-              <ThingIcon icon={brewIcon(b.id)} size={36} />
-              <span className="grow">
-                <strong>{b.name}</strong> <span className="muted">· {perkText(b.buff)}</span>
-                <br />
-                <span className="muted small-note">{b.blurb}</span>
-                <br />
-                <CostChips cost={b.recipe} have={view.resources} />
-              </span>
-              <button className="small" disabled={d.busy || !!problem} title={problem ?? `Brew a ${b.name}`} onClick={() => void brew(b.id, b.name)}>{carried ? "In your bag" : "Brew"}</button>
-            </li>
-          );
-        })}
-      </ul>
     </Frame>
   );
 }
@@ -358,96 +323,11 @@ export function SmithyKeeperPanel({ me, view, setView, reload, refresh, onSay, o
 
 // ---------- the galley ----------
 
-export function GalleyKeeperPanel({ view, setView, reload, refresh, onSay, onDone }: {
-  view: GalleyKeeperView;
-  setView(view: GalleyKeeperView): void;
-  reload(): Promise<unknown>;
-  refresh(): Promise<unknown>;
-  onSay(text: string): void;
-  onDone(): void;
-}) {
-  const d = useDealing("galley", reload, refresh, onSay);
-  const stocked = DISHES.filter((dish) => view.larder[dish.id] > 0);
-
-  const buy = (ware: KeeperWare) =>
-    d.run(async () => {
-      const res = await api.buyFromCook(ware.key);
-      setView(res);
-      void refresh();
-      return { text: `${res.got} goes into the crew's larder, for ${ware.price}g.`, tone: "good" };
-    });
-  const cook = (id: string, name: string) =>
-    d.run(async () => {
-      const res = await api.cook(id);
-      setView(res);
-      void refresh();
-      return { text: `${name} goes into the crew's larder.${res.xp?.text ? ` ${res.xp.text}` : ""}`, tone: "good" };
-    });
-
+/** The cook has nothing to sell and makes nothing: the panel says so, and lets you step away. */
+export function GalleyKeeperPanel({ onDone }: { onDone(): void }) {
   return (
-    <Frame
-      shop="galley"
-      said={d.said}
-      onDone={onDone}
-      above={
-        <p className="works-stock" data-larder>
-          The crew's larder: {stocked.length ? stocked.map((dish) => (
-            <span key={dish.id} className="works-bag-brew"><ThingIcon icon={dishIcon(dish.id)} size={18} /><strong>{view.larder[dish.id]} {view.larder[dish.id] === 1 ? dish.name : dish.plural}</strong></span>
-          )) : <strong>empty</strong>}
-          <span className="muted"> · shared, and goes aboard your crew's next ship</span>
-        </p>
-      }
-      hold={<p className="works-stock">You hold: <RewardChips zeros gold={view.gold} resources={{ bone: view.resources.bone ?? 0, herbs: view.resources.herbs ?? 0, fur: view.resources.fur ?? 0, mushrooms: view.resources.mushrooms ?? 0 }} /></p>}
-    >
-      <h4 className="keeper-section">From the pot <span className="muted">· ready-made, for gold · {POT_DAILY} of each a day · into the crew's larder</span></h4>
-      <ul className="workshop-list">
-        {view.wares.map((w) => {
-          if (w.goods.kind !== "dish") return null;
-          const dish = DISHES.find((x) => x.id === (w.goods as { dish: string }).dish)!;
-          const held = view.larder[dish.id] ?? 0;
-          const open = d.haggling === w.key;
-          return (
-            <li key={w.key} className={`keeper-row ${w.left <= 0 ? "sold" : ""}`} data-ware={w.key}>
-              <div className="keeper-line">
-                <ThingIcon icon={dishIcon(dish.id)} size={36} />
-                <span className="grow">
-                  <strong>{dish.name}</strong> <span className="muted">· {held}/{dish.cap} in the larder · {w.left} left today</span>
-                  <br />
-                  <span className="muted small-note">{dish.effect}</span>
-                  <br />
-                  <Price list={w.list} price={w.price} /> <DealTag deal={w.deal} />
-                </span>
-                <span className="keeper-buttons">
-                  <button className="small primary" disabled={d.busy || !!w.problem} title={w.problem ?? `Buy for ${w.price} gold`} onClick={() => void buy(w)}>{w.left <= 0 ? "Sold out" : held >= dish.cap ? "Larder full" : `Buy · ${w.price}g`}</button>
-                  <HaggleButton entry={w.key} deal={w.deal} list={w.list} open={open} busy={d.busy} disabled={w.left <= 0} onOpen={d.setHaggling} />
-                </span>
-              </div>
-              {open && <HaggleAsks list={w.list} chances={view.chances} busy={d.busy} onAsk={(ask) => void d.haggle(w.key, ask)} onCancel={() => d.setHaggling(null)} />}
-            </li>
-          );
-        })}
-      </ul>
-
-      <h4 className="keeper-section">Cooked from what you bring <span className="muted">· into the crew's larder · no charge but the makings</span></h4>
-      <ul className="workshop-list">
-        {DISHES.map((dish) => {
-          const held = view.larder[dish.id] ?? 0;
-          const problem = cookProblem(dish.id, view);
-          return (
-            <li key={dish.id} className={held >= dish.cap ? "having" : ""} data-dish={dish.id}>
-              <ThingIcon icon={dishIcon(dish.id)} size={36} />
-              <span className="grow">
-                <strong>{dish.name}</strong> <span className="muted">· {held}/{dish.cap} in the larder</span>
-                <br />
-                <span className="muted small-note">{dish.blurb}</span>
-                <br />
-                <CostChips cost={dish.recipe} have={view.resources} />
-              </span>
-              <button className="small" disabled={d.busy || !!problem} title={problem ?? `Cook ${dish.name}`} onClick={() => void cook(dish.id, dish.name)}>{held >= dish.cap ? "Larder full" : "Cook"}</button>
-            </li>
-          );
-        })}
-      </ul>
+    <Frame shop="galley" said={null} onDone={onDone} hold={null}>
+      <p className="muted">The cook has nothing to sell and nothing to cook for you.</p>
     </Frame>
   );
 }

@@ -2,6 +2,7 @@
 // and furniture set anywhere inside its hex (see hutroom.ts).
 
 import { describe, expect, it } from "vitest";
+import { pieceMaker } from "./test/furnishings";
 import {
   BIG_REACH,
   FURNISHINGS,
@@ -28,25 +29,9 @@ import {
   wallFace,
   wallFaces,
   wallPlaceProblem,
-  type Furnishing,
 } from "./index";
 
-let next = 1;
-const piece = (defId: string, at: { q: number; r: number } | null, more: Partial<Furnishing> = {}): Furnishing => ({
-  id: next++,
-  defId,
-  label: defId,
-  q: at?.q ?? null,
-  r: at?.r ?? null,
-  facing: 0,
-  x: 0,
-  z: 0,
-  y: 0,
-  angle: 0,
-  onId: null,
-  inId: null,
-  ...more,
-});
+const piece = pieceMaker();
 
 const room = hutRoom(1);
 const door = hutDoor(1);

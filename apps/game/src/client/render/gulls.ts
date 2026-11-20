@@ -154,14 +154,19 @@ export class Gulls {
   /**
    * Tell them the lie of the land: where they may come down (none, and there are no gulls), and where its
    * middle is. On a `fresh` map any that are about are gone at once, as the map they were on is; when the same
-   * map has only been redrawn (fog lifting off more of it), those about carry on as they were.
+   * map has only been redrawn (the atlas moving on over its world), those about carry on as they were.
    */
   setGround(spots: GullSpot[], middle: { x: number; z: number }, count: number, fresh: boolean) {
     this.spots = spots;
     this.middle = middle;
     const want = spots.length > 0 ? count : 0;
     if (!fresh && want === this.gulls.length) return;
-    while (this.gulls.length > want) this.group.remove(this.gulls.pop()!.root);
+    while (this.gulls.length > want) {
+      const gone = this.gulls.pop()!.root;
+      this.group.remove(gone);
+      // Every piece of a gull has a shape of its own (see gullModel): they go with it.
+      gone.traverse((o) => (o as THREE.Mesh).geometry?.dispose());
+    }
     while (this.gulls.length < want) {
       const model = gullModel();
       this.group.add(model.root);
