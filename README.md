@@ -7,7 +7,7 @@ A live co-op game. Your crew shares a harbour town. From the waygate in its squa
 
 It runs entirely on Cloudflare: Workers, Durable Objects, D1, Workers AI and Email Sending, with a React and Three.js client drawing low-poly figures on hex terrain.
 
-> The repo is called `slack-quest` and the packages `@gantt-quest/*` for historical reasons: the Harbor grew out of an earlier game, **Gantt Quest**, whose code was removed from this repo in November 2026 (it is in the git history before then).
+> The packages are called `@gantt-quest/*` for historical reasons: the Harbor grew out of an earlier game, **Gantt Quest**, whose code was removed from this repo in November 2026 (it is in the git history before then). The repo itself was `3CordGuy/slack-quest` until it moved to `heylets-game/heylets`; the old URL redirects.
 
 ---
 
