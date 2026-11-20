@@ -3,7 +3,7 @@
 .emote-veil { position: fixed; inset: 0; z-index: 900; }
 .emote-wheel { position: absolute; width: 0; height: 0; }
 .emote-wheel::before {
-  content: ""; position: absolute; left: -144px; top: -144px; width: 288px; height: 288px; border-radius: 50%;
+  content: ""; position: absolute; left: -152px; top: -152px; width: 304px; height: 304px; border-radius: 50%;
   background: radial-gradient(circle, var(--panel-lo, #1e1610) 0 30%, rgba(23, 19, 16, 0.94) 31% 100%);
   border: 2px solid var(--brass-lo, #8a6a2a); box-shadow: 0 0 0 2px var(--out, #000), 0 6px 0 rgba(0, 0, 0, 0.35);
   pointer-events: none;
