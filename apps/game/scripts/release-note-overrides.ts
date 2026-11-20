@@ -7,6 +7,12 @@
 // release-notes.ts); this list is only for the past.
 
 export const OVERRIDES: Record<string, string[]> = {
+  // The release after game-v2026.11.19.5 (#549). Its third line said heroes on the same initiative share a turn; #552,
+  // in the same release, made every turn one fighter's alone (ties are rolled off), and says so in a line of its own.
+  "0d5340a7130da6fdec451d59a7f96d9d239eb1ec": [
+    "Fights: your turn ends by itself once you've spent your last AP and walked any movement it bought",
+    "Fights: your AP fill up again when your next turn starts on screen, not while the enemy is still moving",
+  ],
   // game-v2026.11.19 (#526). Its coat line said the same as #529's, which went further; one line on coats is enough.
   "59c43c51d25a1c6f084578d54f804ef4b55590dc": [
     "Heroes: starting clothes are your class's own outfit again, not a knit cap and navy tunic",
