@@ -1978,8 +1978,9 @@ const spinning = { at: new THREE.Vector3(), q: new THREE.Quaternion(), up: new T
  */
 const DAB = { over: 1.6, up: [[0, 0], [0.16, 1], [1.3, 1], [1.6, 0]] as Keys };
 /**
- * The floss: on each beat both straight arms go to one side, one swung across in front of the body and the other out
- * to its own side, and the hips thrust the other way; then they change over to the other side. `beat` is whole
+ * The floss: on each beat both straight arms go to one side, one swung across the body and the other out to its own
+ * side, and the hips thrust the other way over planted feet; then they change over to the other side. The arms cross
+ * in front of the body for one swing (each arm once), then behind it for the next, and so on. `beat` is whole
  * swings (there and back) a second. An arm's way from out at its side (`side`) to across the front (`across`) comes
  * forward (`front`) before it reaches the body, so it never passes through it. All in the torso's frame.
  */
@@ -2745,20 +2746,31 @@ function biped(top: THREE.Group, parts: Part[], elbow = ELBOW) {
     if (act.kind === "floss") {
       const up = along(FLOSS.up, t);
       // Which side the arms are on, -1 (the right) to 1 (the left), snapped to each end rather than swung evenly.
-      const wave = Math.sin(t * FLOSS.beat * Math.PI * 2);
+      const ph = t * FLOSS.beat * Math.PI * 2;
+      const wave = Math.sin(ph);
       const to = Math.sign(wave) * Math.abs(wave) ** 0.55;
-      // Each arm: `u` 0 out at its own side, 1 across the front to the other side. The right arm crosses when the
-      // arms go left, the left arm when they go right.
-      for (const [arm, fore, own, u] of [[armR, foreR, -1, (1 + to) / 2], [armL, foreL, 1, (1 - to) / 2]] as const) {
-        const forward = Math.min(1, Math.max(0, u / 0.4));
-        sweep.grip.set(own * (FLOSS.side - (FLOSS.side + FLOSS.across) * u), -0.6 - 0.6 * u, -0.6 + (FLOSS.front + 0.6) * forward * forward * (3 - 2 * forward));
+      // Each arm: `u` 0 out at its own side, 1 across the body to the other side. The right arm crosses when the
+      // arms go left (at a quarter of each swing), the left arm when they go right (at three quarters). Each arm's
+      // crossings take turns in front of the body and behind it, so the arms go round the front once (right, then
+      // left) and then round the back. Which way an arm crosses changes only while it is out at its own side.
+      for (const [arm, fore, own, u, from] of [[armR, foreR, -1, (1 + to) / 2, -HALF_PI], [armL, foreL, 1, (1 - to) / 2, HALF_PI]] as const) {
+        const n = Math.floor((ph - from) / (Math.PI * 2));
+        const way = n > 0 && n % 2 === 1 ? -1 : 1;
+        const across = Math.min(1, Math.max(0, u / 0.4));
+        sweep.grip.set(own * (FLOSS.side - (FLOSS.side + FLOSS.across) * u), -0.6 - 0.6 * u, -0.6 * way + way * (FLOSS.front + 0.6) * across * across * (3 - 2 * across));
         reach(arm.joint, fore.joint, -elbow, elbow - fist, sweep.grip, own < 0 ? sweep.poleR : sweep.poleL, up);
       }
-      // The hips thrust out the other way on each beat, the body tipping over them.
-      top.position.x -= FLOSS.hips * to * up;
-      top.rotation.z += 0.08 * to * up;
-      torso.joint.rotation.z -= 0.14 * to * up;
-      head.joint.rotation.z += 0.08 * to * up;
+      // The hips thrust out the other way on each beat over feet that stay where they are: the legs slant to carry
+      // the hips across (and the hips sink by what that costs), the feet stay flat, and the body leans back from
+      // the waist so the shoulders stay over the feet. The bend is in the middle; nothing slides.
+      const dx = -FLOSS.hips * to * up;
+      const slant = Math.asin(Math.max(-1, Math.min(1, dx / (2 * shank))));
+      top.position.x += dx;
+      top.position.y -= 2 * shank * (1 - Math.cos(slant));
+      for (const thigh of [thighL, thighR]) thigh.joint.rotation.z -= slant;
+      for (const foot of [footL, footR]) foot.joint.rotation.z += slant;
+      torso.joint.rotation.z += (1.3 * dx) / 6;
+      head.joint.rotation.z -= (0.5 * dx) / 6;
       for (const [arm, fore, held] of [[armL, foreL, heldL], [armR, foreR, heldR]] as const) {
         sweep.hold.copy(arm.joint.quaternion).multiply(fore.joint.quaternion).invert();
         held.joint.quaternion.slerp(sweep.hold, up);
@@ -3047,7 +3059,8 @@ function biped(top: THREE.Group, parts: Part[], elbow = ELBOW) {
   const pose = (a: Anim) => {
     // The waist and the ankles are straight unless a blow bends them (see blow).
     torso.joint.rotation.set(0, 0, 0);
-    footL.joint.rotation.x = footR.joint.rotation.x = 0;
+    footL.joint.rotation.set(0, 0, 0);
+    footR.joint.rotation.set(0, 0, 0);
     // Set whole every frame: a blow or a shot adds to these, or turns them outright, and must leave nothing behind.
     head.joint.rotation.set(0, 0, 0);
     heldR.joint.position.set(0, fist - elbow, 0);
