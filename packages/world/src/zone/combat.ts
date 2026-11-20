@@ -11,7 +11,7 @@ import { tileAt, type Poi } from "../map";
 import { DEBUFFS, addCondition, addShield, attackContext, attackRoll, damage, defenceOf, giveAway, has, heal, inWater, kindle, removeCondition, saveBonus, saveRoll, shieldOf, shieldUnit, strikeDown, unseen, type Ctx } from "./engine";
 import { cratesOn, crateById, hurtCrate, isCrateId } from "./crates";
 import { HEX_DIRS, close, blast, blockerAt, courseShare, directionToward, elevOf, flies, heldAgainst, inFight, lineFrom, pathIn, pitAt, reachFrom, roomAt, sameHex, sees, seesFor, solid, stepCost, strikes, unitById, zoneReach, type Course, type Pit } from "./geometry";
-import { ACTION_AP, CHART, COMMON_ACTIONS, CORAL_ARMOR, SHANTY, SUMMON_CALLS, ENEMY_BURST, FLEE_RANGE, JUMP_DOWN, JUMP_UP, POTION_EDGE, SAVE_STAT, SMUGGLED, THROWABLES, TORCH_GROUND_ROUNDS, abilityDice, enemySave, enemyShove, enemyStrikes, healDice, jumpRange, reactionStrike, tacticOf, throwRange, type EnemyStrike, type Tactic } from "./kit";
+import { ACTION_AP, CHART, COMMON_ACTIONS, CORAL_ARMOR, RALLY, SHANTY, SUMMON_CALLS, ENEMY_BURST, FLEE_RANGE, JUMP_DOWN, JUMP_UP, POTION_EDGE, SAVE_STAT, SMUGGLED, THROWABLES, TORCH_GROUND_ROUNDS, abilityDice, enemySave, enemyShove, enemyStrikes, healDice, jumpRange, reactionStrike, tacticOf, throwRange, type EnemyStrike, type Tactic } from "./kit";
 import { modsOf } from "./mods";
 import { d20, diceFor, hitChance, mod, proficiency, rollDice, rollShown, statOf } from "./rules";
 import { seenByHeroes } from "./light";
@@ -64,6 +64,8 @@ function provoke(ctx: Ctx, unit: Unit, next: HexPos, budget: Budget | null, flus
     else {
       const ability = reactionStrike(foe.abilities);
       strike(ctx, foe, ABILITIES[ability], tacticOf(ability), unit, {});
+      // A blow of opportunity is an attack too: a Rally goes into it.
+      removeCondition(foe, "rallied");
     }
   }
 }
@@ -583,7 +585,7 @@ export function wayBetween(state: ZoneState, unit: Unit, to: HexPos): HexPos[] {
 function damageBonus(state: ZoneState, unit: Unit, def: AbilityDef): number {
   const tune = state.units.some((u) => u.id !== unit.id && u.side === unit.side && u.kind === "frontend_bard" && !u.down && hexDistance(u.pos, unit.pos) <= BARD_AURA_RANGE) ? BARD_AURA : 0;
   // A torch swung in the hand hits with the torch, not the weapon put away for it.
-  return mod(statOf(unit, def.stat)) + (def.id === "torch_swing" ? 0 : unit.power) + Math.floor(unit.level / 2) + tune + songDamage(state, unit);
+  return mod(statOf(unit, def.stat)) + (def.id === "torch_swing" ? 0 : unit.power) + Math.floor(unit.level / 2) + tune + songDamage(state, unit) + (has(unit, "rallied") ? RALLY.damage : 0);
 }
 
 const saveDc = (unit: Unit, def: AbilityDef): number => 8 + proficiency(unit.level) + mod(statOf(unit, def.stat));
@@ -709,6 +711,8 @@ export function resolveAbility(ctx: Ctx, unit: Unit, ability: string, aim: Aim &
   const foes = () => state.units.filter((u) => u.side !== unit.side && !u.down);
   // Unseen, any ability gives the user away once it is done (bar going Unseen again, or a pocket picked unseen).
   const wasUnseen = unseen(unit);
+  // Rallied (Hornpipe): the next ability that does harm gets the bonus, on everything it strikes, and uses it up.
+  const rallied = has(unit, "rallied") && !!def.damage;
   let landed = false;
   const crate = tactic.shape === "single" || tactic.shape === "chain" ? crateById(state, aim.target) : undefined;
   if (crate) {
@@ -952,6 +956,10 @@ export function resolveAbility(ctx: Ctx, unit: Unit, ability: string, aim: Aim &
         if (c) c.by = unit.id;
       }
     }
+    if (tactic.rally) {
+      const { range, rounds } = tactic.rally;
+      for (const u of state.units) if (u.side === unit.side && !u.down && hexDistance(u.pos, unit.pos) <= range) addCondition(ctx, u, "rallied", rounds);
+    }
     if (tactic.hide) {
       const { range, rounds } = tactic.hide;
       for (const u of state.units) if (u.side === unit.side && !u.down && hexDistance(u.pos, unit.pos) <= range) addCondition(ctx, u, "invisible", rounds);
@@ -966,6 +974,7 @@ export function resolveAbility(ctx: Ctx, unit: Unit, ability: string, aim: Aim &
   if (landed && def.selfEffect && !unit.down) addCondition(ctx, unit, def.selfEffect.effect, def.selfEffect.turns);
   if (tactic.stride && !unit.down) moveMore(state, unit, tactic.stride);
   if (wasUnseen && !tactic.hide && !tactic.steal) giveAway(ctx, unit);
+  if (rallied) removeCondition(unit, "rallied");
 }
 
 /**

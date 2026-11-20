@@ -12,7 +12,7 @@ import { ALERT_RANGE, DEFAULT_ZONE_OPTIONS, JOIN_RANGE, generateZone, zoneOption
 import { HEX_ROOM, adjacent, blast, blockerAt, flies, isDead, seesFor, solid, stepCost, unitAt, zoneReach } from "./geometry";
 import { propOf } from "./props";
 import { SITE_IDS, backdropOf, siteInside, type SiteId } from "./sites";
-import { ACTION_AP, AP_MAX, AP_TURN, AQUEOUS, SUMMON_AP_TURN, AURAS, CHART, COMMON_ACTIONS, BLOCK, BONUS_AP, BOLSTER, GUARD_UP, STAND_STRONG, STURDY, ENEMY_BURST, ENEMY_HP_SCALE, ENEMY_KIT, ENEMY_MOVE_AP, EXPLORE_ROUND_MS, FLEE_RANGE, LIGHT_RADIUS, SHIELD_SET_ASIDE, TACTICS, TORCH_GROUND_ROUNDS, TORCH_HELD_ROUNDS, TORCH_ROUND_MS, abilityDice as abilityDiceFor, commonCost, enemyHp, enemyMove, enemyStrikes, tacticOf } from "./kit";
+import { ACTION_AP, AP_MAX, AP_TURN, AQUEOUS, RALLY, SUMMON_AP_TURN, AURAS, CHART, COMMON_ACTIONS, BLOCK, BONUS_AP, BOLSTER, GUARD_UP, STAND_STRONG, STURDY, ENEMY_BURST, ENEMY_HP_SCALE, ENEMY_KIT, ENEMY_MOVE_AP, EXPLORE_ROUND_MS, FLEE_RANGE, LIGHT_RADIUS, SHIELD_SET_ASIDE, TACTICS, TORCH_GROUND_ROUNDS, TORCH_HELD_ROUNDS, TORCH_ROUND_MS, abilityDice as abilityDiceFor, commonCost, enemyHp, enemyMove, enemyStrikes, tacticOf } from "./kit";
 import { MAX_CATCHUP_ROUNDS } from "./clock";
 import { d20, diceAverage, diceFor, heroMove, hitChance } from "./rules";
 import { createZone, ensureMouth, spentOut, standInHero, stepZone, zoneView } from "./zone";
@@ -4877,7 +4877,7 @@ describe("Bard weapons", () => {
     expect(tacticOf("soothing_tone").cooldown).toBe(2);
     expect(tacticOf("clarion_call").cooldown).toBe(2);
     expect(tacticOf("encore").cost).toBe(BONUS_AP);
-    for (const id of ["dissonance", "blasting_tone", "soothing_tone", "peal", "clarion_call"]) expect(tacticOf(id).cost, id).toBe(ACTION_AP);
+    for (const id of ["dissonance", "blasting_tone", "soothing_tone", "peal", "clarion_call", "hornpipe"]) expect(tacticOf(id).cost, id).toBe(ACTION_AP);
   });
 
   it("Dissonance: a hit leaves the target Fumbling, with no save, and its next attack is rolled with disadvantage", () => {
@@ -4996,15 +4996,37 @@ describe("Bard weapons", () => {
     expect(fails(state, { type: "use", by: "ann", unit: "ann", ability: "bellows_blast" })).toMatch(/not ready/);
   });
 
-  it("Hornpipe: 1 AP that gives one more movement for each AP", () => {
+  it("Hornpipe: 2 AP that Rallies the Bard and every ally within 2 hexes, then waits two turns", () => {
     let { state } = duel("dummy", "frontend_bard", at(5, 6), at(11, 6));
+    // The duel has stepped Ann up to (6, 6): Bo is 1 hex off, Cy 3.
+    hero(state, "bo", "qa_paladin", at(7, 6));
+    hero(state, "cy", "refactor_rogue", at(9, 6));
     unit(state, "ann").abilities = ["hornpipe"];
+    expect([hexDistance(unit(state, "ann").pos, unit(state, "bo").pos), hexDistance(unit(state, "ann").pos, unit(state, "cy").pos)]).toEqual([1, 3]);
     const stride = state.encounter!.budgets.ann.stride;
-    state = must(state, { type: "use", by: "ann", unit: "ann", ability: "hornpipe", target: "ann" });
-    expect(state.encounter!.budgets.ann).toMatchObject({ ap: AP_TURN - BONUS_AP, stride: stride + 1 });
+    state = must(state, { type: "use", by: "ann", unit: "ann", ability: "hornpipe" });
+    expect(state.encounter!.budgets.ann).toMatchObject({ ap: AP_TURN - ACTION_AP, stride });
+    expect(["ann", "bo", "cy"].map((id) => has(state, id, "rallied"))).toEqual([true, true, false]);
+    expect(tacticOf("hornpipe").cooldown).toBe(2);
   });
 
-  it("Clarion Call: a big heal on the target, and a lesser one on every ally beside it, but none further off", () => {
+  it("Rallied: +2 damage on the next attack, then it is spent", () => {
+    let { state, foe } = duel("dummy", "frontend_bard", at(5, 6), at(7, 6));
+    unit(state, "ann").abilities = ["hornpipe", "dissonance"];
+    unit(state, foe).hp = 999;
+    state = must(state, { type: "use", by: "ann", unit: "ann", ability: "hornpipe" });
+    expect(has(state, "ann", "rallied")).toBe(true);
+    const after = untilHit(state, { type: "use", by: "ann", unit: "ann", ability: "dissonance", target: foe }, foe);
+    expect(has(after.state, "ann", "rallied")).toBe(false);
+    const blow = after.events.find((e) => e.t === "hit" && e.target === foe);
+    if (blow?.t !== "hit" || !blow.dice) throw new Error("no blow");
+    // 1d6+2, the Bard's own bonus (INT, weapon, half level), and the Rally's +2.
+    const ann = unit(after.state, "ann");
+    const own = Math.floor((ann.stats!.int_stat - 5) / 2) + ann.power + Math.floor(ann.level / 2);
+    expect(blow.dice.plus).toBe(2 + own + RALLY.damage);
+  });
+
+  it("Clarion Call: a good heal on the target, and a lesser one on every ally beside it, but none further off", () => {
     const { state } = duel("dummy", "frontend_bard", at(5, 6), at(11, 6));
     hero(state, "bo", "qa_paladin", at(8, 6));
     hero(state, "cy", "refactor_rogue", at(9, 6));

@@ -85,6 +85,8 @@ export interface Tactic {
   cluster?: number;
   /** Blast or line: strikes only the other side (Blasting Tone, Rust Armor). */
   foesOnly?: boolean;
+  /** Self: Rallies the user and every ally within `range` of them: `damage` more on each one's next attack, for `rounds` of their turns (Hornpipe). */
+  rally?: typeof RALLY;
   /** Self: heals the user and every ally within `range` of them, as much as the ability heals (Soothing Tone). */
   soothe?: { range: number };
   /** Ally: every other ally beside the target heals this much too, scaled as a heal is (Clarion Call). */
@@ -239,6 +241,8 @@ export const SHANTY = {
 
 /** Chorus: extra damage for each of the Bard's allies standing in it. */
 export const CHORUS_PER_ALLY = 3;
+/** Hornpipe: who it reaches round the Bard, how long a Rally waits to be used, and what it adds to the blow that uses it. */
+export const RALLY = { range: 2, rounds: 1, damage: 2 };
 
 /** Revitalizing Splash: how many hexes it covers, and the rounds of water it leaves on them. */
 export const SPLASH = { hexes: 4, water: 3 };
@@ -403,7 +407,7 @@ export const TACTICS: Record<string, Tactic> = {
   peal: spell(4, { knockback: 1, knockSave: true }),
   clarion_call: mend(5, { cooldown: 2, ripple: 6 }),
   bellows_blast: spell(0, { shape: "burst", radius: 1, cooldown: 2, knockback: 1 }),
-  hornpipe: mend(5, { cost: 1, tailwind: 1, cooldown: 1 }),
+  hornpipe: { cost: 2, reach: "spell", range: 0, shape: "self", cooldown: 2, rally: RALLY },
   // Bard class abilities
   lively_shanty: { ...guard(), cooldown: 5, shanty: "lively_shanty" },
   dour_shanty: { ...guard(), cooldown: 5, shanty: "dour_shanty" },
@@ -502,6 +506,7 @@ export const SAVE_STAT: Record<Condition, StatKey> = {
   contraband: "agi",
   regenerating: "vit",
   rejuvenating: "vit",
+  rallied: "int_stat",
   coral_armor: "vit",
   lively_shanty: "int_stat",
   dour_shanty: "int_stat",
@@ -542,6 +547,7 @@ export const CONDITION_INFO: Record<Condition, { name: string; blurb: string; co
   contraband: { name: "Contraband", blurb: "Smuggled fire bombs in the pack, to throw before they are found out.", color: "#ff8a3a" },
   regenerating: { name: "Regenerating", blurb: "Heals at the start of each of its turns, more when it stands in water.", color: "#5eead4" },
   rejuvenating: { name: "Rejuvenating", blurb: "Heals again at the start of its next turn.", color: "#8be38f" },
+  rallied: { name: "Rallied", blurb: `+${RALLY.damage} damage on its next attack.`, color: "#facc15" },
   coral_armor: { name: "Coral Armor", blurb: `+${CORAL_ARMOR.defence} Defence, and whoever lands a blow on it up close is cut.`, color: "#ff8f7a" },
   lively_shanty: { name: "Lively Shanty", blurb: `Singing: allies within reach get +${SHANTY.lively.hit} to hit and a little more damage. Each who joins widens it a hex and adds +${SHANTY.lively.surge} to hit until the Bard's next turn.`, color: "#ffb020" },
   dour_shanty: { name: "Dour Shanty", blurb: `Singing: allies within reach get +${SHANTY.dour.defence} Defence. Each who joins widens it a hex and adds +${SHANTY.dour.perJoin} Defence until the Bard's next turn.`, color: "#6f8fff" },

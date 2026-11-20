@@ -225,6 +225,24 @@ export const ACTION_ART: Record<string, Art> = {
     p.r(2, 4, 2, 1, p.shade);
     p.r(3, 7, 2, 1, p.shade);
   },
+  /** Hornpipe: a fist raised to the tune, a note springing up beside it. */
+  "act-rally": (p) => {
+    // The fist, knuckles up, and the arm under it in the tune's colour.
+    spans(p, K.skin, [[4, 3, 7], [5, 2, 8], [6, 2, 8], [7, 2, 8], [8, 2, 8], [9, 3, 7]]);
+    p.r(3, 5, 1, 2, K.skinDark);
+    p.r(5, 5, 1, 2, K.skinDark);
+    p.r(7, 5, 1, 2, K.skinDark);
+    p.r(3, 10, 5, 4, p.accent);
+    p.r(3, 14, 5, 1, p.shade);
+    // The note: stem, flag and head.
+    p.r(13, 2, 1, 7, p.accent);
+    p.r(14, 2, 1, 1, p.accent);
+    p.r(15, 3, 1, 2, p.accent);
+    spans(p, p.accent, [[8, 11, 12], [9, 10, 12], [10, 11, 12]]);
+    // A lift off the fist.
+    p.r(10, 4, 1, 1, C.shine);
+    p.r(9, 1, 2, 1, C.shine);
+  },
   // ---- the Bard's songs: each its own picture, not just a note in another colour ----
   /** Lively Shanty: a tankard raised, its head frothing over, and a note springing off it. */
   "act-shanty-lively": (p) => {

@@ -178,6 +178,7 @@ function reachLabel(tactic: ReturnType<typeof tacticOf>): string {
   if (tactic.chart || tactic.summon) return `range ${tactic.range}`;
   if (tactic.blink) return tactic.shape === "self" ? `range ${tactic.blink.range}` : `melee, then range ${tactic.blink.range}`;
   if (tactic.soothe) return `allies, radius ${tactic.soothe.range}`;
+  if (tactic.rally) return `allies, radius ${tactic.rally.range}`;
   if (tactic.shape === "self") return "self";
   if (tactic.shape === "burst") return `radius ${tactic.radius}`;
   if (tactic.reach === "melee") return tactic.shape === "adjacent" ? "melee, all round" : tactic.shape === "arc" ? "melee, arc" : "melee";

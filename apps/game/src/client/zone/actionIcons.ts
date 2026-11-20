@@ -82,7 +82,7 @@ export const ABILITY_ICON: Record<string, ActionIcon> = {
   blasting_tone: icon("note", "#ff6b6b"),
   soothing_tone: icon("note", "#5eead4"),
   bellows_blast: icon("shout", "#f97316"),
-  hornpipe: icon("dash", "#facc15"),
+  hornpipe: icon("rally", "#facc15"),
   peal: icon("bell", "#a78bfa"),
   clarion_call: icon("bell", "#ffd23f"),
   // Sage
