@@ -12,7 +12,7 @@ import { ALERT_RANGE, DEFAULT_ZONE_OPTIONS, JOIN_RANGE, generateZone, zoneOption
 import { HEX_ROOM, adjacent, blast, blockerAt, flies, isDead, seesFor, solid, stepCost, unitAt, zoneReach } from "./geometry";
 import { propOf } from "./props";
 import { SITE_IDS, backdropOf, siteInside, type SiteId } from "./sites";
-import { ACTION_AP, AP_MAX, AP_TURN, AQUEOUS, RALLY, SUMMON_AP_TURN, AURAS, CHART, COMMON_ACTIONS, BLOCK, BONUS_AP, BOLSTER, GUARD_UP, STAND_STRONG, STURDY, ENEMY_BURST, ENEMY_HP_SCALE, ENEMY_KIT, ENEMY_MOVE_AP, EXPLORE_ROUND_MS, FLEE_RANGE, LIGHT_RADIUS, SHIELD_SET_ASIDE, TACTICS, TORCH_GROUND_ROUNDS, TORCH_HELD_ROUNDS, TORCH_ROUND_MS, abilityDice as abilityDiceFor, commonCost, enemyHp, enemyMove, enemyStrikes, tacticOf } from "./kit";
+import { ACTION_AP, AP_MAX, AP_TURN, AQUEOUS, RALLY, SUMMON_AP_TURN, AURAS, CHART, COMMON_ACTIONS, BLOCK, BONUS_AP, BOLSTER, AGAINST_WAVES, ENDURE, STAND_STRONG, STURDY, ENEMY_BURST, ENEMY_HP_SCALE, ENEMY_KIT, ENEMY_MOVE_AP, EXPLORE_ROUND_MS, FLEE_RANGE, LIGHT_RADIUS, SHIELD_SET_ASIDE, TACTICS, TORCH_GROUND_ROUNDS, TORCH_HELD_ROUNDS, TORCH_ROUND_MS, abilityDice as abilityDiceFor, commonCost, enemyHp, enemyMove, enemyStrikes, tacticOf } from "./kit";
 import { MAX_CATCHUP_ROUNDS } from "./clock";
 import { d20, diceAverage, diceFor, heroMove, hitChance } from "./rules";
 import { createZone, ensureMouth, spentOut, standInHero, stepZone, zoneView } from "./zone";
@@ -4183,17 +4183,19 @@ describe("the Warden's wall", () => {
     for (const w of ["pager_axe", "maul", "boarding_pike"]) expect(WEAPONS[w].abilities.some((a) => ALL.includes(a)), w).toBe(false);
   });
 
-  it("Against the Waves: a Bonus action, 2 turns to wait; a high shield on the Warden, higher standing in water", () => {
+  it("Endure: a Bonus action, 2 turns to wait; a high shield on the Warden, and Guarded, the same in water or out", () => {
     let { state } = party();
+    expect(ABILITIES.against_the_waves.name).toBe("Endure");
     state = must(state, use("against_the_waves"));
     expect(state.encounter!.budgets.ann).toMatchObject({ ap: AP_TURN - BONUS_AP });
     expect(unit(state, "ann").cooldowns.against_the_waves).toBe(3);
-    expect(shieldOf(unit(state, "ann"))).toBe(10 + 1);
+    expect(shieldOf(unit(state, "ann"))).toBe(ENDURE.shield + 1);
+    expect(has(state, "ann", "guarded")).toBe(true);
     expect(shieldOf(unit(state, "bo"))).toBe(0);
     ({ state } = party());
     state = paint(state, "water", [at(5, 6)]);
     state = must(state, use("against_the_waves"));
-    expect(shieldOf(unit(state, "ann"))).toBe(10 + 1 + 8);
+    expect(shieldOf(unit(state, "ann"))).toBe(ENDURE.shield + 1);
   });
 
   /** Overwhelm tried over seeds until the contest goes one way or the other. */
@@ -4323,19 +4325,19 @@ describe("the Warden's wall", () => {
     expect(braced.amount - bare.amount).toBe(Math.floor((20 + 5) / 2) - Math.floor(5 / 2));
   });
 
-  it("Taunt: a Bonus action, 3 turns to wait; every enemy beside the Warden is Taunted by them for 2 of its turns", () => {
+  it("Taunt: 2 AP, 3 turns to wait; every enemy within 2 hexes of the Warden is Taunted by them for 2 of its turns", () => {
     let { state, foes } = party([at(6, 6), at(7, 6), at(8, 6)]);
     state = must(state, use("taunt"));
-    expect(state.encounter!.budgets.ann).toMatchObject({ ap: AP_TURN - BONUS_AP });
+    expect(state.encounter!.budgets.ann).toMatchObject({ ap: AP_TURN - ACTION_AP });
     expect(unit(state, "ann").cooldowns.taunt).toBe(4);
-    expect(unit(state, foes[0]).conditions.find((c) => c.kind === "taunted")).toMatchObject({ rounds: 2, by: "ann" });
-    for (const id of foes.slice(1)) expect(has(state, id, "taunted")).toBe(false);
+    for (const id of foes.slice(0, 2)) expect(unit(state, id).conditions.find((c) => c.kind === "taunted")).toMatchObject({ rounds: 2, by: "ann" });
+    expect(has(state, foes[2], "taunted")).toBe(false);
     state = nextTurn(state);
     expect(has(state, foes[0], "taunted")).toBe(true);
     state = nextTurn(state);
     expect(has(state, foes[0], "taunted")).toBe(false);
-    ({ state } = party([at(7, 6)]));
-    expect(fails(state, use("taunt"))).toMatch(/beside you/);
+    ({ state } = party([at(8, 6)]));
+    expect(fails(state, use("taunt"))).toMatch(/within 2 hexes/);
   });
 
   it("Taunt: a Taunted enemy goes for the Warden over a softer target it would rather hit, and for anyone else only if it cannot", () => {
@@ -5193,12 +5195,16 @@ describe("Warden weapons", () => {
     expect(fumbling(untilHit(state, { type: "use", by: "ann", unit: "ann", ability: "disarming_chop", target: foe }, foe, savedAll).state)).toBe(false);
   });
 
-  it("Guard: a Bonus action that leaves the Warden Guarded with a shield, then waits a turn", () => {
+  it("Against the Waves (the axe): a Bonus action that shields the Warden, more in water, then waits a turn", () => {
     let { state } = duel("dummy", "sre_warden", at(5, 6), at(9, 6));
+    expect(ABILITIES.raise_guard.name).toBe("Against the Waves");
     unit(state, "ann").abilities = ["raise_guard"];
+    const wet = paint(structuredClone(state), "water", [unit(state, "ann").pos]);
     state = must(state, { type: "use", by: "ann", unit: "ann", ability: "raise_guard" });
-    expect(unit(state, "ann").conditions.some((c) => c.kind === "guarded")).toBe(true);
-    expect(shieldOf(unit(state, "ann"))).toBe(GUARD_UP.shield + unit(state, "ann").level);
+    expect(unit(state, "ann").conditions.some((c) => c.kind === "guarded")).toBe(false);
+    expect(shieldOf(unit(state, "ann"))).toBe(AGAINST_WAVES.shield + unit(state, "ann").level);
+    const soaked = must(wet, { type: "use", by: "ann", unit: "ann", ability: "raise_guard" });
+    expect(shieldOf(unit(soaked, "ann"))).toBe(AGAINST_WAVES.shield + unit(soaked, "ann").level + AGAINST_WAVES.water);
     expect(state.encounter!.budgets.ann).toMatchObject({ ap: AP_TURN - BONUS_AP });
     state = must(state, { type: "end_turn", by: "ann", unit: "ann" });
     while (!state.encounter!.acting.includes("ann") || state.encounter!.done.includes("ann")) state = must(state, { type: "timeout" });

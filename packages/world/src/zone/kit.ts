@@ -192,22 +192,22 @@ const mend = (range: number, extra: Partial<Tactic> = {}): Tactic => ({ cost: 2,
 export const BOLSTER = { range: 2, shield: 10, rounds: 3 };
 
 /**
- * The Warden's. Against the Waves: a shield of `shield` plus the Warden's level on themselves, `water` more standing in water.
+ * The Warden's. Endure: a shield of `shield` plus the Warden's level on themselves (and they are Guarded: content.ts).
  * Overwhelm drives an enemy `hexes` back, and Stuns it `stun` of its turns if it is driven into a wall. Fortify raises a wall of
  * `hexes` hexes for `rounds` rounds; the user's side gets `defence` more Defence beside it. Bulwark Strike shields the Warden
  * `shield` plus their level first, then adds `perShield` of their shield to the damage. Taunt reaches `range` hexes, for `rounds`.
  */
-export const AGAINST_WAVES = { range: 0, shield: 10, rounds: 2, water: 8 };
+export const ENDURE = { range: 0, shield: 10, rounds: 2 };
 export const OVERWHELM = { hexes: 2, stun: 1 };
 export const FORTIFY = { hexes: 3, rounds: 3, defence: 1 };
 export const BULWARK = { shield: 4, rounds: 2, perShield: 0.5 };
-export const TAUNT = { range: 1, rounds: 2 };
+export const TAUNT = { range: 2, rounds: 2 };
 /** Sturdy Blow (the maul): a shield of `shield` plus the user's level, on top of any they have, hit or miss. */
 export const STURDY = { shield: 3, rounds: 1 };
 /** Stand Strong (the maul): a shield of `shield` plus the user's level and `perFoe` for each enemy beside them, on top of any they have. */
 export const STAND_STRONG = { shield: 3, perFoe: 3, rounds: 1 };
-/** Guard (the axe): a shield of `shield` plus the user's level, with Guarded. */
-export const GUARD_UP = { range: 0, shield: 4, rounds: 1 };
+/** Against the Waves (the axe): a shield of `shield` plus the user's level, `water` more standing in water. */
+export const AGAINST_WAVES = { range: 0, shield: 4, rounds: 1, water: 4 };
 
 /**
  * Weather (weather.ts), by kind: how many rounds of a fight it hangs on after the one it is made in. Rain heals
@@ -432,14 +432,14 @@ export const TACTICS: Record<string, Tactic> = {
   sturdy_blow: melee({ ward: STURDY }),
   stand_strong: { ...guard(), standStrong: STAND_STRONG, cooldown: 1 },
   disarming_chop: melee(),
-  raise_guard: { ...guard(), cooldown: 2, shield: GUARD_UP },
+  raise_guard: { ...guard(), cooldown: 2, shield: AGAINST_WAVES },
   goading_strike: melee({ goad: TAUNT.rounds }),
   throw_pike: shot(3, { pull: 2, cooldown: 3 }),
-  against_the_waves: { ...guard(), cooldown: 3, shield: AGAINST_WAVES },
+  against_the_waves: { ...guard(), cooldown: 3, shield: ENDURE },
   overwhelm: melee({ cost: 1, cooldown: 3, overwhelm: OVERWHELM }),
   fortify: spell(5, { shape: "blast", radius: 0, cooldown: 4, weather: "wall", fortify: FORTIFY }),
   bulwark_strike: melee({ cooldown: 3, bulwark: BULWARK }),
-  taunt: { ...guard(), cooldown: 4, taunt: TAUNT },
+  taunt: { ...guard(), cost: 2, cooldown: 4, taunt: TAUNT },
   // Warlock
   hex: spell(6),
   soul_drain: spell(5, { cooldown: 3 }),
