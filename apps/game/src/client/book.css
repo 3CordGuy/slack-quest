@@ -129,9 +129,9 @@
 
 /* Class ability slots (Skills page): three slots, and the class's pool to fill the one being changed. */
 .book-slots { display: grid; gap: 6px; margin: 6px 0; }
-.book-slot, .book-pool-item { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; padding: 6px 8px; text-align: left; color: inherit; background: rgba(255, 244, 214, 0.45); border: 1px solid #8a744a; border-radius: 4px; cursor: pointer; }
-.book-slot.idle strong { text-decoration: line-through; opacity: 0.7; }
-.book-slot.on { border-color: #1c4576; box-shadow: 0 0 0 1px #1c4576; }
-.book-slot:disabled, .book-pool-item:disabled { opacity: 0.55; cursor: default; }
-.book-slot small, .book-pool-item small { flex-basis: 100%; font-size: 13px; color: #5a4a30; }
+.ability-slot, .book-pool-item { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; padding: 6px 8px; text-align: left; color: inherit; background: rgba(255, 244, 214, 0.45); border: 1px solid #8a744a; border-radius: 4px; cursor: pointer; }
+.ability-slot.idle strong { text-decoration: line-through; opacity: 0.7; }
+.ability-slot.on { border-color: #1c4576; box-shadow: 0 0 0 1px #1c4576; }
+.ability-slot:disabled, .book-pool-item:disabled { opacity: 0.55; cursor: default; }
+.ability-slot small, .book-pool-item small { flex-basis: 100%; font-size: 13px; color: #5a4a30; }
 .book-pool { display: grid; gap: 4px; margin: 4px 0 8px; padding-left: 12px; border-left: 2px solid #c29a4c; }

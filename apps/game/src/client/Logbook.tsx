@@ -178,7 +178,7 @@ export function Logbook({ me, refresh, onClose, onIsland = false }: Props) {
                       const idle = !!id && !equipped.includes(id);
                       const entry = id ? pool.find((e) => e.id === id) : undefined;
                       return (
-                        <button key={slot} className={`book-slot ${pickSlot === slot ? "on" : ""} ${idle ? "idle" : ""}`} disabled={onIsland || busy} aria-pressed={pickSlot === slot} onClick={() => setPickSlot(pickSlot === slot ? null : slot)}>
+                        <button key={slot} className={`ability-slot ${pickSlot === slot ? "on" : ""} ${idle ? "idle" : ""}`} disabled={onIsland || busy} aria-pressed={pickSlot === slot} onClick={() => setPickSlot(pickSlot === slot ? null : slot)}>
                           <span className="book-skill-n">{slot + 1}</span>
                           <strong>{id ? label("ability", id) : "Empty"}</strong>
                           {id && <small>{!idle ? blurb("ability", id) : entry ? `Opens at level ${entry.level}: does nothing until then.` : "No longer one of your class's abilities: does nothing."}</small>}
