@@ -35,7 +35,7 @@ export type FxKind =
   | "flask"
   /** The Black Spot slammed onto the one aimed at, and held over them while they carry it. */
   | "spot"
-  /** A whirlpool round the user, dragging everything beside them in (Pull of the Deep). */
+  /** A whirlpool where it is aimed, dragging everything in it down (Pull of the Deep). */
   | "whirl"
   /** The sky over the hex aimed at turned red (Red Sky at Morning). */
   | "omen"
@@ -150,7 +150,7 @@ const ABILITY_FX: Record<string, Fx> = {
   sturdy_blow: fx("melee", "#c9b48a"),
   stand_strong: fx("bless", "#9ec9ff"),
   disarming_chop: fx("melee", "#93c5fd"),
-  raise_guard: fx("bless", "#fbbf24"),
+  raise_guard: fx("bless", "#5fb8ff"),
   goading_strike: fx("melee", "#ff6b6b"),
   throw_pike: fx("pike", "#c9d6e8"),
   starbeam: fx("beam", "#fff3a8"),
@@ -209,7 +209,7 @@ const ABILITY_FX: Record<string, Fx> = {
   windgod_shanty: fx("song", "#3fe0c5"),
   chorus: fx("chorus", "#ff6fa8"),
   lead_by_example: fx("sound", "#ffe08a"),
-  against_the_waves: fx("bless", "#5fb8ff"),
+  against_the_waves: fx("bless", "#fbbf24"),
   overwhelm: fx("charge", "#ff9a4a"),
   fortify: fx("erupt", "#c9b48a", "stone"),
   bulwark_strike: fx("melee", "#93c5fd"),

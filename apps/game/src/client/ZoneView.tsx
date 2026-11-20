@@ -179,6 +179,7 @@ function reachLabel(tactic: ReturnType<typeof tacticOf>): string {
   if (tactic.chart || tactic.summon) return `range ${tactic.range}`;
   if (tactic.blink) return tactic.shape === "self" ? `range ${tactic.blink.range}` : `melee, then range ${tactic.blink.range}`;
   if (tactic.soothe) return `allies, radius ${tactic.soothe.range}`;
+  if (tactic.rally) return `allies, radius ${tactic.rally.range}`;
   if (tactic.shape === "self") return "self";
   if (tactic.shape === "burst") return `radius ${tactic.radius}`;
   if (tactic.reach === "melee") return tactic.shape === "adjacent" ? "melee, all round" : tactic.shape === "arc" ? "melee, arc" : "melee";
@@ -950,9 +951,13 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
               view.strikeAt(ev.id, at, ev.name, thenOn(() => fxs.slam(at, look.color)));
             }
           } else if (look.kind === "whirl") {
-            const go = () => fxs.whirl(point(user.pos, 0.05), look.color);
-            if (view) view.burst(ev.id, ev.name, true, thenOn(go));
-            else go();
+            // Pull of the Deep: cast at the hexes aimed at, and a whirlpool opens there.
+            if (aim) cast(ev.id, ev.name, aim.x, aim.z, () => fxs.whirl(aim, look.color, 1.6));
+            else {
+              const go = () => fxs.whirl(point(user.pos, 0.05), look.color);
+              if (view) view.burst(ev.id, ev.name, true, thenOn(go));
+              else go();
+            }
           } else if (look.kind === "omen" && aim) {
             cast(ev.id, ev.name, aim.x, aim.z, () => fxs.omen(aim, look.color));
           } else if (look.kind === "song") {
@@ -1017,7 +1022,7 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
           } else if (look.kind === "bless") {
             // A guard is braced behind; a heal or a blessing is played or cast, toward whoever it is for.
             const whom = ev.target && ev.target !== ev.id ? find(ev.target) : null;
-            if (ev.what === "block" || ev.what === "raise_guard" || ev.what === "stand_strong") view?.brace(ev.id);
+            if (ev.what === "block" || ev.what === "raise_guard" || ev.what === "stand_strong" || ev.what === "against_the_waves") view?.brace(ev.id);
             else view?.bless(ev.id, whom ? point(whom.pos) : null);
             // A heal shows as it lands (see heal). Anything else shows on whoever it is for as the gesture ends:
             // a guard as a ward round them, a slip out of sight as smoke, a call as water where it is called to.
@@ -1027,7 +1032,8 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
               setTimeout(() => {
                 if (GUARDS.has(ev.what)) {
                   fxs.ward(on, look.color);
-                  if (ev.what === "against_the_waves") fxs.breaker(on, look.color);
+                  // Against the Waves (the axe, id raise_guard): the sea breaking on them.
+                  if (ev.what === "raise_guard") fxs.breaker(on, look.color);
                 }
                 else if (ev.what === "sneak") {
                   // Everyone it hides goes in smoke: the user, and every ally beside them.

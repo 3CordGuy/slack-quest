@@ -12,7 +12,7 @@ import { ALERT_RANGE, DEFAULT_ZONE_OPTIONS, JOIN_RANGE, generateZone, zoneOption
 import { HEX_ROOM, adjacent, blast, blockerAt, flies, isDead, seesFor, solid, stepCost, unitAt, zoneReach } from "./geometry";
 import { propOf } from "./props";
 import { SITE_IDS, backdropOf, siteInside, type SiteId } from "./sites";
-import { ACTION_AP, AP_MAX, AP_TURN, SUMMON_AP_TURN, AURAS, CHART, COMMON_ACTIONS, BLOCK, BONUS_AP, BOLSTER, GUARD_UP, STAND_STRONG, STURDY, ENEMY_BURST, ENEMY_HP_SCALE, ENEMY_KIT, ENEMY_MOVE_AP, EXPLORE_ROUND_MS, FLEE_RANGE, LIGHT_RADIUS, SHIELD_SET_ASIDE, TACTICS, TORCH_GROUND_ROUNDS, TORCH_HELD_ROUNDS, TORCH_ROUND_MS, abilityDice as abilityDiceFor, commonCost, enemyHp, enemyMove, enemyStrikes, tacticOf } from "./kit";
+import { ACTION_AP, AP_MAX, AP_TURN, AQUEOUS, RALLY, SUMMON_AP_TURN, AURAS, CHART, COMMON_ACTIONS, BLOCK, BONUS_AP, BOLSTER, AGAINST_WAVES, ENDURE, STAND_STRONG, STURDY, ENEMY_BURST, ENEMY_HP_SCALE, ENEMY_KIT, ENEMY_MOVE_AP, EXPLORE_ROUND_MS, FLEE_RANGE, LIGHT_RADIUS, SHIELD_SET_ASIDE, TACTICS, TORCH_GROUND_ROUNDS, TORCH_HELD_ROUNDS, TORCH_ROUND_MS, abilityDice as abilityDiceFor, commonCost, enemyHp, enemyMove, enemyStrikes, tacticOf } from "./kit";
 import { MAX_CATCHUP_ROUNDS } from "./clock";
 import { d20, diceAverage, diceFor, heroMove, hitChance } from "./rules";
 import { createZone, ensureMouth, spentOut, standInHero, stepZone, zoneView } from "./zone";
@@ -2742,22 +2742,26 @@ describe("the Paladin's class abilities", () => {
     expect(poolFor("qa_paladin").map((e) => e.id)).toEqual(["beacon_aura", "healing_aura", "branding_strike", "stoke_the_fire", "bolster", "show_the_way"]);
   });
 
-  it("Beacon Aura: a Bonus action that gives the Paladin and allies within 2 hexes advantage, not anyone further off", () => {
+  it("Beacon Aura: a Bonus action that gives the Paladin and allies within 2 hexes +2 to hit, not anyone further off", () => {
     let { state, dummy } = party();
     const foe = () => unit(state, dummy);
-    expect(attackContext(state, unit(state, "bo"), foe(), { melee: true }).adv).toBe(0);
+    const before = (id: string, melee: boolean) => attackContext(state, unit(state, id), foe(), { melee });
+    const was = { bo: before("bo", true), ann: before("ann", true), cy: before("cy", false), foe: attackContext(state, foe(), unit(state, "ann"), { melee: true }) };
     state = must(state, { type: "use", by: "ann", unit: "ann", ability: "beacon_aura" });
     expect(state.encounter!.budgets.ann).toMatchObject({ ap: AP_TURN - BONUS_AP });
     const bo = attackContext(state, unit(state, "bo"), foe(), { melee: true });
-    expect(bo.adv).toBe(1);
-    expect(bo.notes.join()).toMatch(/Beacon/);
+    expect(bo.mods).toBe(was.bo.mods + AURAS.beaconHit);
+    expect(bo.adv).toBe(was.bo.adv);
+    expect(bo.notes.join()).toMatch(/\+2 an ally's Beacon/);
     const ann = attackContext(state, unit(state, "ann"), foe(), { melee: true });
-    expect(ann.adv).toBe(1);
-    expect(ann.notes.join()).toMatch(/your Beacon/);
-    expect(attackContext(state, unit(state, "cy"), foe(), { melee: false }).adv).toBe(0);
-    expect(bo.notes.join()).toMatch(/an ally's Beacon/);
+    expect(ann.mods).toBe(was.ann.mods + AURAS.beaconHit);
+    expect(ann.adv).toBe(was.ann.adv);
+    expect(ann.notes.join()).toMatch(/\+2 your Beacon/);
+    // Too far off for it.
+    expect(attackContext(state, unit(state, "cy"), foe(), { melee: false }).mods).toBe(was.cy.mods);
     // Enemies beside the Paladin get nothing from it.
-    expect(attackContext(state, foe(), unit(state, "ann"), { melee: true }).adv).toBe(0);
+    const theirs = attackContext(state, foe(), unit(state, "ann"), { melee: true });
+    expect([theirs.mods, theirs.adv]).toEqual([was.foe.mods, was.foe.adv]);
   });
 
   it("Beacon Aura: lights the dark around the Paladin while it lasts, and lasts 4 of the Paladin's turns after this one", () => {
@@ -2893,9 +2897,10 @@ describe("the Paladin's class abilities", () => {
     let { state } = party();
     const bo = unit(state, "bo");
     bo.conditions = (["burning", "poisoned", "slowed", "exposed", "hasted"] as const).map((kind) => ({ kind, rounds: 3 }));
+    const before = state.encounter!.budgets.ann.ap;
     state = must(state, { type: "use", by: "ann", unit: "ann", ability: "show_the_way", target: "bo" });
     expect(unit(state, "bo").conditions.map((c) => c.kind)).toEqual(["hasted"]);
-    expect(state.encounter!.budgets.ann.ap).toBeLessThanOrEqual(AP_TURN - ACTION_AP);
+    expect(state.encounter!.budgets.ann.ap).toBe(before - BONUS_AP);
   });
 
   it("Show the Way: heals the ally a little, less than a Mend", () => {
@@ -3058,26 +3063,35 @@ describe("the Mage's class abilities", () => {
     }
   });
 
-  it("Roar of Thunder: never misses, Stuns, and throws the enemy a hex back", () => {
-    for (let seed = 1; seed <= 6; seed++) {
+  it("Roar of Thunder: never misses, always throws the enemy a hex back, and Stuns it unless it saves", () => {
+    const outcomes = new Set<boolean>();
+    for (let seed = 1; seed <= 12; seed++) {
       let { state } = party();
       state.rng = seed;
       const foe = addDummy(state, at(7, 6));
       const events: ZoneEvent[] = [];
       state = must(state, { type: "use", by: "ann", unit: "ann", ability: "roar_of_thunder", target: foe }, events);
       expect(events.some((e) => e.t === "roll" && e.roll.kind === "attack")).toBe(false);
-      expect(has(state, foe, "stunned")).toBe(true);
+      const save = events.find((e) => e.t === "roll" && e.roll.kind === "save");
+      expect(save?.t === "roll" && save.roll.label).toBe("Resist Roar of Thunder");
+      const saved = save?.t === "roll" && save.roll.ok;
+      outcomes.add(!!saved);
+      expect(has(state, foe, "stunned")).toBe(!saved);
       expect(unit(state, foe).pos).toEqual(at(8, 6));
       expect(fails(nextTurn(state), { type: "use", by: "ann", unit: "ann", ability: "roar_of_thunder", target: foe })).toMatch(/not ready/);
+      expect(tacticOf("roar_of_thunder").cooldown).toBe(2);
     }
+    // Over the seeds, the Stun is sometimes shaken off and sometimes not.
+    expect(outcomes).toEqual(new Set([true, false]));
   });
 
-  it("Trade Winds: 7 hexes that Haste the caster's side and Slow the enemy in them", () => {
+  it("Trade Winds: 19 hexes that Haste the caster's side and Slow the enemy in them", () => {
     let { state } = party();
     const foe = addDummy(state, at(4, 6));
     const outside = addDummy(state, at(9, 6));
-    state = must(state, { type: "use", by: "ann", unit: "ann", ability: "trade_winds", at: at(3, 6) });
-    expect(state.weather![0].hexes).toHaveLength(7);
+    // Two hexes round (2, 6): Bo at 1 and the dummy at 2 are in it; Ann, at 3, is not.
+    state = must(state, { type: "use", by: "ann", unit: "ann", ability: "trade_winds", at: at(2, 6) });
+    expect(state.weather![0].hexes).toHaveLength(19);
     expect(has(state, "bo", "hasted")).toBe(true);
     expect(has(state, foe, "slowed")).toBe(true);
     expect(has(state, outside, "slowed")).toBe(false);
@@ -3279,6 +3293,8 @@ describe("the Rogue's class abilities", () => {
   });
 
   it("Pickpocket: a Bonus action blow that, landing, pays gold equal to your level, once an enemy", () => {
+    // A light cut: plain 1d6, its dice set outright rather than worked out from its damage.
+    expect(abilityDiceFor(ABILITIES.pickpocket)).toEqual({ n: 1, d: 6, plus: 0 });
     let paid = 0;
     let missed = 0;
     for (let seed = 1; seed <= 12; seed++) {
@@ -3492,7 +3508,34 @@ describe("the Druid's class abilities", () => {
     expect(has(state, "bo", "regenerating")).toBe(false);
   });
 
-  it("Aqueous Regeneration: heals 3 more, now and each turn, for one standing in water", () => {
+  it("Rejuvenate: heals now, and the same again at the start of the ally's next turn, then stops", () => {
+    let { state } = party();
+    unit(state, "ann").abilities = [...unit(state, "ann").abilities, "rejuvenate"];
+    unit(state, "bo").hp = 1;
+    const events: ZoneEvent[] = [];
+    state = must(state, use("rejuvenate", { target: "bo" }), events);
+    const first = events.find((e) => e.t === "heal" && e.target === "bo" && e.what === "rejuvenate");
+    if (first?.t !== "heal" || !first.dice) throw new Error("no heal");
+    // 1d8+2, and the Druid's heal bonus on top.
+    expect([first.dice.faces.length, first.dice.d]).toEqual([1, 8]);
+    expect(first.dice.plus).toBeGreaterThanOrEqual(2);
+    expect(has(state, "bo", "rejuvenating")).toBe(true);
+    const again = (evs: ZoneEvent[]) => evs.filter((e) => e.t === "heal" && e.target === "bo" && e.what === "rejuvenate" && e.actor === null);
+    unit(state, "bo").hp = 1;
+    const seen: ZoneEvent[] = [];
+    state = nextTurn(state, seen);
+    const second = again(seen);
+    expect(second).toHaveLength(1);
+    // The same heal: the same dice, and the same bonus on top.
+    expect(second[0].t === "heal" && second[0].dice).toMatchObject({ d: 8, plus: first.dice.plus });
+    unit(state, "bo").hp = 1;
+    const after: ZoneEvent[] = [];
+    state = nextTurn(state, after);
+    expect(again(after)).toHaveLength(0);
+    expect(has(state, "bo", "rejuvenating")).toBe(false);
+  });
+
+  it("Aqueous Regeneration: heals 2 more, now and each turn, for one standing in water", () => {
     const amounts = (wet: boolean) => {
       let { state } = party();
       if (wet) state = paint(state, "water", [at(4, 6)]);
@@ -3506,7 +3549,8 @@ describe("the Druid's class abilities", () => {
     const dry = amounts(false);
     const wet = amounts(true);
     expect(dry).toHaveLength(2);
-    expect(wet).toEqual(dry.map((n) => n + 3));
+    expect(wet).toEqual(dry.map((n) => n + AQUEOUS.water));
+    expect(AQUEOUS.water).toBe(2);
   });
 
   it("Coral Armor: +2 Defence on the ally for 3 of their turns, in reach 3", () => {
@@ -3542,7 +3586,7 @@ describe("the Druid's class abilities", () => {
     expect(cut).toBeGreaterThan(0);
   });
 
-  it("Revitalizing Splash: a big heal over 4 hexes for your side, the fallen got up, enemies passed over, and water left", () => {
+  it("Revitalizing Splash: a heal over 4 hexes for your side, the fallen got up, enemies passed over, and water left", () => {
     let { state } = party();
     const foe = addFoe(state, at(7, 6));
     unit(state, "bo").pos = at(7, 5);
@@ -3555,7 +3599,8 @@ describe("the Druid's class abilities", () => {
     expect(area).toHaveLength(4);
     for (const p of area) expect(state.surfaces[posKey(p)]?.kind).toBe("water");
     expect(unit(state, "bo").down).toBe(false);
-    expect(unit(state, "bo").hp).toBeGreaterThan(8);
+    // Got up from 0 with the heal: 1d8+2 at the least, and the Druid's bonus on top.
+    expect(unit(state, "bo").hp).toBeGreaterThanOrEqual(3);
     expect(events.some((e) => e.t === "heal" && e.target === foe)).toBe(false);
     expect(events.some((e) => e.t === "heal" && e.target === "ann")).toBe(false);
     expect(state.encounter!.budgets.ann.ap).toBeLessThanOrEqual(AP_TURN - ACTION_AP);
@@ -3981,7 +4026,7 @@ describe("the Sage's stars", () => {
     const ap = state.encounter!.budgets.ann.ap;
     state = must(state, cast("constellation"));
     expect(state.encounter!.budgets.ann).toMatchObject({ ap: ap - BONUS_AP });
-    expect(unit(state, "ann").cooldowns.constellation).toBe(4);
+    expect(unit(state, "ann").cooldowns.constellation).toBe(3);
     for (const id of foes.slice(0, 3)) {
       expect(hurt(state, id)).toBeGreaterThan(0);
       expect(has(state, id, "guiding_light")).toBe(true);
@@ -4138,17 +4183,19 @@ describe("the Warden's wall", () => {
     for (const w of ["pager_axe", "maul", "boarding_pike"]) expect(WEAPONS[w].abilities.some((a) => ALL.includes(a)), w).toBe(false);
   });
 
-  it("Against the Waves: a Bonus action, 2 turns to wait; a high shield on the Warden, higher standing in water", () => {
+  it("Endure: a Bonus action, 2 turns to wait; a high shield on the Warden, and Guarded, the same in water or out", () => {
     let { state } = party();
+    expect(ABILITIES.against_the_waves.name).toBe("Endure");
     state = must(state, use("against_the_waves"));
     expect(state.encounter!.budgets.ann).toMatchObject({ ap: AP_TURN - BONUS_AP });
     expect(unit(state, "ann").cooldowns.against_the_waves).toBe(3);
-    expect(shieldOf(unit(state, "ann"))).toBe(10 + 1);
+    expect(shieldOf(unit(state, "ann"))).toBe(ENDURE.shield + 1);
+    expect(has(state, "ann", "guarded")).toBe(true);
     expect(shieldOf(unit(state, "bo"))).toBe(0);
     ({ state } = party());
     state = paint(state, "water", [at(5, 6)]);
     state = must(state, use("against_the_waves"));
-    expect(shieldOf(unit(state, "ann"))).toBe(10 + 1 + 8);
+    expect(shieldOf(unit(state, "ann"))).toBe(ENDURE.shield + 1);
   });
 
   /** Overwhelm tried over seeds until the contest goes one way or the other. */
@@ -4278,19 +4325,19 @@ describe("the Warden's wall", () => {
     expect(braced.amount - bare.amount).toBe(Math.floor((20 + 5) / 2) - Math.floor(5 / 2));
   });
 
-  it("Taunt: a Bonus action, 3 turns to wait; every enemy beside the Warden is Taunted by them for 2 of its turns", () => {
+  it("Taunt: 2 AP, 3 turns to wait; every enemy within 2 hexes of the Warden is Taunted by them for 2 of its turns", () => {
     let { state, foes } = party([at(6, 6), at(7, 6), at(8, 6)]);
     state = must(state, use("taunt"));
-    expect(state.encounter!.budgets.ann).toMatchObject({ ap: AP_TURN - BONUS_AP });
+    expect(state.encounter!.budgets.ann).toMatchObject({ ap: AP_TURN - ACTION_AP });
     expect(unit(state, "ann").cooldowns.taunt).toBe(4);
-    expect(unit(state, foes[0]).conditions.find((c) => c.kind === "taunted")).toMatchObject({ rounds: 2, by: "ann" });
-    for (const id of foes.slice(1)) expect(has(state, id, "taunted")).toBe(false);
+    for (const id of foes.slice(0, 2)) expect(unit(state, id).conditions.find((c) => c.kind === "taunted")).toMatchObject({ rounds: 2, by: "ann" });
+    expect(has(state, foes[2], "taunted")).toBe(false);
     state = nextTurn(state);
     expect(has(state, foes[0], "taunted")).toBe(true);
     state = nextTurn(state);
     expect(has(state, foes[0], "taunted")).toBe(false);
-    ({ state } = party([at(7, 6)]));
-    expect(fails(state, use("taunt"))).toMatch(/beside you/);
+    ({ state } = party([at(8, 6)]));
+    expect(fails(state, use("taunt"))).toMatch(/within 2 hexes/);
   });
 
   it("Taunt: a Taunted enemy goes for the Warden over a softer target it would rather hit, and for anyone else only if it cannot", () => {
@@ -4492,10 +4539,11 @@ describe("the Warlock's drowning", () => {
     const [cutlass, gunner] = sailors(state);
     expect(cutlass).toMatchObject({ kind: "drowned_cutlass", controller: "ann", pos: at(8, 6) });
     expect(gunner).toMatchObject({ kind: "drowned_gunner", controller: "ann", pos: at(7, 6) });
-    // The cutlass stands up to more; the gunner's pistol hits harder, and reaches 4 hexes.
+    // The cutlass stands up to more and hits harder; the gunner's pistol reaches 4 hexes.
     expect(cutlass.maxHp).toBeGreaterThan(gunner.maxHp);
     expect(defenceOf(cutlass)).toBeGreaterThan(defenceOf(gunner));
-    expect(diceAverage(abilityDiceOf("sailor_pistol"))).toBeGreaterThan(diceAverage(abilityDiceOf("sailor_scimitar")));
+    expect(abilityDiceOf("sailor_pistol")).toEqual({ n: 1, d: 6, plus: 2 });
+    expect(diceAverage(abilityDiceOf("sailor_scimitar"))).toBeGreaterThan(diceAverage(abilityDiceOf("sailor_pistol")));
     expect(TACTICS.sailor_pistol).toMatchObject({ reach: "ranged", range: 4 });
     expect(TACTICS.sailor_scimitar).toMatchObject({ reach: "melee" });
     // Straight after the Warlock in the order, in the turn they share.
@@ -4596,11 +4644,12 @@ describe("Paladin weapons", () => {
 });
 
 describe("Mage weapons", () => {
-  it("gives each weapon two abilities of its own, the second once a turn", () => {
+  it("gives each weapon two abilities of its own, the second once a turn (Lightning Strike every other turn)", () => {
     expect(WEAPONS.staff.abilities).toEqual(["shock", "mend"]);
     expect(WEAPONS.tome.abilities).toEqual(["slicing_wind", "winds_blessing"]);
     expect(WEAPONS.barometer_rod.abilities).toEqual(["waterbolt", "lightning_strike"]);
-    for (const id of ["shock", "mend", "slicing_wind", "winds_blessing", "waterbolt", "lightning_strike"]) expect(tacticOf(id).cooldown, id).toBe(Object.values(WEAPONS).some((w) => w.abilities[0] === id) ? undefined : 1);
+    for (const id of ["shock", "mend", "slicing_wind", "winds_blessing", "waterbolt"]) expect(tacticOf(id).cooldown, id).toBe(Object.values(WEAPONS).some((w) => w.abilities[0] === id) ? undefined : 1);
+    expect(tacticOf("lightning_strike").cooldown).toBe(2);
     // Lightning hits harder on the Wet, and a Waterbolt leaves them Wet.
     expect(tacticOf("shock").vsWet).toBeGreaterThan(0);
     expect(tacticOf("lightning_strike").vsWet).toBeGreaterThan(0);
@@ -4680,12 +4729,13 @@ describe("Rogue weapons", () => {
     expect(unit(state, "ann").conditions.some((c) => c.kind === "inspired")).toBe(false);
   });
 
-  it("Eviscerate: a hit always leaves the target Bleeding, no save", () => {
+  it("Eviscerate: a hit leaves the target Bleeding unless it saves", () => {
     const { state, foe } = duel("dummy", "refactor_rogue", at(5, 6), at(7, 6));
     unit(state, "ann").abilities = ["eviscerate"];
     const after = untilHit(state, { type: "use", by: "ann", unit: "ann", ability: "eviscerate", target: foe }, foe);
-    expect(unit(after.state, foe).conditions.some((c) => c.kind === "bleeding")).toBe(true);
-    expect(after.events.some((e) => e.t === "roll" && e.roll.kind === "save")).toBe(false);
+    const save = after.events.find((e) => e.t === "roll" && e.roll.kind === "save");
+    expect(save?.t === "roll" && save.roll.label).toBe("Resist Eviscerate");
+    expect(unit(after.state, foe).conditions.some((c) => c.kind === "bleeding")).toBe(!(save?.t === "roll" && save.roll.ok));
   });
 
   it("Snag: reaches 3 hexes, leaves the target where it is, and Slows it unless it saves", () => {
@@ -4830,7 +4880,7 @@ describe("Bard weapons", () => {
     expect(tacticOf("soothing_tone").cooldown).toBe(2);
     expect(tacticOf("clarion_call").cooldown).toBe(2);
     expect(tacticOf("encore").cost).toBe(BONUS_AP);
-    for (const id of ["dissonance", "blasting_tone", "soothing_tone", "peal", "clarion_call"]) expect(tacticOf(id).cost, id).toBe(ACTION_AP);
+    for (const id of ["dissonance", "blasting_tone", "soothing_tone", "peal", "clarion_call", "hornpipe"]) expect(tacticOf(id).cost, id).toBe(ACTION_AP);
   });
 
   it("Dissonance: a hit leaves the target Fumbling, with no save, and its next attack is rolled with disadvantage", () => {
@@ -4949,15 +4999,37 @@ describe("Bard weapons", () => {
     expect(fails(state, { type: "use", by: "ann", unit: "ann", ability: "bellows_blast" })).toMatch(/not ready/);
   });
 
-  it("Hornpipe: 1 AP that gives one more movement for each AP", () => {
+  it("Hornpipe: 2 AP that Rallies the Bard and every ally within 2 hexes, then waits two turns", () => {
     let { state } = duel("dummy", "frontend_bard", at(5, 6), at(11, 6));
+    // The duel has stepped Ann up to (6, 6): Bo is 1 hex off, Cy 3.
+    hero(state, "bo", "qa_paladin", at(7, 6));
+    hero(state, "cy", "refactor_rogue", at(9, 6));
     unit(state, "ann").abilities = ["hornpipe"];
+    expect([hexDistance(unit(state, "ann").pos, unit(state, "bo").pos), hexDistance(unit(state, "ann").pos, unit(state, "cy").pos)]).toEqual([1, 3]);
     const stride = state.encounter!.budgets.ann.stride;
-    state = must(state, { type: "use", by: "ann", unit: "ann", ability: "hornpipe", target: "ann" });
-    expect(state.encounter!.budgets.ann).toMatchObject({ ap: AP_TURN - BONUS_AP, stride: stride + 1 });
+    state = must(state, { type: "use", by: "ann", unit: "ann", ability: "hornpipe" });
+    expect(state.encounter!.budgets.ann).toMatchObject({ ap: AP_TURN - ACTION_AP, stride });
+    expect(["ann", "bo", "cy"].map((id) => has(state, id, "rallied"))).toEqual([true, true, false]);
+    expect(tacticOf("hornpipe").cooldown).toBe(2);
   });
 
-  it("Clarion Call: a big heal on the target, and a lesser one on every ally beside it, but none further off", () => {
+  it("Rallied: +2 damage on the next attack, then it is spent", () => {
+    let { state, foe } = duel("dummy", "frontend_bard", at(5, 6), at(7, 6));
+    unit(state, "ann").abilities = ["hornpipe", "dissonance"];
+    unit(state, foe).hp = 999;
+    state = must(state, { type: "use", by: "ann", unit: "ann", ability: "hornpipe" });
+    expect(has(state, "ann", "rallied")).toBe(true);
+    const after = untilHit(state, { type: "use", by: "ann", unit: "ann", ability: "dissonance", target: foe }, foe);
+    expect(has(after.state, "ann", "rallied")).toBe(false);
+    const blow = after.events.find((e) => e.t === "hit" && e.target === foe);
+    if (blow?.t !== "hit" || !blow.dice) throw new Error("no blow");
+    // 1d6+2, the Bard's own bonus (INT, weapon, half level), and the Rally's +2.
+    const ann = unit(after.state, "ann");
+    const own = Math.floor((ann.stats!.int_stat - 5) / 2) + ann.power + Math.floor(ann.level / 2);
+    expect(blow.dice.plus).toBe(2 + own + RALLY.damage);
+  });
+
+  it("Clarion Call: a good heal on the target, and a lesser one on every ally beside it, but none further off", () => {
     const { state } = duel("dummy", "frontend_bard", at(5, 6), at(11, 6));
     hero(state, "bo", "qa_paladin", at(8, 6));
     hero(state, "cy", "refactor_rogue", at(9, 6));
@@ -4982,7 +5054,7 @@ describe("Sage weapons", () => {
     expect(tacticOf("st_elmos_fire").cooldown).toBe(3);
     expect(tacticOf("rust_armor").cooldown).toBe(2);
     expect(tacticOf("st_elmos_fire").cost).toBe(BONUS_AP);
-    expect(ABILITIES.starbeam.damage).toBe(12);
+    expect(abilityDiceFor(ABILITIES.starbeam)).toEqual({ n: 1, d: 6, plus: 3 });
     expect(ABILITIES.rust_armor.perfect).toEqual({ effect: "sundered", turns: 3 });
   });
 
@@ -5124,12 +5196,16 @@ describe("Warden weapons", () => {
     expect(fumbling(untilHit(state, { type: "use", by: "ann", unit: "ann", ability: "disarming_chop", target: foe }, foe, savedAll).state)).toBe(false);
   });
 
-  it("Guard: a Bonus action that leaves the Warden Guarded with a shield, then waits a turn", () => {
+  it("Against the Waves (the axe): a Bonus action that shields the Warden, more in water, then waits a turn", () => {
     let { state } = duel("dummy", "sre_warden", at(5, 6), at(9, 6));
+    expect(ABILITIES.raise_guard.name).toBe("Against the Waves");
     unit(state, "ann").abilities = ["raise_guard"];
+    const wet = paint(structuredClone(state), "water", [unit(state, "ann").pos]);
     state = must(state, { type: "use", by: "ann", unit: "ann", ability: "raise_guard" });
-    expect(unit(state, "ann").conditions.some((c) => c.kind === "guarded")).toBe(true);
-    expect(shieldOf(unit(state, "ann"))).toBe(GUARD_UP.shield + unit(state, "ann").level);
+    expect(unit(state, "ann").conditions.some((c) => c.kind === "guarded")).toBe(false);
+    expect(shieldOf(unit(state, "ann"))).toBe(AGAINST_WAVES.shield + unit(state, "ann").level);
+    const soaked = must(wet, { type: "use", by: "ann", unit: "ann", ability: "raise_guard" });
+    expect(shieldOf(unit(soaked, "ann"))).toBe(AGAINST_WAVES.shield + unit(soaked, "ann").level + AGAINST_WAVES.water);
     expect(state.encounter!.budgets.ann).toMatchObject({ ap: AP_TURN - BONUS_AP });
     state = must(state, { type: "end_turn", by: "ann", unit: "ann" });
     while (!state.encounter!.acting.includes("ann") || state.encounter!.done.includes("ann")) state = must(state, { type: "timeout" });
@@ -5162,7 +5238,7 @@ describe("Warlock weapons", () => {
   it("keeps Hex and Soul Drain on the grimoire, Hex with no share of max HP and Soul Drain on a 2-turn wait", () => {
     expect(WEAPONS.grimoire.abilities).toEqual(["hex", "soul_drain"]);
     expect(WEAPONS.void_staff.abilities).toEqual(["sink", "pull_of_the_deep"]);
-    expect(ABILITIES.hex.damage).toBe(8);
+    expect(abilityDiceFor(ABILITIES.hex)).toEqual({ n: 1, d: 6, plus: 2 });
     expect(ABILITIES.soul_drain.damage).toBe(11);
     expect(tacticOf("soul_drain").cooldown).toBe(3);
     expect(tacticOf("hex").cooldown).toBeUndefined();
@@ -5190,18 +5266,20 @@ describe("Warlock weapons", () => {
     expect(sunk && held).toBe(true);
   });
 
-  it("Pull of the Deep: strikes every enemy beside the Warlock, not an ally or one further off, and drowns those that fail to brace", () => {
-    const { state, foe } = duel("dummy", "data_warlock", at(5, 6), at(7, 6));
-    const far = enemy(state, "dummy", at(9, 9));
-    hero(state, "bo", "qa_paladin", at(6, 7));
+  it("Pull of the Deep: 3 hexes up to 5 off; strikes every enemy in them, not an ally or one outside, and drowns those that fail to brace", () => {
+    const { state, foe } = duel("dummy", "data_warlock", at(5, 6), at(9, 6));
+    const far = enemy(state, "dummy", at(9, 11));
+    hero(state, "bo", "qa_paladin", at(9, 7));
     unit(state, "ann").abilities = ["pull_of_the_deep"];
+    const at9 = unit(state, foe).pos;
+    expect(abilityArea(state, unit(state, "ann"), "pull_of_the_deep", at9)).toHaveLength(3);
     const bo = unit(state, "bo").hp;
     let drowned = false;
     for (let seed = 1; seed < 120 && !drowned; seed++) {
       const tryState = structuredClone(state);
       tryState.rng = seed;
       const events: ZoneEvent[] = [];
-      const next = must(tryState, { type: "use", by: "ann", unit: "ann", ability: "pull_of_the_deep" }, events);
+      const next = must(tryState, { type: "use", by: "ann", unit: "ann", ability: "pull_of_the_deep", at: at9 }, events);
       expect(events.some((e) => e.t === "hit" && e.target === foe)).toBe(true);
       expect(unit(next, far.id).hp).toBe(unit(state, far.id).hp);
       expect(unit(next, "bo").hp).toBe(bo);
@@ -5209,6 +5287,20 @@ describe("Warlock weapons", () => {
       drowned = drowning(next, foe) === 1;
     }
     expect(drowned).toBe(true);
+    // Too far off to aim at.
+    expect(fails(state, { type: "use", by: "ann", unit: "ann", ability: "pull_of_the_deep", at: at(13, 6) })).toMatch(/range/i);
+  });
+
+  it("Soul Drain: heals the Warlock half the damage it deals", () => {
+    const { state, foe } = duel("dummy", "data_warlock", at(5, 6), at(9, 6));
+    unit(state, "ann").abilities = ["soul_drain"];
+    unit(state, "ann").hp = 1;
+    const after = untilHit(state, { type: "use", by: "ann", unit: "ann", ability: "soul_drain", target: foe }, foe);
+    const blow = after.events.find((e) => e.t === "hit" && e.target === foe);
+    const healed = after.events.find((e) => e.t === "heal" && e.target === "ann");
+    if (blow?.t !== "hit" || healed?.t !== "heal") throw new Error("no drain");
+    expect(ABILITIES.soul_drain.drain).toBe(0.5);
+    expect(healed.amount).toBe(Math.min(unit(state, "ann").maxHp - 1, Math.max(1, Math.round(blow.amount * 0.5))));
   });
 
   it("gives the chalice Vile Splash and Drink Deeply, Drink Deeply on a cooldown", () => {
@@ -5278,25 +5370,29 @@ describe("Ship's guns", () => {
   };
   it("are weapons no class owns, with two abilities each, that a Paladin can carry into a fight", () => {
     expect(WEAPONS.pistol.abilities).toEqual(["pistol_shot", "pistol_whip"]);
-    expect(WEAPONS.blunderbuss.abilities).toEqual(["scattershot", "butt_stroke"]);
-    expect(WEAPONS.harpoon_gun.abilities).toEqual(["harpoon_shot", "barbed_line"]);
+    expect(WEAPONS.blunderbuss.abilities).toEqual(["butt_stroke", "scattershot"]);
+    expect(WEAPONS.harpoon_gun.abilities).toEqual(["barbed_line", "harpoon_shot"]);
+    // The first of each is the plain attack, with no wait.
+    for (const id of ["butt_stroke", "barbed_line"]) expect(TACTICS[id].cooldown, id).toBeUndefined();
+    expect(ABILITIES.butt_stroke.name).toBe("Bludgeon");
     for (const id of ["pistol", "blunderbuss", "harpoon_gun"]) expect(WEAPONS[id].classId, id).toBeUndefined();
     const { state } = duel("dummy", "qa_paladin", at(4, 6), at(8, 6));
     unit(state, "ann").abilities = abilitiesFor("pistol");
     expect(unit(state, "ann").abilities).toContain("pistol_shot");
   });
 
-  it("reach as they say: the pistol 5 hexes, the harpoon 6, the barbed line 3, the whip and butt only beside you", () => {
-    expect(TACTICS.pistol_shot).toMatchObject({ reach: "ranged", range: 5 });
+  it("reach as they say: the pistol 6 hexes, the harpoon 6, the barbed line 3, the whip and butt only beside you", () => {
+    expect(TACTICS.pistol_shot).toMatchObject({ reach: "ranged", range: 6 });
     expect(TACTICS.harpoon_shot).toMatchObject({ reach: "ranged", range: 6, pull: 2, cooldown: 3 });
     expect(TACTICS.barbed_line).toMatchObject({ reach: "ranged", range: 3 });
     expect(TACTICS.pistol_whip).toMatchObject({ reach: "melee", cost: BONUS_AP });
     expect(TACTICS.butt_stroke).toMatchObject({ reach: "melee" });
-    const { state, foe } = gap(5);
+    const { state, foe } = gap(6);
     unit(state, "ann").abilities = ["pistol_shot"];
-    expect(hexDistance(unit(state, "ann").pos, unit(state, foe).pos)).toBe(5);
+    expect(hexDistance(unit(state, "ann").pos, unit(state, foe).pos)).toBe(6);
     expect(checkAbility(state, unit(state, "ann"), "pistol_shot", { target: foe })).toBeNull();
-    unit(state, foe).pos = at(10, 6);
+    unit(state, foe).pos = at(11, 6);
+    expect(hexDistance(unit(state, "ann").pos, unit(state, foe).pos)).toBe(7);
     expect(checkAbility(state, unit(state, "ann"), "pistol_shot", { target: foe })).toMatch(/Out of range/);
   });
 
