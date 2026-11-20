@@ -63,6 +63,7 @@ import {
   commonCost,
   AP_MAX,
   AP_TURN,
+  SUMMON_AP_TURN,
   ITEM_AP,
   apForMove,
   moveLeft,
@@ -2766,7 +2767,7 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
           round={enc.round}
           ap={shownBudget?.ap ?? 0}
           apMax={AP_MAX}
-          apTurn={AP_TURN}
+          apTurn={act.summon ? SUMMON_AP_TURN : AP_TURN}
           apCost={!myTurn ? null : pick ? (pick.kind === "ability" ? tacticOf(pick.id).cost : pick.kind === "item" ? ITEM_AP.throw : commonCost(pick.what, act.kind)) : moveTip && !moveTip.none ? moveTip.ap : null}
           move={shownBudget?.move ?? 0}
           stride={shownBudget?.stride ?? 0}

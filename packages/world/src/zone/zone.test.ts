@@ -11,7 +11,7 @@ import { ALERT_RANGE, DEFAULT_ZONE_OPTIONS, JOIN_RANGE, generateZone, zoneOption
 import { HEX_ROOM, adjacent, blast, blockerAt, flies, isDead, sees, seesFor, solid, stepCost, unitAt, zoneReach } from "./geometry";
 import { propOf } from "./props";
 import { SITE_IDS, backdropOf, siteInside, type SiteId } from "./sites";
-import { ACTION_AP, AP_MAX, AP_TURN, AURAS, CHART, COMMON_ACTIONS, BLOCK, BONUS_AP, BOLSTER, GUARD_UP, STAND_STRONG, STURDY, ENEMY_BURST, ENEMY_HP_SCALE, ENEMY_KIT, ENEMY_MOVE_AP, EXPLORE_ROUND_MS, FLEE_RANGE, LIGHT_RADIUS, SHIELD_SET_ASIDE, TACTICS, TORCH_GROUND_ROUNDS, TORCH_HELD_ROUNDS, TORCH_ROUND_MS, abilityDice as abilityDiceFor, commonCost, enemyHp, enemyMove, enemyStrikes, tacticOf } from "./kit";
+import { ACTION_AP, AP_MAX, AP_TURN, SUMMON_AP_TURN, AURAS, CHART, COMMON_ACTIONS, BLOCK, BONUS_AP, BOLSTER, GUARD_UP, STAND_STRONG, STURDY, ENEMY_BURST, ENEMY_HP_SCALE, ENEMY_KIT, ENEMY_MOVE_AP, EXPLORE_ROUND_MS, FLEE_RANGE, LIGHT_RADIUS, SHIELD_SET_ASIDE, TACTICS, TORCH_GROUND_ROUNDS, TORCH_HELD_ROUNDS, TORCH_ROUND_MS, abilityDice as abilityDiceFor, commonCost, enemyHp, enemyMove, enemyStrikes, tacticOf } from "./kit";
 import { MAX_CATCHUP_ROUNDS } from "./clock";
 import { defenceOf } from "./engine";
 import { abilityArea, checkAbility, crateBlow, enemyAct, wayBetween } from "./combat";
@@ -3622,7 +3622,7 @@ describe("the Druid's class abilities", () => {
     const enc = state.encounter!;
     expect(enc.order[enc.order.indexOf("ann") + 1]).toBe(turtle.id);
     expect(enc.acting).toContain(turtle.id);
-    expect(enc.budgets[turtle.id]).toMatchObject({ ap: AP_TURN, move: 0, stride: 1 });
+    expect(enc.budgets[turtle.id]).toMatchObject({ ap: SUMMON_AP_TURN, move: 0, stride: 1 });
     // Ann's player plays it; nobody else does.
     expect(fails(state, { type: "use", by: "bo", unit: turtle.id, ability: "turtle_bite", target: foe })).toMatch(/not yours/);
     const events: ZoneEvent[] = [];
@@ -4574,9 +4574,9 @@ describe("the Warlock's drowning", () => {
     // Straight after the Warlock in the order, in the turn they share.
     const enc = state.encounter!;
     expect(enc.order.slice(enc.order.indexOf("ann") + 1, enc.order.indexOf("ann") + 3)).toEqual([cutlass.id, gunner.id]);
-    for (const s of [cutlass, gunner]) expect(enc.budgets[s.id]).toMatchObject({ ap: AP_TURN, move: 0, stride: 2 });
+    for (const s of [cutlass, gunner]) expect(enc.budgets[s.id]).toMatchObject({ ap: SUMMON_AP_TURN, move: 0, stride: 2 });
     expect(fails(state, { type: "use", by: "ann", unit: gunner.id, ability: "sailor_pistol", target: foes[0] })).toMatch(/Out of range/);
-    state = must(state, { type: "move", by: "ann", unit: gunner.id, to: at(9, 7) });
+    state = must(state, { type: "move", by: "ann", unit: gunner.id, to: at(9, 6) });
     const events: ZoneEvent[] = [];
     state = must(state, { type: "use", by: "ann", unit: gunner.id, ability: "sailor_pistol", target: foes[0] }, events);
     expect(events.some((e) => e.t === "roll" && e.roll.id === gunner.id)).toBe(true);

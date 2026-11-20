@@ -29,6 +29,8 @@ export type Shape = "single" | "adjacent" | "arc" | "cone" | "chain" | "blast" |
  * stride of movement (heroMove in rules.ts; enemyMove below, of which an enemy spends ENEMY_MOVE_AP a turn at most).
  */
 export const AP_TURN = 4;
+/** A summoned creature gets fewer fresh AP each turn than a hero or an enemy. */
+export const SUMMON_AP_TURN = 3;
 export const AP_MAX = 6;
 export const ACTION_AP = 2;
 export const BONUS_AP = 1;
@@ -386,7 +388,7 @@ export const TACTICS: Record<string, Tactic> = {
   aqueous_regeneration: mend(5, { cost: 1, cooldown: 4, regen: AQUEOUS }),
   coral_armor: mend(3, { cost: 1, cooldown: 4, armor: CORAL_ARMOR }),
   revitalizing_splash: spell(5, { shape: "blast", cooldown: 3, splash: SPLASH }),
-  summon_sea_turtle: { cost: 2, reach: "spell", range: 3, shape: "self", cooldown: 5, summon: "sea_turtle" },
+  summon_sea_turtle: { cost: 3, reach: "spell", range: 3, shape: "self", cooldown: 5, summon: "sea_turtle" },
   // The sea turtle's own
   turtle_bite: melee({ wading: 4 }),
   // Bard
@@ -439,7 +441,7 @@ export const TACTICS: Record<string, Tactic> = {
   pull_of_the_deep: spell(0, { shape: "burst", radius: 1, cooldown: 3, drowns: 1 }),
   // Warlock class abilities
   curse_of_drowning: spell(5, { cost: 1, cooldown: 4, sure: true, curse: DROWNING_CURSE }),
-  summon_sunken_sailors: { cost: 2, reach: "spell", range: 3, shape: "self", cooldown: 5, summon: "sunken_sailors" },
+  summon_sunken_sailors: { cost: 3, reach: "spell", range: 3, shape: "self", cooldown: 5, summon: "sunken_sailors" },
   red_sky_at_morning: spell(5, { shape: "blast", radius: 2, cooldown: 6, redSky: RED_SKY }),
   unholy_waters: spell(5, { cost: 1, shape: "blast", radius: 1, cooldown: 3, unholy: UNHOLY_WATERS }),
   the_black_spot: spell(5, { cooldown: 5, sure: true, blackSpot: BLACK_SPOT }),
