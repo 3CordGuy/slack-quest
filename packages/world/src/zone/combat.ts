@@ -784,7 +784,8 @@ export function resolveAbility(ctx: Ctx, unit: Unit, ability: string, aim: Aim &
         const rolled = rollShown(ctx.rng, abilityDice(def), damageBonus(state, unit, def));
         damage(ctx, target, rolled.total, { actor: unit.id, what: def.id, dice: rolled });
       }
-      afflict(ctx, unit, def, target, false);
+      // It lands without a roll to hit, but what it would leave on the target can still be saved against (Roar of Thunder's Stun).
+      afflict(ctx, unit, def, target, true);
       landed = true;
     } else landed = strike(ctx, unit, def, tactic, target, aim);
     // Knocked back unless it saves (Peal), or at once (Roar of Thunder).

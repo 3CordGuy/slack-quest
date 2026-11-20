@@ -3063,26 +3063,35 @@ describe("the Mage's class abilities", () => {
     }
   });
 
-  it("Roar of Thunder: never misses, Stuns, and throws the enemy a hex back", () => {
-    for (let seed = 1; seed <= 6; seed++) {
+  it("Roar of Thunder: never misses, always throws the enemy a hex back, and Stuns it unless it saves", () => {
+    const outcomes = new Set<boolean>();
+    for (let seed = 1; seed <= 12; seed++) {
       let { state } = party();
       state.rng = seed;
       const foe = addDummy(state, at(7, 6));
       const events: ZoneEvent[] = [];
       state = must(state, { type: "use", by: "ann", unit: "ann", ability: "roar_of_thunder", target: foe }, events);
       expect(events.some((e) => e.t === "roll" && e.roll.kind === "attack")).toBe(false);
-      expect(has(state, foe, "stunned")).toBe(true);
+      const save = events.find((e) => e.t === "roll" && e.roll.kind === "save");
+      expect(save?.t === "roll" && save.roll.label).toBe("Resist Roar of Thunder");
+      const saved = save?.t === "roll" && save.roll.ok;
+      outcomes.add(!!saved);
+      expect(has(state, foe, "stunned")).toBe(!saved);
       expect(unit(state, foe).pos).toEqual(at(8, 6));
       expect(fails(nextTurn(state), { type: "use", by: "ann", unit: "ann", ability: "roar_of_thunder", target: foe })).toMatch(/not ready/);
+      expect(tacticOf("roar_of_thunder").cooldown).toBe(2);
     }
+    // Over the seeds, the Stun is sometimes shaken off and sometimes not.
+    expect(outcomes).toEqual(new Set([true, false]));
   });
 
-  it("Trade Winds: 7 hexes that Haste the caster's side and Slow the enemy in them", () => {
+  it("Trade Winds: 19 hexes that Haste the caster's side and Slow the enemy in them", () => {
     let { state } = party();
     const foe = addDummy(state, at(4, 6));
     const outside = addDummy(state, at(9, 6));
-    state = must(state, { type: "use", by: "ann", unit: "ann", ability: "trade_winds", at: at(3, 6) });
-    expect(state.weather![0].hexes).toHaveLength(7);
+    // Two hexes round (2, 6): Bo at 1 and the dummy at 2 are in it; Ann, at 3, is not.
+    state = must(state, { type: "use", by: "ann", unit: "ann", ability: "trade_winds", at: at(2, 6) });
+    expect(state.weather![0].hexes).toHaveLength(19);
     expect(has(state, "bo", "hasted")).toBe(true);
     expect(has(state, foe, "slowed")).toBe(true);
     expect(has(state, outside, "slowed")).toBe(false);
@@ -4601,11 +4610,12 @@ describe("Paladin weapons", () => {
 });
 
 describe("Mage weapons", () => {
-  it("gives each weapon two abilities of its own, the second once a turn", () => {
+  it("gives each weapon two abilities of its own, the second once a turn (Lightning Strike every other turn)", () => {
     expect(WEAPONS.staff.abilities).toEqual(["shock", "mend"]);
     expect(WEAPONS.tome.abilities).toEqual(["slicing_wind", "winds_blessing"]);
     expect(WEAPONS.barometer_rod.abilities).toEqual(["waterbolt", "lightning_strike"]);
-    for (const id of ["shock", "mend", "slicing_wind", "winds_blessing", "waterbolt", "lightning_strike"]) expect(tacticOf(id).cooldown, id).toBe(Object.values(WEAPONS).some((w) => w.abilities[0] === id) ? undefined : 1);
+    for (const id of ["shock", "mend", "slicing_wind", "winds_blessing", "waterbolt"]) expect(tacticOf(id).cooldown, id).toBe(Object.values(WEAPONS).some((w) => w.abilities[0] === id) ? undefined : 1);
+    expect(tacticOf("lightning_strike").cooldown).toBe(2);
     // Lightning hits harder on the Wet, and a Waterbolt leaves them Wet.
     expect(tacticOf("shock").vsWet).toBeGreaterThan(0);
     expect(tacticOf("lightning_strike").vsWet).toBeGreaterThan(0);

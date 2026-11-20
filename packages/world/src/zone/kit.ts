@@ -362,13 +362,13 @@ export const TACTICS: Record<string, Tactic> = {
   slicing_wind: spell(6, { stride: 1 }),
   winds_blessing: mend(5, { cost: 1, tailwind: 1, cooldown: 1 }),
   waterbolt: spell(6, { surface: { kind: "water", rounds: 3 } }),
-  lightning_strike: spell(5, { vsWet: 3, cooldown: 1 }),
+  lightning_strike: spell(5, { vsWet: 3, cooldown: 2 }),
   // Mage class abilities
   soothing_rain: spell(5, { shape: "blast", radius: 1, cooldown: 4, weather: "rain" }),
   chain_lightning: spell(5, { shape: "chain", jumps: Infinity, cooldown: 3, vsWet: 3 }),
-  roar_of_thunder: spell(5, { cooldown: 4, sure: true, knockback: 1 }),
-  trade_winds: spell(5, { shape: "blast", radius: 1, cooldown: 4, weather: "wind" }),
-  tidal_wave: spell(5, { shape: "line", length: 5, cooldown: 4, sweep: true, surface: { kind: "water", rounds: 2 } }),
+  roar_of_thunder: spell(5, { cooldown: 2, sure: true, knockback: 1 }),
+  trade_winds: spell(5, { shape: "blast", radius: 2, cooldown: 4, weather: "wind" }),
+  tidal_wave: spell(5, { shape: "line", length: 5, cooldown: 3, sweep: true, surface: { kind: "water", rounds: 2 } }),
   // Rogue
   // Rogue class abilities
   smugglers_route: { cost: 1, reach: "spell", range: ROUTE_RANGE, shape: "self", cooldown: 4, blink: { range: ROUTE_RANGE, carry: true } },
