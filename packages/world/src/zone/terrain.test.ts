@@ -15,7 +15,7 @@ import { strikeReaches } from "./ai";
 import { attackContext, type Ctx } from "./engine";
 import { ALERT_RANGE, DEFAULT_ZONE_OPTIONS } from "./gen";
 import { HEX_DIRS, HEX_ROOM, HIGH_REACH, MAX_ELEV, elevOf, heldAgainst, isDead, ladderBetween, pitAt, reachFrom, roomAt, sees, stepCost, strikes, unitAt, unitsAt, zoneReach } from "./geometry";
-import { ACTION_AP, AP_MAX, AP_TURN, COMMON_ACTIONS, ENEMY_KIT, ENEMY_MOVE_AP, JUMP_DOWN, JUMP_UP, enemyMove, enemyStrikes, tacticOf } from "./kit";
+import { ACTION_AP, AP_MAX, AP_TURN, SUMMON_AP_TURN, COMMON_ACTIONS, ENEMY_KIT, ENEMY_MOVE_AP, JUMP_DOWN, JUMP_UP, enemyMove, enemyStrikes, tacticOf } from "./kit";
 import { mod, proficiency, rollShown } from "./rules";
 import { SITE_IDS, siteInside, siteOpen } from "./sites";
 import { HEAR_RANGE, standInHero, stepZone } from "./zone";
@@ -243,7 +243,7 @@ describe("a turn is one fighter's alone", () => {
       state = must(state, endTurn("ann"), next);
       expect(state.encounter!.acting).toEqual([turtle]);
       expect(next).toContainEqual({ t: "turn", ids: [turtle] });
-      expect(state.encounter!.budgets[turtle]).toMatchObject({ ap: AP_TURN });
+      expect(state.encounter!.budgets[turtle]).toMatchObject({ ap: SUMMON_AP_TURN });
       // Ann's player plays it, and nobody else; Ann herself has to wait.
       expect(fails(state, { type: "move", by: "bo", unit: turtle, to: at(5, 6) })).toMatch(/not yours/);
       expect(fails(state, { type: "move", by: "ann", unit: "ann", to: at(2, 6) })).toMatch(/not your turn/);

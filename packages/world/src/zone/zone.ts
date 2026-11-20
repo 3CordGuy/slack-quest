@@ -35,7 +35,7 @@ import { checkLoot, checkOpen, leaveBody, look, lootFor, openChest, payBounty, t
 import { isCrateId } from "./crates";
 import { siteOpen } from "./sites";
 import { FREE_WALK, blast, blockerAt, inFight, pathIn, sameHex, sees, solid, unitAt, unitById, zoneReach } from "./geometry";
-import { AP_MAX, AP_TURN, AURAS, ENEMY_MOVE_AP, FLEE_RANGE, ITEM_AP, SUMMONS, STARTING_ITEMS, THROWABLES, THROWABLE_KINDS, cleanItems, commonCost, enemyHp, enemyMove, tacticOf } from "./kit";
+import { AP_MAX, AP_TURN, SUMMON_AP_TURN, AURAS, ENEMY_MOVE_AP, FLEE_RANGE, ITEM_AP, SUMMONS, STARTING_ITEMS, THROWABLES, THROWABLE_KINDS, cleanItems, commonCost, enemyHp, enemyMove, tacticOf } from "./kit";
 import { d20, heroMove, mod, rollDice, statOf } from "./rules";
 import { hiddenEnemies, sentToClient } from "./light";
 import { tickWeather, weatherAtTurn } from "./weather";
@@ -467,7 +467,7 @@ function beginTurn(ctx: Ctx, enc: Encounter, unit: Unit): boolean {
   if (has(unit, "slowed") && stride > 0) stride = Math.max(1, Math.floor(stride / 2));
   if (has(unit, "hasted")) stride *= 2;
   // Fresh AP on top of what was saved from its last turn.
-  let ap = Math.min(AP_MAX, (enc.banked?.[unit.id] ?? 0) + AP_TURN);
+  let ap = Math.min(AP_MAX, (enc.banked?.[unit.id] ?? 0) + (unit.summon ? SUMMON_AP_TURN : AP_TURN));
   if (enc.banked) delete enc.banked[unit.id];
   // Getting up off the ground takes an AP.
   if (has(unit, "prone")) {
@@ -887,6 +887,8 @@ function act(ctx: Ctx, action: ZoneAction): string | null {
     resolveAbility(ctx, unit, action.ability, aim);
     engage(ctx, struck, unit);
     reachIn(ctx, unit, touched);
+    // Cast out of a fight, one with a wait on it that draws the caster into a fight goes in waiting, as if spent on their first turn (their AP are whole).
+    if (!budget && tactic.cooldown && state.encounter?.order.includes(unit.id)) unit.cooldowns[action.ability] = tactic.cooldown;
     return null;
   }
   if (action.type === "common") {
