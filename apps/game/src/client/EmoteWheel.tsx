@@ -1,4 +1,4 @@
-// The emote wheel: wave, cheer, bow, dance or breakdance where your hero stands (see
+// The emote wheel: wave, cheer, bow, dance, the running man or a breakdance where your hero stands (see
 // EMOTES), for everyone in the same place to see. A button beside the chat (or
 // in a map's bar, or off the side of the hotbar in a fight) opens it round the
 // button; or hold G anywhere, point at a
@@ -85,21 +85,39 @@ export const EMOTE_INFO: Record<Emote, { name: string; icon: string[] }> = {
       "...........#",
     ],
   },
+  runningman: {
+    name: "Running man",
+    // Someone mid-step, one knee up and the elbows bent.
+    icon: [
+      ".....###...",
+      ".....###...",
+      ".....###...",
+      "..#..###.#.",
+      "..#######..",
+      ".....###...",
+      ".....######",
+      ".....#...#.",
+      ".....#...#.",
+      "....#......",
+      "...#.......",
+      "..##.......",
+    ],
+  },
   breakdance: {
     name: "Breakdance",
-    // Someone spinning upside down on the floor, legs kicked up in a V.
+    // Someone spinning on their back, knees tucked up to the chest.
     icon: [
-      "#.........#",
-      ".#.......#.",
-      "..#.....#..",
-      "...#...#...",
-      "....#.#....",
-      ".....#.....",
-      "....###....",
-      "....###....",
-      "..#.###.#..",
-      ".#..###..#.",
-      "#...###...#",
+      "...........",
+      "...........",
+      "...........",
+      "......###..",
+      "....#####..",
+      "...######..",
+      "...###.....",
+      ".#####.....",
+      "######.....",
+      ".####......",
+      "...........",
       "###########",
     ],
   },
@@ -117,7 +135,7 @@ const FACE = [
   "..######..",
 ];
 /** How far out from the middle the slices sit, and how far the pointer must go before one is picked. */
-const RING = 72;
+const RING = 82;
 const DEAD = 18;
 /** The key held to open the wheel where the pointer is. */
 const HOLD = "g";
@@ -150,9 +168,9 @@ export function EmoteWheel({ onEmote, blocked, tab = false }: { onEmote(emote: E
     emote.current(EMOTES[i]);
     close();
   };
-  /** Opened round `x, y`, kept clear of the window's edges (the ring is 232px across). */
+  /** Opened round `x, y`, kept clear of the window's edges (the ring is 264px across). */
   const openAt = (x: number, y: number, held: boolean) => {
-    const pad = 124;
+    const pad = 136;
     setOpen({ x: Math.min(innerWidth - pad, Math.max(pad, x)), y: Math.min(innerHeight - pad, Math.max(pad, y)), held });
     setHot(null);
   };

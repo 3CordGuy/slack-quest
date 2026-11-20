@@ -49,7 +49,8 @@ const ACTIONS = [
   ["cheer", "Cheer", "Emote: both fists thrown up, with a hop or two."],
   ["bow", "Bow", "Emote: a hand to the chest, the other swept back, and a bend at the waist."],
   ["dance", "Dance", "Emote: a jig, hopping foot to foot with the knees lifted and arms pumping, for five seconds (walking stops it)."],
-  ["breakdance", "Breakdance", "Emote: down on one hand, spun round six times with a leg swept out, and back up (walking stops it)."],
+  ["runningman", "Running man", "Emote: each knee lifted in turn as the other foot slides back, arms pumping, for five seconds (walking stops it)."],
+  ["breakdance", "Breakdance", "Emote: a backspin. Down on the back, knees tucked and hugged, spun round six times flat on the floor, and back up (walking stops it)."],
   ["lean", "Lean", "The plain lean, easing off: what every attack used to be, and a stomp still is."],
 ] as const;
 type Action = (typeof ACTIONS)[number][0];
@@ -204,7 +205,7 @@ export default function FigureLab({ me, onClose }: { me: Me; onClose(): void }) 
         sprang = t + wait;
         return wait > 0 ? `The feet leave the ground ${wait.toFixed(2)}s in, and come down ${(wait + JUMP_AIR).toFixed(2)}s in.` : "A creature: it has no crouch, and springs at once.";
       }
-      if (action === "wave" || action === "cheer" || action === "bow" || action === "dance" || action === "breakdance") {
+      if (action === "wave" || action === "cheer" || action === "bow" || action === "dance" || action === "runningman" || action === "breakdance") {
         figure.emote(action);
         return "";
       }

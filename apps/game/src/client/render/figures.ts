@@ -1949,12 +1949,20 @@ const CHEER = { over: 1.5, up: [[0, 0], [0.2, 1], [1.2, 1], [1.5, 0]] as Keys };
 const BOW = { over: 1.8, down: [[0, 0], [0.45, 1], [1.15, 1], [1.8, 0]] as Keys };
 const DANCE = { over: 5, beat: 2.4, up: [[0, 0], [0.25, 1], [4.7, 1], [5, 0]] as Keys };
 /**
- * A breakdance: down into a deep crouch with the left hand planted, then spun round on it, the right leg swept out
- * wide and the right arm flung out, `turns` times round from `spin[0]` to `spin[1]` seconds (whole turns, so it
- * comes up facing the way it went down), then back up.
+ * A breakdance: a backspin. Down onto the back (`down`), the knees tucked up to the chest and hugged there, spun
+ * flat on the floor about the middle of the body `turns` times from `spin[0]` to `spin[1]` seconds (whole turns, so
+ * it gets up facing the way it went down), then up again.
  */
-const BREAK = { over: 5, spin: [0.5, 4.5], turns: 6, down: [[0, 0], [0.45, 1], [4.55, 1], [5, 0]] as Keys };
-const EMOTE_OVER: Record<Emote, number> = { wave: WAVE.over, cheer: CHEER.over, bow: BOW.over, dance: DANCE.over, breakdance: BREAK.over };
+const BREAK = { over: 5, spin: [0.65, 4.35], turns: 6, down: [[0, 0], [0.55, 1], [4.45, 1], [5, 0]] as Keys, tuck: [[0, 0], [0.4, 0.4], [0.7, 1], [4.3, 1], [5, 0]] as Keys };
+/**
+ * The running man: one knee lifted as the other foot slides back along the floor, then the other way round, `beat`
+ * times a second each way, the elbows bent and the arms pumping down as each knee comes up, with a bounce.
+ */
+const RUNNING = { over: 5, beat: 1.1, up: [[0, 0], [0.25, 1], [4.7, 1], [5, 0]] as Keys };
+/** The point of the body a backspin turns about, in the figure's own frame (about the hips): where it lies when on its back. */
+const SPIN_AT = new THREE.Vector3(0, 6, 0);
+const spinning = { at: new THREE.Vector3(), q: new THREE.Quaternion(), up: new THREE.Vector3(0, 1, 0) };
+const EMOTE_OVER: Record<Emote, number> = { wave: WAVE.over, cheer: CHEER.over, bow: BOW.over, dance: DANCE.over, runningman: RUNNING.over, breakdance: BREAK.over };
 /**
  * A jump from one tile to another. The figure only makes the shapes of it; whoever jumps it carries it through
  * the air (see WorldRenderer.leapUnit). A crouch with the arms drawn back (`coil`), and at `spring` the legs
@@ -2627,23 +2635,54 @@ function biped(top: THREE.Group, parts: Part[], elbow = ELBOW) {
       return;
     }
     if (act.kind === "breakdance") {
+      // Laid back onto the floor as the lying pose is (the front up, the head toward -z), and spun about the middle
+      // of the body round the upright: the spin is turned first, about the world's up, over the lie.
       const down = along(BREAK.down, t);
+      const tuck = along(BREAK.tuck, t);
       const k = Math.min(1, Math.max(0, (t - BREAK.spin[0]) / (BREAK.spin[1] - BREAK.spin[0])));
-      top.rotation.y += k * BREAK.turns * Math.PI * 2;
-      // Low to the floor, leant over onto the planted hand.
-      top.rotation.z += 0.38 * down;
-      knees(1.05 * down);
-      bow(0.6 * down, 0);
-      // The left hand planted on the ground beside the feet, taking the weight.
-      sweep.grip.copy(armL.joint.position).add(sweep.side.set(2.2, -8, 2));
-      sweep.lead.set(1, 0, -0.5);
-      reach(armL.joint, foreL.joint, -elbow, elbow - fist, sweep.grip, sweep.lead, down);
-      // The right leg swept out wide and straight, kicking as it goes round; the right arm flung out for balance.
-      const kick = 0.25 * Math.sin(t * 10) * down;
-      thighR.joint.rotation.z -= 1.45 * down + kick;
-      shinR.joint.rotation.x -= 1.45 * down;
-      armR.joint.rotation.z -= 1.3 * down;
-      head.joint.rotation.x -= 0.2 * down;
+      top.rotation.x -= HALF_PI * down;
+      top.quaternion.premultiply(spinning.q.setFromAxisAngle(spinning.up, k * BREAK.turns * Math.PI * 2));
+      // Kept where it spins: the middle of the body comes down from where it stands to just off the floor.
+      spinning.at.copy(SPIN_AT).applyQuaternion(top.quaternion);
+      top.position.set(-spinning.at.x, SPIN_AT.y - 3.4 * down - spinning.at.y, -spinning.at.z);
+      // Tucked: the knees drawn right up to the chest, the shins folded under, the arms wrapped round the knees and
+      // the head tipped forward.
+      for (const thigh of [thighL, thighR]) thigh.joint.rotation.x -= 2.1 * tuck;
+      for (const shin of [shinL, shinR]) shin.joint.rotation.x += 2.3 * tuck;
+      armL.joint.rotation.x -= 1.1 * tuck;
+      armR.joint.rotation.x -= 1.1 * tuck;
+      armL.joint.rotation.z -= 0.25 * tuck;
+      armR.joint.rotation.z += 0.25 * tuck;
+      foreL.joint.rotation.x -= 1.3 * tuck;
+      foreR.joint.rotation.x -= 1.3 * tuck;
+      head.joint.rotation.x += 0.45 * tuck;
+      return;
+    }
+    if (act.kind === "runningman") {
+      // Each leg in turn: its knee lifted high while the other, planted, slides from ahead of the body to behind it.
+      const up = along(RUNNING.up, t);
+      const ph = t * RUNNING.beat * Math.PI * 2;
+      const s = Math.sin(ph);
+      const c = Math.cos(ph);
+      const liftL = Math.max(0, s) * up;
+      const liftR = Math.max(0, -s) * up;
+      thighL.joint.rotation.x -= 1.7 * liftL - 0.6 * c * up * (1 - Math.max(0, s));
+      shinL.joint.rotation.x += 2.1 * liftL;
+      thighR.joint.rotation.x -= 1.7 * liftR + 0.6 * c * up * (1 - Math.max(0, -s));
+      shinR.joint.rotation.x += 2.1 * liftR;
+      // A bounce on each step, leant a little back.
+      top.position.y += 0.35 * Math.abs(s) * up;
+      bow(-0.08 * up, 0);
+      // Elbows bent, the arms pumped down as each knee comes up.
+      armL.joint.rotation.x -= (0.35 + 0.45 * s) * up;
+      armR.joint.rotation.x -= (0.35 - 0.45 * s) * up;
+      foreL.joint.rotation.x -= 1.45 * up;
+      foreR.joint.rotation.x -= 1.45 * up;
+      // Whatever is held stays upright, not swung round with the pumping arm.
+      for (const [arm, fore, held] of [[armL, foreL, heldL], [armR, foreR, heldR]] as const) {
+        sweep.hold.copy(arm.joint.quaternion).multiply(fore.joint.quaternion).invert();
+        held.joint.quaternion.slerp(sweep.hold, up);
+      }
       return;
     }
     if (act.kind === "dance") {
