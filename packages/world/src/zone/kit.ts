@@ -271,8 +271,8 @@ export const SEA_TURTLE: SummonDef = {
 };
 
 /**
- * The Warlock's sunken sailors, called up two at a time: a gunner with a pistol that reaches 4 hexes and hits the harder
- * of the two, and a cutlass who stands up to more. Between them about as much to get through as a sea turtle.
+ * The Warlock's sunken sailors, called up two at a time: a gunner with a light pistol that reaches 4 hexes, and a cutlass
+ * who stands up to more and hits the harder of the two. Between them about as much to get through as a sea turtle.
  */
 export const DROWNED_GUNNER: SummonDef = {
   name: "Drowned Gunner",
@@ -446,9 +446,9 @@ export const TACTICS: Record<string, Tactic> = {
   sink: spell(6, { drowns: 1 }),
   vile_splash: spell(5, { surface: { kind: "poison", rounds: 3 } }),
   drink_deeply: { ...guard(), cooldown: 3, sicken: 2 },
-  pull_of_the_deep: spell(0, { shape: "burst", radius: 1, cooldown: 3, drowns: 1 }),
+  pull_of_the_deep: spell(5, { shape: "blast", cluster: 3, foesOnly: true, cooldown: 3, drowns: 1 }),
   // Warlock class abilities
-  curse_of_drowning: spell(5, { cost: 1, cooldown: 4, sure: true, curse: DROWNING_CURSE }),
+  curse_of_drowning: spell(5, { cost: 1, cooldown: 4, sure: true, curse: DROWNING_CURSE, dice: { n: 1, d: 4, plus: 2 } }),
   summon_sunken_sailors: { cost: 3, reach: "spell", range: 3, shape: "self", cooldown: 5, summon: "sunken_sailors" },
   red_sky_at_morning: spell(5, { shape: "blast", radius: 2, cooldown: 6, redSky: RED_SKY }),
   unholy_waters: spell(5, { cost: 1, shape: "blast", radius: 1, cooldown: 3, unholy: UNHOLY_WATERS }),

@@ -4539,10 +4539,11 @@ describe("the Warlock's drowning", () => {
     const [cutlass, gunner] = sailors(state);
     expect(cutlass).toMatchObject({ kind: "drowned_cutlass", controller: "ann", pos: at(8, 6) });
     expect(gunner).toMatchObject({ kind: "drowned_gunner", controller: "ann", pos: at(7, 6) });
-    // The cutlass stands up to more; the gunner's pistol hits harder, and reaches 4 hexes.
+    // The cutlass stands up to more and hits harder; the gunner's pistol reaches 4 hexes.
     expect(cutlass.maxHp).toBeGreaterThan(gunner.maxHp);
     expect(defenceOf(cutlass)).toBeGreaterThan(defenceOf(gunner));
-    expect(diceAverage(abilityDiceOf("sailor_pistol"))).toBeGreaterThan(diceAverage(abilityDiceOf("sailor_scimitar")));
+    expect(abilityDiceOf("sailor_pistol")).toEqual({ n: 1, d: 6, plus: 2 });
+    expect(diceAverage(abilityDiceOf("sailor_scimitar"))).toBeGreaterThan(diceAverage(abilityDiceOf("sailor_pistol")));
     expect(TACTICS.sailor_pistol).toMatchObject({ reach: "ranged", range: 4 });
     expect(TACTICS.sailor_scimitar).toMatchObject({ reach: "melee" });
     // Straight after the Warlock in the order, in the turn they share.
@@ -5237,7 +5238,7 @@ describe("Warlock weapons", () => {
   it("keeps Hex and Soul Drain on the grimoire, Hex with no share of max HP and Soul Drain on a 2-turn wait", () => {
     expect(WEAPONS.grimoire.abilities).toEqual(["hex", "soul_drain"]);
     expect(WEAPONS.void_staff.abilities).toEqual(["sink", "pull_of_the_deep"]);
-    expect(ABILITIES.hex.damage).toBe(8);
+    expect(abilityDiceFor(ABILITIES.hex)).toEqual({ n: 1, d: 6, plus: 2 });
     expect(ABILITIES.soul_drain.damage).toBe(11);
     expect(tacticOf("soul_drain").cooldown).toBe(3);
     expect(tacticOf("hex").cooldown).toBeUndefined();
@@ -5265,18 +5266,20 @@ describe("Warlock weapons", () => {
     expect(sunk && held).toBe(true);
   });
 
-  it("Pull of the Deep: strikes every enemy beside the Warlock, not an ally or one further off, and drowns those that fail to brace", () => {
-    const { state, foe } = duel("dummy", "data_warlock", at(5, 6), at(7, 6));
-    const far = enemy(state, "dummy", at(9, 9));
-    hero(state, "bo", "qa_paladin", at(6, 7));
+  it("Pull of the Deep: 3 hexes up to 5 off; strikes every enemy in them, not an ally or one outside, and drowns those that fail to brace", () => {
+    const { state, foe } = duel("dummy", "data_warlock", at(5, 6), at(9, 6));
+    const far = enemy(state, "dummy", at(9, 11));
+    hero(state, "bo", "qa_paladin", at(9, 7));
     unit(state, "ann").abilities = ["pull_of_the_deep"];
+    const at9 = unit(state, foe).pos;
+    expect(abilityArea(state, unit(state, "ann"), "pull_of_the_deep", at9)).toHaveLength(3);
     const bo = unit(state, "bo").hp;
     let drowned = false;
     for (let seed = 1; seed < 120 && !drowned; seed++) {
       const tryState = structuredClone(state);
       tryState.rng = seed;
       const events: ZoneEvent[] = [];
-      const next = must(tryState, { type: "use", by: "ann", unit: "ann", ability: "pull_of_the_deep" }, events);
+      const next = must(tryState, { type: "use", by: "ann", unit: "ann", ability: "pull_of_the_deep", at: at9 }, events);
       expect(events.some((e) => e.t === "hit" && e.target === foe)).toBe(true);
       expect(unit(next, far.id).hp).toBe(unit(state, far.id).hp);
       expect(unit(next, "bo").hp).toBe(bo);
@@ -5284,6 +5287,20 @@ describe("Warlock weapons", () => {
       drowned = drowning(next, foe) === 1;
     }
     expect(drowned).toBe(true);
+    // Too far off to aim at.
+    expect(fails(state, { type: "use", by: "ann", unit: "ann", ability: "pull_of_the_deep", at: at(13, 6) })).toMatch(/range/i);
+  });
+
+  it("Soul Drain: heals the Warlock half the damage it deals", () => {
+    const { state, foe } = duel("dummy", "data_warlock", at(5, 6), at(9, 6));
+    unit(state, "ann").abilities = ["soul_drain"];
+    unit(state, "ann").hp = 1;
+    const after = untilHit(state, { type: "use", by: "ann", unit: "ann", ability: "soul_drain", target: foe }, foe);
+    const blow = after.events.find((e) => e.t === "hit" && e.target === foe);
+    const healed = after.events.find((e) => e.t === "heal" && e.target === "ann");
+    if (blow?.t !== "hit" || healed?.t !== "heal") throw new Error("no drain");
+    expect(ABILITIES.soul_drain.drain).toBe(0.5);
+    expect(healed.amount).toBe(Math.min(unit(state, "ann").maxHp - 1, Math.max(1, Math.round(blow.amount * 0.5))));
   });
 
   it("gives the chalice Vile Splash and Drink Deeply, Drink Deeply on a cooldown", () => {

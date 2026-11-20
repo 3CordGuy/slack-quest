@@ -950,9 +950,13 @@ export function ZoneView({ code, me, refresh, onLeave }: { code: string; me: Me;
               view.strikeAt(ev.id, at, ev.name, thenOn(() => fxs.slam(at, look.color)));
             }
           } else if (look.kind === "whirl") {
-            const go = () => fxs.whirl(point(user.pos, 0.05), look.color);
-            if (view) view.burst(ev.id, ev.name, true, thenOn(go));
-            else go();
+            // Pull of the Deep: cast at the hexes aimed at, and a whirlpool opens there.
+            if (aim) cast(ev.id, ev.name, aim.x, aim.z, () => fxs.whirl(aim, look.color, 1.6));
+            else {
+              const go = () => fxs.whirl(point(user.pos, 0.05), look.color);
+              if (view) view.burst(ev.id, ev.name, true, thenOn(go));
+              else go();
+            }
           } else if (look.kind === "omen" && aim) {
             cast(ev.id, ev.name, aim.x, aim.z, () => fxs.omen(aim, look.color));
           } else if (look.kind === "song") {

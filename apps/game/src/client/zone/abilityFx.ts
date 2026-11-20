@@ -35,7 +35,7 @@ export type FxKind =
   | "flask"
   /** The Black Spot slammed onto the one aimed at, and held over them while they carry it. */
   | "spot"
-  /** A whirlpool round the user, dragging everything beside them in (Pull of the Deep). */
+  /** A whirlpool where it is aimed, dragging everything in it down (Pull of the Deep). */
   | "whirl"
   /** The sky over the hex aimed at turned red (Red Sky at Morning). */
   | "omen"
