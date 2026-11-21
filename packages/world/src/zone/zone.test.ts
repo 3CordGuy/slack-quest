@@ -1215,6 +1215,20 @@ describe("the enemy's turn", () => {
     expect(ENEMY_MOVE_AP).toBe(2);
   });
 
+  it("gets up off the ground before it walks or strikes, and says so", () => {
+    const { state: start, foe } = duel("bandit", "qa_paladin", at(5, 6), at(9, 6));
+    let state = start;
+    Object.assign(unit(state, "ann"), { hp: 900, maxHp: 900 });
+    state.aiOff = false;
+    unit(state, foe).conditions = [{ kind: "prone", rounds: 3 }];
+    const events: ZoneEvent[] = [];
+    state = nextTurn(state, events);
+    const mine = events.filter((e) => "id" in e && e.id === foe);
+    expect(mine[0]).toEqual({ t: "stood", id: foe });
+    expect(mine.some((e) => e.t === "moved" || e.t === "used")).toBe(true);
+    expect(unit(state, foe).conditions.some((c) => c.kind === "prone")).toBe(false);
+  });
+
   it("runs when nothing is in reach, but puts no more than two of its AP into the ground in a turn, and keeps the rest", () => {
     let state = board();
     Object.assign(hero(state, "ann", "qa_paladin", at(1, 6)), { hp: 900, maxHp: 900 });
