@@ -498,6 +498,8 @@ export type ZoneEvent =
   /** Weather made over some hexes, or (`kind` null) cleared from them. */
   | { t: "weather"; kind: WeatherKind | null; hexes: HexPos[]; by: string }
   | { t: "skip"; id: string; kind: Condition }
+  /** One lying Prone gets up as its turn begins (for an AP), before it does anything else. */
+  | { t: "stood"; id: string }
   /** Drowning: it failed to hold its breath, and loses 2 of its AP this turn. */
   | { t: "choked"; id: string }
   | { t: "down"; id: string }

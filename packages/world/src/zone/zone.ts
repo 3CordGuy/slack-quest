@@ -479,6 +479,8 @@ function beginTurn(ctx: Ctx, enc: Encounter, unit: Unit): boolean {
   if (has(unit, "prone")) {
     removeCondition(unit, "prone");
     ap -= 1;
+    // Said, so the getting up is seen before anything else it does this turn.
+    ctx.events.push({ t: "stood", id: unit.id });
   }
   enc.budgets[unit.id] = { ap, move: 0, stride, disengaged: false, ...(sung > 0 ? { song: sung } : {}) };
   // An enemy puts only so much of a turn into getting about.
