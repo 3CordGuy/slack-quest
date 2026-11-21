@@ -46,13 +46,13 @@ const ACTIONS = [
   ["jump", "Jump", "The jump from tile to tile: a crouch with the arms drawn back, a spring, the knees drawn up over the top and the feet put out to land, then a deep crouch on landing. Here it goes straight up and down; in the game it is carried across the tiles."],
   ["hit", "Flinch", "Taking a blow: thrown back, arms flung wide, then gathered again."],
   ["wave", "Wave", "Emote: the free hand raised beside the head and rocked side to side."],
-  ["cheer", "Cheer", "Emote: both fists thrown up, with a hop or two."],
+  ["cheer", "Cheer", "Emote: both fists thrown up, with four or five hops."],
   ["bow", "Bow", "Emote: a hand to the chest, the other swept back, and a bend at the waist."],
   ["dance", "Dance", "Emote: a jig, hopping foot to foot with the knees lifted and arms pumping, for five seconds (walking stops it)."],
   ["dab", "Dab", "Emote: one arm flung straight up and out, the other across the face, the head ducked into its elbow; snapped into and held a moment."],
   ["floss", "Floss", "Emote: straight arms swung side to side across the body, one in front of the hips as the other goes behind, the hips swaying against them (walking stops it)."],
   ["runningman", "Running man", "Emote: running on the spot. A knee driven up, the foot stepped out in front and dragged back under the body as the other knee comes up, arms pushing down, for five seconds (walking stops it)."],
-  ["breakdance", "Breakdance", "Emote: a backspin. Down on the back, knees tucked and hugged, spun round six times flat on the floor, and back up (walking stops it)."],
+  ["breakdance", "Breakdance", "Emote: a backspin. Down on the back, knees tucked and hugged, spun round six times flat on the floor, then onto the side, head on a fist and an arm to the sky, and back up (walking stops it)."],
   ["lean", "Lean", "The plain lean, easing off: what every attack used to be, and a stomp still is."],
 ] as const;
 type Action = (typeof ACTIONS)[number][0];
